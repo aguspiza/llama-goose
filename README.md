@@ -77,15 +77,14 @@ CMake can merge the `.cpp` files of each target into a few large ones
 | normal |    445 s  |  7,021 s |
 | unity  |   ~328 s  |  3,746 s |
 
-The machine was shared with other jobs, and the unity build was interrupted
-once and resumed, so these are rough numbers. It did not work as is:
+The machine was shared with other jobs, and another process killed the
+unity build by mistake once (it was resumed), so these are rough numbers.
+It did not work as is:
 
 - Four `static` helpers have the same name in two files each (`chat.cpp`,
   `llama-kv-cache.cpp`, `models/gemma4.cpp`) and `mtmd-helper.cpp` refuses
   mtmd's internal headers. Each needed a `SKIP_UNITY_BUILD_INCLUSION` line,
   and new clashes will appear as upstream adds files.
-- Under 16 parallel jobs one merged file failed without a message and
-  compiled fine alone, most likely because the compiler ran out of memory.
 - The resulting test programs failed to start (`0xc0000139`, a function
   missing from a DLL). The cause was not investigated.
 
