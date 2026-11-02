@@ -165,5 +165,53 @@ folders next to this one, named `<name>.goose`.
 ## Layout
 
 ```
-llama.goose/        this repo: the plan, then the Goose port and its .build sidecar
+UPSTREAM            the llama.cpp commit this port follows
+ggml/               ggml, copied unchanged from llama.cpp, as a Goose package:
+  ggml.goose          Goose bindings (extern fn)
+  ggml.build          the sidecar: the C sources goose build compiles
+  shim.c              the few calls Goose cannot make directly
+  units/              wrappers for sources whose file names collide
+scripts/            build, test and weekly sync
+tests/              Goose programs that exit non-zero on failure
 ```
+
+Every Goose file ported from llama.cpp starts with a line naming its
+sources, which is how the sync script knows what to convert again:
+
+```goose
+// port-of: src/llama-vocab.cpp src/unicode.cpp
+```
+
+## Building
+
+Goose's own compiler (not the `goose` AI agent that may be on PATH) and
+MinGW gcc. `goose build` with MSVC does not find the C headers yet.
+
+```
+scripts/build.sh tests/ggml_smoke.goose     # GOOSE=path/to/goose.exe to pick the compiler
+scripts/test.sh                             # build and run everything in tests/
+```
+
+ggml's C is compiled once (about 1.5 minutes) and cached under `~/.goose`;
+after that a program builds in under a second.
+
+## Weekly sync with upstream
+
+```
+scripts/sync-upstream.sh            # report only: sync-report.md
+scripts/sync-upstream.sh --apply    # copy ggml, regenerate ggml-version.h, move UPSTREAM
+scripts/test.sh
+```
+
+The script fetches the fork's `master` into `../llama.cpp` (only a `git
+fetch`: no branch or file there changes) and sorts every file changed since
+`UPSTREAM` into:
+
+- **ported files to convert again**, each with the Goose files that port it,
+- **not ported yet** (`src/`, `common/`, `tools/`, `include/`),
+- **ggml**, copied unchanged by `--apply`, which also warns when ggml starts
+  building a source that `ggml/ggml.build` does not list,
+- **ignored**: docs, CI, other backends, scripts.
+
+`git -C ../llama.cpp diff <old> <new> -- <path>` shows what changed in one
+file, and the report prints that command with both commits filled in.

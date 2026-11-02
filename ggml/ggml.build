@@ -1,0 +1,50 @@
+// ggml, unchanged from llama.cpp, built by goose build: CPU backend, x86-64 with AVX2.
+c_sources = [
+    "src/ggml.c",
+    "units/ggml_cxx.cpp",
+    "src/ggml-alloc.c",
+    "src/ggml-backend.cpp",
+    "src/ggml-backend-meta.cpp",
+    "src/ggml-backend-reg.cpp",
+    "src/ggml-backend-dl.cpp",
+    "src/ggml-opt.cpp",
+    "src/ggml-threading.cpp",
+    "src/ggml-quants.c",
+    "src/gguf.cpp",
+    "src/ggml-cpu/ggml-cpu.c",
+    "units/ggml_cpu_cxx.cpp",
+    "src/ggml-cpu/repack.cpp",
+    "src/ggml-cpu/hbm.cpp",
+    "src/ggml-cpu/quants.c",
+    "src/ggml-cpu/traits.cpp",
+    "src/ggml-cpu/amx/amx.cpp",
+    "src/ggml-cpu/amx/mmq.cpp",
+    "src/ggml-cpu/tiled/tiled.cpp",
+    "src/ggml-cpu/tiled/tiled-kernel.cpp",
+    "src/ggml-cpu/binary-ops.cpp",
+    "src/ggml-cpu/unary-ops.cpp",
+    "src/ggml-cpu/vec.cpp",
+    "src/ggml-cpu/ops.cpp",
+    "src/ggml-cpu/llamafile/sgemm.cpp",
+    "units/x86_quants.c",
+    "units/x86_repack.cpp",
+    "shim.c",
+];
+c_include = ["include", "src", "src/ggml-cpu", "units"];
+c_defines = [
+    "GGML_SCHED_MAX_COPIES=4",
+    "GGML_USE_CPU",
+    "GGML_USE_CPU_REPACK",
+    "GGML_USE_LLAMAFILE",
+    "NDEBUG",
+    "_CRT_SECURE_NO_WARNINGS",
+    "_XOPEN_SOURCE=600",
+];
+// gcc finds the instruction set with -march=native; MSVC needs it spelled out.
+c_flags_cc = ["-O3", "-march=native"];
+c_flags_msvc = ["/O2", "/arch:AVX2", "/std:c++17", "/utf-8", "/bigobj",
+                "/DGGML_AVX2", "/DGGML_FMA", "/DGGML_F16C", "/DGGML_BMI2", "/D__BMI2__"];
+c_libs = ["stdc++"];
+// goose build links with gcc, which takes the static libgcc, and ggml's
+// std::call_once then crashes on MinGW; g++ would take libgcc_s. MinGW gcc only.
+c_libs_windows = ["advapi32", "gcc_s"];
