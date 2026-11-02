@@ -1,0 +1,3 @@
+// llama.cpp's libllama in Goose. The package's modules are imported one by
+// one: import llama.unicode; import llama.vocab; ...
+namespace llama;
