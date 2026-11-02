@@ -29,12 +29,13 @@ fn build_flags() -> u16[>..] {
     var f: u16[>..] = [];
     f.resize(MAX_CODEPOINTS, UNDEFINED);
     for i in 1..RANGE_START.len {
-        for cpt in (RANGE_START[i - 1] as i64)..(RANGE_START[i] as i64) { f[cpt] = RANGE_FLAGS[i - 1]; }
+        let flags = at(RANGE_FLAGS, i - 1) as u16;
+        for cpt in (at(RANGE_START, i - 1) as i64)..(at(RANGE_START, i) as i64) { f[cpt] = flags; }
     }
-    for cpt in WHITESPACE_CPTS { f[cpt] |= WHITESPACE; }
-    for cpt in LOWER_TO { f[cpt] |= LOWERCASE; }
-    for cpt in UPPER_TO { f[cpt] |= UPPERCASE; }
-    for cpt in NFD_TO { f[cpt] |= NFD; }
+    for i in WHITESPACE_CPTS.len { f[at(WHITESPACE_CPTS, i) as i64] |= WHITESPACE; }
+    for i in LOWER_TO.len { f[at(LOWER_TO, i) as i64] |= LOWERCASE; }
+    for i in UPPER_TO.len { f[at(UPPER_TO, i) as i64] |= UPPERCASE; }
+    for i in NFD_TO.len { f[at(NFD_TO, i) as i64] |= NFD; }
     return f;
 }
 
@@ -162,8 +163,8 @@ fn utf8_to_byte(s: const u8[:]) -> u8, bool {
 }
 
 fn tolower(cpt: u32) -> u32 {
-    let i, found = binary_search(LOWER_FROM, cpt);
-    return if found { LOWER_TO[i] } else { cpt };
+    let i, found = search(LOWER_FROM, cpt);
+    return if found { at(LOWER_TO, i) as u32 } else { cpt };
 }
 
 fn is_han(cpt: u32) -> bool {
@@ -181,15 +182,15 @@ fn is_han(cpt: u32) -> bool {
 fn normalize_nfd(cpts: const u32[:]) -> u32[>..] {
     var out: u32[>..] = [];
     for cpt in cpts {
-        let i = lower_bound(NFD_FIRST) { it <= cpt } - 1;
-        out.push(if NFD_FIRST[i] <= cpt && cpt <= NFD_LAST[i] { NFD_TO[i] } else { cpt });
+        let i = upper_bound(NFD_FIRST, cpt) - 1;
+        out.push(if at(NFD_FIRST, i) <= cpt && cpt <= at(NFD_LAST, i) { at(NFD_TO, i) as u32 } else { cpt });
     }
     return out;
 }
 
 fn canonical_class(cpt: u32) -> u8 {
-    let i, found = binary_search(CCC_CPT, cpt);
-    return if found { CCC_CLASS[i] } else { 0 };
+    let i, found = search(CCC_CPT, cpt);
+    return if found { at(CCC_CLASS, i) as u8 } else { 0 };
 }
 
 fn canonical_decompose(cpt: u32, out: u32[>..]&, pending: u32[>..<]&) {
@@ -204,10 +205,10 @@ fn canonical_decompose(cpt: u32, out: u32[>..]&, pending: u32[>..<]&) {
             if index % 28 != 0 { out.push(0x11A7 + index % 28); }
             continue;
         }
-        let i, found = binary_search(DEC_CPT, c);
+        let i, found = search(DEC_CPT, c);
         if !found { out.push(c); continue; }
-        if DEC_SECOND[i] != 0 { pending.push(DEC_SECOND[i]); }
-        pending.push(DEC_FIRST[i]);
+        if at(DEC_SECOND, i) != 0 { pending.push(at(DEC_SECOND, i) as u32); }
+        pending.push(at(DEC_FIRST, i) as u32);
     }
 }
 
@@ -219,8 +220,8 @@ fn canonical_compose(first: u32, second: u32) -> u32 {
        second > 0x11A7 && second < 0x11A7 + 28 {
         return first + second - 0x11A7;
     }
-    let i, found = binary_search(COMP_PAIR, (first as u64) << 32 | second);
-    return if found { COMP_TO[i] } else { 0 };
+    let i, found = search(COMP_PAIR, (first as u64) << 32 | second);
+    return if found { at(COMP_TO, i) as u32 } else { 0 };
 }
 
 fn normalize_nfc(cpts: const u32[:]) -> u32[>..] {

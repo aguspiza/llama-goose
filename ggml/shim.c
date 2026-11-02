@@ -102,3 +102,85 @@ void lg_gguf_get_arr_f32(const struct gguf_context * ctx, int64_t id, lg_f32s ds
 void lg_gguf_get_arr_u8(const struct gguf_context * ctx, int64_t id, lg_bytes dst) {
     memcpy(dst.data, gguf_get_arr_data(ctx, id), (size_t) dst.len);
 }
+
+//
+// backends, buffers, and tensor data
+//
+#include "ggml-backend.h"
+#include "ggml-alloc.h"
+#include <stdio.h>
+
+#ifdef _WIN32
+#define lg_fseek _fseeki64
+#else
+#define lg_fseek fseeko
+#endif
+
+struct ggml_tensor * lg_get_tensor(struct ggml_context * ctx, lg_bytes name) {
+    return ggml_get_tensor(ctx, lg_cstr(name));
+}
+
+void lg_tensor_name(const struct ggml_tensor * t, gs_rref out) { lg_append_cstr(out, t->name); }
+void lg_set_name(struct ggml_tensor * t, lg_bytes name) { ggml_set_name(t, lg_cstr(name)); }
+int64_t lg_tensor_nb(const struct ggml_tensor * t, int32_t i) { return (int64_t) t->nb[i]; }
+
+// Reads the data of every tensor in ctx from a GGUF file: at the file's data
+// offset plus the tensor's own. False if the file cannot be read.
+bool lg_load_tensor_data(const struct gguf_context * meta, struct ggml_context * ctx, lg_bytes path) {
+    FILE * f = fopen(lg_cstr(path), "rb");
+    if (!f) {
+        return false;
+    }
+    const size_t data_offset = gguf_get_data_offset(meta);
+    bool ok = true;
+    void * tmp = NULL;
+    size_t tmp_size = 0;
+    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx); t && ok; t = ggml_get_next_tensor(ctx, t)) {
+        const int64_t id = gguf_find_tensor(meta, ggml_get_name(t));
+        if (id < 0) {
+            continue;
+        }
+        const size_t n = ggml_nbytes(t);
+        if (n > tmp_size) {
+            tmp = realloc(tmp, n);
+            tmp_size = n;
+        }
+        ok = lg_fseek(f, (long long) (data_offset + gguf_get_tensor_offset(meta, id)), SEEK_SET) == 0 &&
+             fread(tmp, 1, n, f) == n;
+        if (ok) {
+            ggml_backend_tensor_set(t, tmp, 0, n);
+        }
+    }
+    free(tmp);
+    fclose(f);
+    return ok;
+}
+
+void lg_backend_tensor_set_i32(struct ggml_tensor * t, lg_i32s src) {
+    ggml_backend_tensor_set(t, src.data, 0, (size_t) src.len * sizeof(int32_t));
+}
+
+typedef struct { int64_t * data; int64_t len; } lg_i64s;
+void lg_backend_tensor_set_i64(struct ggml_tensor * t, lg_i64s src) {
+    ggml_backend_tensor_set(t, src.data, 0, (size_t) src.len * sizeof(int64_t));
+}
+
+void lg_backend_tensor_set_f32(struct ggml_tensor * t, lg_f32s src) {
+    ggml_backend_tensor_set(t, src.data, 0, (size_t) src.len * sizeof(float));
+}
+
+// f32 values into an f16 tensor.
+void lg_backend_tensor_set_f16(struct ggml_tensor * t, lg_f32s src) {
+    ggml_fp16_t * tmp = (ggml_fp16_t *) malloc((size_t) src.len * sizeof(ggml_fp16_t));
+    ggml_fp32_to_fp16_row(src.data, tmp, src.len);
+    ggml_backend_tensor_set(t, tmp, 0, (size_t) src.len * sizeof(ggml_fp16_t));
+    free(tmp);
+}
+
+void lg_backend_tensor_get_f32(const struct ggml_tensor * t, lg_f32s dst, int64_t offset) {
+    ggml_backend_tensor_get(t, dst.data, (size_t) offset * sizeof(float), (size_t) dst.len * sizeof(float));
+}
+
+ggml_gallocr_t lg_gallocr_new(ggml_backend_t backend) {
+    return ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+}

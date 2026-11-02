@@ -103,5 +103,10 @@ if [[ -n $missing ]]; then
     echo "$missing" | sed 's/^/  /'
 fi
 
+# The generated Goose: the Unicode tables and the BPE pre-tokenizers.
+git -C "$llama" archive "$new" src/unicode-data.cpp src/llama-vocab.h src/llama-vocab.cpp | tar -x -C "$tmp"
+python -I "$root/scripts/gen-unicode-data.py" "$tmp/src/unicode-data.cpp" "$root/llama/unicode_data.goose"
+python -I "$root/scripts/gen-vocab-pre.py" "$tmp/src" "$root/llama/vocab_pre.goose"
+
 echo "$new" > "$root/UPSTREAM"
 echo "ggml copied at ggml $version; UPSTREAM is now ${new:0:9}. Next: scripts/test.sh"

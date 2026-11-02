@@ -62,3 +62,7 @@ extern "gguf_get_tensor_offset" fn get_tensor_offset(ctx: Ctx, id: i64) -> i64;
 extern "lg_gguf_get_tensor_name" fn get_tensor_name(ctx: Ctx, id: i64, out: u8[>..]&);
 extern "gguf_get_tensor_type" fn get_tensor_type(ctx: Ctx, id: i64) -> i32;
 extern "gguf_get_tensor_size" fn get_tensor_size(ctx: Ctx, id: i64) -> i64;
+
+// Reads every tensor of ctx (made by init_with_tensors and allocated in a
+// backend buffer) from the file; false if it cannot be read.
+extern "lg_load_tensor_data" fn load_tensor_data(meta: Ctx, ctx: ggml::Ctx, path: const u8[:]) -> bool;

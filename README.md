@@ -5,7 +5,26 @@ A plan to port [llama.cpp](https://github.com/ggml-org/llama.cpp) to
 instead of CMake. The goals are shorter build times, lower memory use, faster
 inference and source code that is easier to read.
 
-This README is the feasibility study. No code has been ported yet.
+## Status
+
+Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
+
+| Part | State | Checked against llama.cpp |
+|---|---|---|
+| ggml (C, CPU backend) | built by `goose build`, unchanged | `tests/ggml_smoke` |
+| Unicode, pre-tokenizer splits | ported | `tests/unicode_split` |
+| SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
+| WPM, UGM, RWKV, PLaMo tokenizers | load, do not tokenize yet | |
+| model loading, KV cache, decode | ported for gemma3 | `tools/simple` |
+| other architectures | not yet | |
+| sampling, grammars, chat templates, `common/`, server | not yet | |
+
+`tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
+and greedy sampling it writes byte for byte the text llama.cpp's
+`llama-simple` writes, over 200 generated tokens on four prompts, at the
+same speed (77-93 tokens/s on both, on a Ryzen 7 5700U).
+
+The rest of this README is the feasibility study written before the port.
 
 ## Measurements
 
@@ -171,7 +190,14 @@ ggml/               ggml, copied unchanged from llama.cpp, as a Goose package:
   ggml.build          the sidecar: the C sources goose build compiles
   shim.c              the few calls Goose cannot make directly
   units/              wrappers for sources whose file names collide
-scripts/            build, test and weekly sync
+llama/              libllama in Goose (package `llama`):
+  unicode.goose       pre-tokenizer splits, NFD/NFC (unicode_data.* generated)
+  ecma_regex.goose    a backtracking matcher with std::regex's rules
+  vocab.goose         vocabularies and tokenizers (vocab_pre.goose generated)
+  model.goose         hyperparameters and weights
+  context.goose       KV cache, graphs, decode
+tools/              programs: simple.goose
+scripts/            build, test, weekly sync, generators
 tests/              Goose programs that exit non-zero on failure
 ```
 
@@ -192,8 +218,20 @@ scripts/build.sh tests/ggml_smoke.goose     # GOOSE=path/to/goose.exe to pick th
 scripts/test.sh                             # build and run everything in tests/
 ```
 
-ggml's C is compiled once (about 1.5 minutes) and cached under `~/.goose`;
-after that a program builds in under a second.
+`goose build` compiles a program's C at `-O2` at most, and gcc only
+vectorizes at `-O3`, so `scripts/build.sh` runs goose build's own commands
+(from `--dry-run`) with `-O3 -march=native`. ggml gets `-O3` from its
+sidecar.
+
+ggml's C is compiled once (about 1.5 minutes) and cached under `~/.goose`.
+After that `tools/simple` (about 7,300 lines of Goose with ggml's bindings)
+builds in about 7 seconds: 0.3 s for Goose to write 1.5 MB of C, the rest
+gcc on that one file.
+
+Goose keeps arrays of up to 256 elements in static data and builds larger
+ones element by element when the program starts. gcc took 30 s to optimize
+that function for the Unicode tables, so they are one binary file the
+program embeds (`embed_file`).
 
 ## Weekly sync with upstream
 
