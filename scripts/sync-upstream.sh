@@ -93,6 +93,7 @@ EOF
 # Sources ggml's CMake builds for an x86 CPU that the sidecar does not compile,
 # itself or through a wrapper in units/.
 covered=$( { sed -n -E 's#^ *"src/([^"]+)",#\1#p' "$root/ggml/ggml.build"
+             sed -n -E 's#^ *"\.\./src/([^"]+)",#\1#p' "$root/ggml/cpu/ggml_cpu.build"
              sed -n -E 's#^\#include "\.\./src/([^"]+)"#\1#p' "$root/ggml/units/"*.c* ; } | sort -u)
 missing=$( { sed -n -E 's#^ +(ggml[A-Za-z0-9_.-]*\.(c|cpp)|gguf\.cpp)\)?$#\1#p' "$root/ggml/src/CMakeLists.txt"
              grep -o -E 'ggml-cpu/[A-Za-z0-9_/-]+\.(c|cpp)' "$root/ggml/src/ggml-cpu/CMakeLists.txt" ; } \

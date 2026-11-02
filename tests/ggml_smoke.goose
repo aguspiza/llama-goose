@@ -1,5 +1,7 @@
 // ggml from Goose: a 3x4 by 4x2 matrix product, checked against a plain loop.
 import ggml from "../ggml";
+import ggml_cpu from "../ggml/cpu";
+import ggml_shim from "../ggml/shim";
 
 let K = 4;
 let M = 3;

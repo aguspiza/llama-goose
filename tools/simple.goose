@@ -4,6 +4,8 @@
 import std;
 import os;
 import ggml from "../ggml";
+import ggml_cpu from "../ggml/cpu";
+import ggml_shim from "../ggml/shim";
 import llama from "../llama";
 import llama.vocab;
 import llama.model;

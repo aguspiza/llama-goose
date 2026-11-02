@@ -3,6 +3,7 @@
 // picks on the CPU. The graph of each architecture follows llama.cpp's
 // src/models/<arch>.cpp operation by operation.
 // port-of: src/llama-context.cpp src/llama-graph.cpp src/llama-kv-cache.cpp src/models/gemma3.cpp src/models/llama.cpp
+// port-of: src/models/lfm2.cpp src/models/lfm-base.cpp src/llama-memory-recurrent.cpp
 import std;
 import math;
 import os;
@@ -17,8 +18,9 @@ struct Context {
     n_threads: i32 = 4,
     kv_ctx: ggml::Ctx,
     kv_buf: ggml::Buffer,
-    k: ggml::Tensor[..512],      // per layer: [n_embd_k_gqa, n_ctx], f16
+    k: ggml::Tensor[..512],      // per attention layer: [n_embd_k_gqa, n_ctx], f16
     v: ggml::Tensor[..512],
+    r: ggml::Tensor[..512],      // per recurrent layer: its state, [n_embd_r, 1], f32
     n_past: i64,                 // the cells in use: cell i holds position i
     galloc: ggml::Gallocr,
 }
@@ -29,10 +31,18 @@ fn pad_to(n: i64, to: i64) -> i64 { (n + to - 1) / to * to }
 fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     c.n_ctx = pad_to(n_ctx, 256);
     let n_layer = m.hp.n_layer as i64;
-    c.kv_ctx = ggml::init(2 * n_layer * ggml::tensor_overhead(), true);
+    c.kv_ctx = ggml::init(3 * n_layer * ggml::tensor_overhead(), true);
     for il in n_layer {
+        if m.hp.is_recr[il] {
+            c.k.push(ggml::NONE);
+            c.v.push(ggml::NONE);
+            c.r.push(ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F32, model::n_embd_r(m.hp), 1));
+            ggml::set_name(c.r[il], str("cache_r_l", il));
+            continue;
+        }
         c.k.push(ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_k_gqa(m.hp, il), c.n_ctx));
         c.v.push(ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_v_gqa(m.hp, il), c.n_ctx));
+        c.r.push(ggml::NONE);
         ggml::set_name(c.k[il], str("cache_k_l", il));
         ggml::set_name(c.v[il], str("cache_v_l", il));
     }
@@ -50,6 +60,7 @@ struct Inputs {
     kv_idxs: ggml::Tensor,
     mask: ggml::Tensor,
     mask_swa: ggml::Tensor,
+    s_copy: ggml::Tensor,        // the recurrent state rows to read: [0]
 }
 
 // Per graph: what the graph builders read.
@@ -273,6 +284,76 @@ fn build_llama(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     return ggml::mul_mat(ctx, m.output, cur);
 }
 
+// A short convolution over the layer's last l_cache - 1 inputs, which its
+// recurrent state keeps (build_lfm_shortconv, one sequence).
+fn build_shortconv(b: Build&, m: model::Model&, c: Context&, ly: model::Layer, cur: ggml::Tensor, il: i64) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let d_conv = hp.n_shortconv_l_cache as i64 - 1;
+    let n_embd = hp.n_embd as i64;
+
+    var bcx = ggml::mul_mat(ctx, ly.shortconv_in_proj, cur);
+    bcx = ggml::reshape_3d(ctx, bcx, ggml::ne(bcx, 0), b.n_tokens, 1);
+    let chunk = ggml::ne(bcx, 0) / 3;
+    let es = ggml::element_size(bcx);
+    let nb1 = ggml::nb(bcx, 1);
+    let nb2 = ggml::nb(bcx, 2);
+    let bb = ggml::view_3d(ctx, bcx, chunk, b.n_tokens, 1, nb1, nb2, 0);
+    let cc = ggml::view_3d(ctx, bcx, chunk, b.n_tokens, 1, nb1, nb2, chunk * es);
+    let xx = ggml::view_3d(ctx, bcx, chunk, b.n_tokens, 1, nb1, nb2, 2 * chunk * es);
+    var bx = ggml::transpose(ctx, ggml::mul(ctx, bb, xx));
+
+    // the state's rows (build_rs), and the inputs it keeps in front of this batch's
+    let state = c.r[il];
+    let conv = ggml::reshape_3d(ctx, ggml::get_rows(ctx, state, b.inp.s_copy), d_conv, n_embd, 1);
+    bx = ggml::concat(ctx, conv, bx, 0);
+
+    // the last d_conv inputs become the new state
+    let snap = ggml::view_3d(ctx, bx, d_conv, ggml::ne(bx, 1), ggml::ne(bx, 2), ggml::nb(bx, 1), ggml::nb(bx, 2),
+                             (ggml::ne(bx, 0) - d_conv) * ggml::element_size(bx));
+    ggml::build_forward_expand(b.gf, ggml::cpy(ctx, snap, ggml::view_2d(ctx, state, d_conv * n_embd, 1, ggml::nb(state, 1), 0)));
+
+    let conv_out = ggml::ssm_conv(ctx, bx, ly.shortconv_conv);
+    var y = ggml::mul(ctx, cc, conv_out);
+    y = ggml::reshape_2d(ctx, y, ggml::ne(y, 0), b.n_tokens);
+    return ggml::mul_mat(ctx, ly.shortconv_out_proj, y);
+}
+
+// models/lfm2.cpp
+fn build_lfm2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd_head = hp.n_embd_head_v as i64;
+
+    var cur = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    ggml::build_forward_expand(b.gf, cur);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var prev = cur;
+        cur = build_norm_rms(b, m, cur, ly.attn_norm);
+        if hp.is_recr[il] {
+            cur = build_shortconv(b, m, c, ly, cur, il);
+        } else {
+            var q, k, v = build_qkv(b, m, ly, cur, il);
+            q = build_norm_rms(b, m, q, ly.attn_q_norm);
+            k = build_norm_rms(b, m, k, ly.attn_k_norm);
+            q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+            k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+            cur = build_attn(b, m, c, il, ly.wo, ggml::NONE, q, k, v, 1.0 / sqrt(n_embd_head as f32));
+        }
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            prev = ggml::get_rows(ctx, prev, b.inp.out_ids);
+        }
+        cur = ggml::add(ctx, prev, cur);
+        let ffn_norm_out = build_norm_rms(b, m, cur, ly.ffn_norm);
+        cur = ggml::add(ctx, cur, build_ffn_swiglu(b, ly, ffn_norm_out));
+    }
+    cur = build_norm_rms(b, m, cur, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
 let NEG_INF: f32 = -1.0 / 0.0;
 
 // mask[t][j] for token t (at position pos0 + t) and cell j: 0, or -inf when
@@ -286,6 +367,11 @@ fn fill_mask(mask: f32[>..]&, n_kv: i64, n_tokens: i64, pos0: i64, n_used: i64, 
             mask.push(if masked { NEG_INF } else { 0.0 });
         }
     }
+}
+
+fn any_recurrent(m: model::Model&) -> bool {
+    for r in m.hp.is_recr { if r { return true; } }
+    return false;
 }
 
 // Runs tokens, at positions n_past.., through the model; writes the logits
@@ -308,6 +394,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
             kv_idxs: ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens),
             mask: ggml::new_tensor_2d(gctx, ggml::TYPE_F16, c.n_ctx, n_tokens),
             mask_swa: ggml::NONE,
+            s_copy: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, 1),
         },
         tracing: false,
         traced: [],
@@ -324,10 +411,12 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     ggml::set_input(b.inp.kv_idxs);
     ggml::set_input(b.inp.mask);
     if has_swa { ggml::set_input(b.inp.mask_swa); }
+    ggml::set_input(b.inp.s_copy);
 
     let out = match m.hp.arch {
         model::ARCH_GEMMA3 => build_gemma3(b, m, c),
         model::ARCH_LLAMA => build_llama(b, m, c),
+        model::ARCH_LFM2 => build_lfm2(b, m, c),
         _ => { abort("decode: unknown architecture"); },
     };
     ggml::set_output(out);
@@ -341,6 +430,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     ggml::backend_set_i32(b.inp.pos, pos);
     ggml::backend_set_i32(b.inp.out_ids, [(n_tokens - 1) as i32]);
     ggml::backend_set_i64(b.inp.kv_idxs, idxs);
+    if any_recurrent(m) { ggml::backend_set_i32(b.inp.s_copy, [0]); }
     var mask: f32[>..] = [];
     fill_mask(mask, c.n_ctx, n_tokens, pos0, pos0 + n_tokens, 0);
     ggml::backend_set_f16(b.inp.mask, mask);

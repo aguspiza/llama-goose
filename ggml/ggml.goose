@@ -26,8 +26,6 @@ let ROPE_TYPE_NEOX = 2;
 
 let DEFAULT_GRAPH_SIZE = 2048;
 
-// contexts
-extern "lg_init" fn init(mem_size: i64, no_alloc: bool) -> Ctx;
 extern "ggml_free" fn free(ctx: Ctx);
 extern "ggml_tensor_overhead" fn tensor_overhead() -> i64;
 extern "ggml_graph_overhead" fn graph_overhead() -> i64;
@@ -37,12 +35,6 @@ extern "ggml_graph_overhead_custom" fn graph_overhead_custom(size: i64, grads: b
 extern "ggml_new_tensor_1d" fn new_tensor_1d(ctx: Ctx, typ: i32, ne0: i64) -> Tensor;
 extern "ggml_new_tensor_2d" fn new_tensor_2d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64) -> Tensor;
 extern "ggml_new_tensor_3d" fn new_tensor_3d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64, ne2: i64) -> Tensor;
-extern "lg_get_tensor" fn get_tensor(ctx: Ctx, name: const u8[:]) -> Tensor;
-extern "lg_tensor_name" fn tensor_name(t: Tensor, out: u8[>..]&);
-extern "lg_set_name" fn set_name(t: Tensor, name: const u8[:]);
-extern "lg_tensor_ne" fn ne(t: Tensor, i: i32) -> i64;
-extern "lg_tensor_nb" fn nb(t: Tensor, i: i32) -> i64;
-extern "lg_tensor_type" fn tensor_type(t: Tensor) -> i32;
 extern "ggml_nbytes" fn nbytes(t: Tensor) -> i64;
 extern "ggml_nelements" fn nelements(t: Tensor) -> i64;
 extern "ggml_row_size" fn row_size(typ: i32, ne: i64) -> i64;
@@ -70,6 +62,12 @@ extern "ggml_reshape_3d" fn reshape_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, 
 extern "ggml_view_2d" fn view_2d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, nb1: i64, offset: i64) -> Tensor;
 extern "ggml_view_4d" fn view_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64,
                                  nb1: i64, nb2: i64, nb3: i64, offset: i64) -> Tensor;
+extern "ggml_view_3d" fn view_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, nb1: i64, nb2: i64, offset: i64) -> Tensor;
+extern "ggml_transpose" fn transpose(ctx: Ctx, a: Tensor) -> Tensor;
+extern "ggml_concat" fn concat(ctx: Ctx, a: Tensor, b: Tensor, dim: i32) -> Tensor;
+extern "ggml_cpy" fn cpy(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
+extern "ggml_ssm_conv" fn ssm_conv(ctx: Ctx, sx: Tensor, c: Tensor) -> Tensor;
+extern "ggml_element_size" fn element_size(t: Tensor) -> i64;
 extern "ggml_permute" fn permute(ctx: Ctx, a: Tensor, ax0: i32, ax1: i32, ax2: i32, ax3: i32) -> Tensor;
 extern "ggml_rope_ext" fn rope_ext(ctx: Ctx, a: Tensor, pos: Tensor, freqs: Tensor, n_dims: i32, mode: i32,
                                    n_ctx_orig: i32, freq_base: f32, freq_scale: f32, ext_factor: f32,
@@ -83,31 +81,13 @@ extern "ggml_new_graph_custom" fn new_graph_custom(ctx: Ctx, size: i64, grads: b
 extern "ggml_new_graph" fn new_graph(ctx: Ctx) -> Graph;
 extern "ggml_build_forward_expand" fn build_forward_expand(g: Graph, t: Tensor);
 extern "ggml_graph_n_nodes" fn graph_n_nodes(g: Graph) -> i32;
-extern "ggml_graph_compute_with_ctx" fn graph_compute_with_ctx(ctx: Ctx, g: Graph, n_threads: i32) -> i32;
 
-// backends and buffers
-extern "ggml_backend_cpu_init" fn backend_cpu_init() -> Backend;
-extern "ggml_backend_cpu_set_n_threads" fn backend_cpu_set_n_threads(b: Backend, n: i32);
 extern "ggml_backend_free" fn backend_free(b: Backend);
 extern "ggml_backend_alloc_ctx_tensors" fn backend_alloc_ctx_tensors(ctx: Ctx, b: Backend) -> Buffer;
 extern "ggml_backend_buffer_clear" fn backend_buffer_clear(buf: Buffer, value: u8);
 extern "ggml_backend_buffer_free" fn backend_buffer_free(buf: Buffer);
 extern "ggml_backend_graph_compute" fn backend_graph_compute(b: Backend, g: Graph) -> i32;
-extern "lg_gallocr_new" fn gallocr_new(b: Backend) -> Gallocr;
 extern "ggml_gallocr_free" fn gallocr_free(g: Gallocr);
 extern "ggml_gallocr_alloc_graph" fn gallocr_alloc_graph(g: Gallocr, graph: Graph) -> bool;
 
-// tensor data
-extern "lg_tensor_write_f32" fn write_f32(t: Tensor, src: const f32[:]);
-extern "lg_tensor_read_f32" fn read_f32(t: Tensor, dst: f32[:]);
-extern "lg_backend_tensor_set_i32" fn backend_set_i32(t: Tensor, src: const i32[:]);
-extern "lg_backend_tensor_set_i64" fn backend_set_i64(t: Tensor, src: const i64[:]);
-extern "lg_backend_tensor_set_f32" fn backend_set_f32(t: Tensor, src: const f32[:]);
-extern "lg_backend_tensor_set_f16" fn backend_set_f16(t: Tensor, src: const f32[:]);
-// dst.len floats from element `offset` on.
-extern "lg_backend_tensor_get_f32" fn backend_get_f32(t: Tensor, dst: f32[:], offset: i64);
 
-// Allocates the tensors of ctx as llama.cpp does: the ones in matmul (read
-// by mul_mat) in the CPU's extra buffer types (CPU_REPACK) where they fit,
-// the rest in plain CPU memory. bufs gets the buffers, ending with p == 0.
-extern "lg_alloc_weights" fn alloc_weights(ctx: Ctx, matmul: const Tensor[:], bufs: Buffer[:]) -> bool;

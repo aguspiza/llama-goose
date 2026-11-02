@@ -1,5 +1,5 @@
 // A model: its hyperparameters and its weights, loaded from a GGUF file.
-// So far the dense decoder architectures: gemma3 and llama.
+// So far: gemma3, llama, and lfm2 (attention and short convolutions).
 // port-of: src/llama-model.cpp src/llama-hparams.cpp src/llama-hparams.h src/llama-model-loader.cpp
 import std;
 import math;
@@ -17,6 +17,7 @@ let SWA_STANDARD = 1;
 let ARCH_UNKNOWN = 0;
 let ARCH_GEMMA3 = 1;
 let ARCH_LLAMA = 2;
+let ARCH_LFM2 = 3;
 
 struct HParams {
     arch: i64,
@@ -27,6 +28,8 @@ struct HParams {
     n_head_kv: u32[..512],
     n_ff: u32[..512],
     is_swa: bool[..512],
+    is_recr: bool[..512],        // a recurrent layer (lfm2's short convolutions)
+    n_shortconv_l_cache: u32,
     n_embd_head_k: u32,
     n_embd_head_v: u32,
     n_rot: u32,
@@ -77,6 +80,9 @@ struct Layer {
     ffn_up_b: ggml::Tensor,
     ffn_down_b: ggml::Tensor,
     ffn_post_norm: ggml::Tensor,
+    shortconv_conv: ggml::Tensor,
+    shortconv_in_proj: ggml::Tensor,
+    shortconv_out_proj: ggml::Tensor,
 }
 
 struct Model {
@@ -96,12 +102,13 @@ struct Model {
 //
 
 fn arch_name_of(arch: i64) -> const u8[:] {
-    match arch { ARCH_GEMMA3 => "gemma3", ARCH_LLAMA => "llama", _ => "unknown" }
+    match arch { ARCH_GEMMA3 => "gemma3", ARCH_LLAMA => "llama", ARCH_LFM2 => "lfm2", _ => "unknown" }
 }
 
 fn arch_from_name(name: const u8[:]) -> i64 {
     if name == "gemma3" { return ARCH_GEMMA3; }
     if name == "llama" { return ARCH_LLAMA; }
+    if name == "lfm2" { return ARCH_LFM2; }
     return ARCH_UNKNOWN;
 }
 
@@ -165,7 +172,7 @@ fn load_hparams(m: Model&) {
     get_u32(m, "block_count", hp.n_layer);
     guard hp.n_layer > 0 && hp.n_layer <= MAX_LAYERS else { abort("bad block_count"); }
     let n = hp.n_layer as i64;
-    for i in n { hp.n_head.push(0); hp.n_head_kv.push(0); hp.n_ff.push(0); hp.is_swa.push(false); }
+    for i in n { hp.n_head.push(0); hp.n_head_kv.push(0); hp.n_ff.push(0); hp.is_swa.push(false); hp.is_recr.push(false); }
     get_u32_or_arr(m, "feed_forward_length", hp.n_ff, n, false);
     get_u32_or_arr(m, "attention.head_count", hp.n_head, n, false);
     for i in n { hp.n_head_kv[i] = hp.n_head[i]; }
@@ -201,6 +208,7 @@ fn load_hparams(m: Model&) {
     match hp.arch {
         ARCH_GEMMA3 => load_hparams_gemma3(m),
         ARCH_LLAMA => load_hparams_llama(m),
+        ARCH_LFM2 => load_hparams_lfm2(m),
         _ => abort("unknown architecture"),
     }
 }
@@ -252,6 +260,23 @@ fn load_hparams_llama(m: Model&) {
     get_f32(m, "attention.layer_norm_rms_epsilon", m.hp.f_norm_rms_eps);
     m.hp.rope_type = ggml::ROPE_TYPE_NORMAL;
 }
+
+// models/lfm2.cpp: a layer without KV heads is a short convolution.
+fn load_hparams_lfm2(m: Model&) {
+    get_u32(m, "shortconv.l_cache", m.hp.n_shortconv_l_cache);
+    get_f32(m, "attention.layer_norm_rms_epsilon", m.hp.f_norm_rms_eps);
+    for il in m.hp.n_layer as i64 { m.hp.is_recr[il] = m.hp.n_head_kv[il] == 0; }
+    var n_decision: u32 = 0;
+    if get_u32(m, "decision.block_count", n_decision, false) && n_decision > 0 { abort("lfm2 decision heads: not ported yet"); }
+    if get_u32(m, "attention.sliding_window", m.hp.n_swa, false) && m.hp.n_swa > 0 {
+        m.hp.swa_type = SWA_STANDARD;
+        for il in m.hp.n_layer as i64 { m.hp.is_swa[il] = !m.hp.is_recr[il]; }
+    }
+    m.hp.rope_type = ggml::ROPE_TYPE_NEOX;
+}
+
+// The size of a recurrent layer's state (n_embd_r).
+fn n_embd_r(hp: HParams&) -> i64 { hp.n_embd as i64 * (hp.n_shortconv_l_cache - 1) }
 
 //
 // tensors
@@ -330,6 +355,32 @@ fn load_tensors_gemma3(m: Model&) {
     }
 }
 
+fn load_tensors_lfm2(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "token_embd_norm.weight");    // llama.cpp's fix for a wrong tensor name
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        if tensor(m, str("blk.", il, ".ffn_gate_inp.weight"), false).p != 0 { abort("lfm2 with experts (MoE): not ported yet"); }
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        if !m.hp.is_recr[il] {
+            ly.attn_q_norm = layer_tensor(m, il, "attn_q_norm");
+            ly.attn_k_norm = layer_tensor(m, il, "attn_k_norm");
+            load_qkv(m, il, ly);
+            ly.wo = layer_tensor(m, il, "attn_output");
+        } else {
+            ly.shortconv_conv = layer_tensor(m, il, "shortconv.conv");
+            ly.shortconv_in_proj = layer_tensor(m, il, "shortconv.in_proj");
+            ly.shortconv_out_proj = layer_tensor(m, il, "shortconv.out_proj");
+        }
+        m.layers.push(ly);
+    }
+}
+
 // The weights read by mul_mat, which llama.cpp places in the CPU's repack
 // buffers where it can (its create_tensor gives them GGML_OP_MUL_MAT).
 fn matmul_weights(m: Model&) -> ggml::Tensor[>..] {
@@ -338,6 +389,7 @@ fn matmul_weights(m: Model&) -> ggml::Tensor[>..] {
     for ly in m.layers {
         add(ly.wqkv); add(ly.wq); add(ly.wk); add(ly.wv); add(ly.wo);
         add(ly.ffn_gate); add(ly.ffn_up); add(ly.ffn_down);
+        add(ly.shortconv_in_proj); add(ly.shortconv_out_proj);
     }
     // a tied output is the token embeddings, read by get_rows
     if m.output.p != m.tok_embd.p { add(m.output); }
@@ -361,6 +413,7 @@ fn load(m: Model&, path: const u8[:]) {
     match m.hp.arch {
         ARCH_GEMMA3 => load_tensors_gemma3(m),
         ARCH_LLAMA => load_tensors_llama(m),
+        ARCH_LFM2 => load_tensors_lfm2(m),
         _ => abort("unknown architecture"),
     }
 

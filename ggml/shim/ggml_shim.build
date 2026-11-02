@@ -1,0 +1,6 @@
+// The C behind the bindings in ggml.goose and gguf.goose. A package of its
+// own, so that changing it does not rebuild ggml.
+c_sources = ["shim.c"];
+c_include = ["../include", "../src"];
+c_defines = ["NDEBUG", "_CRT_SECURE_NO_WARNINGS"];
+c_flags_cc = ["-O3"];

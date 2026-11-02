@@ -15,7 +15,7 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | Unicode, pre-tokenizer splits | ported | `tests/unicode_split` |
 | SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
 | WPM, UGM, RWKV, PLaMo tokenizers | load, do not tokenize yet | |
-| model loading, KV cache, decode | ported for gemma3 and llama | `tools/simple` |
+| model loading, KV cache, decode | ported for gemma3, llama, lfm2 | `tools/simple` |
 | other architectures | not yet | |
 | sampling, grammars, chat templates, `common/`, server | not yet | |
 
@@ -24,13 +24,16 @@ and greedy sampling it writes byte for byte the text llama.cpp's
 `llama-simple` writes, over 200 generated tokens on four prompts, at the
 same speed (77-93 tokens/s on both, on a Ryzen 7 5700U).
 
-With MiniCPM5 2B (llama architecture, Q4_K_M) one of two prompts gives the
-same 100 tokens; the other parts after about 60. The cause is one Q4_K
-matrix product (weights repacked for AVX2, as llama.cpp repacks them):
-same input, same weights in the same buffer type, and llama.cpp's result
-differs from the port's by about 1e-3 at the second step, though not at the
-first. Both are as far from the exact product. Not explained yet; the
-weights are placed exactly as llama.cpp places them (915.47 MiB repacked).
+Checked the same way, all byte for byte over 150 generated tokens and three
+prompts each, at llama.cpp's speed: gemma-3 270M (Q8_0), LFM2.5 230M (Q8_0
+and Q4_K_M; lfm2 mixes attention with short convolutions that keep a
+recurrent state) and MiniCPM5 2B (llama architecture, Q4_K_M).
+
+Two details matter for bit-identical results. The weights read by mul_mat
+go to the CPU's repack buffers, as llama.cpp places them. And ggml's base
+is compiled without `-march=native`, as CMake compiles it, while its CPU
+backend is compiled with it: with FMA, gcc fuses the multiply-adds of the
+reference quantizers and their results differ in the last bits.
 `LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
 llama.cpp's eval callback.
 
@@ -195,10 +198,11 @@ folders next to this one, named `<name>.goose`.
 
 ```
 UPSTREAM            the llama.cpp commit this port follows
-ggml/               ggml, copied unchanged from llama.cpp, as a Goose package:
-  ggml.goose          Goose bindings (extern fn)
-  ggml.build          the sidecar: the C sources goose build compiles
-  shim.c              the few calls Goose cannot make directly
+ggml/               ggml, copied unchanged from llama.cpp, as three Goose packages:
+  ggml.goose          bindings (extern fn), and gguf.goose
+  ggml.build          the base's C, built as CMake builds it (not native)
+  cpu/                package ggml_cpu: the CPU backend, built -march=native
+  shim/               package ggml_shim: shim.c, the calls Goose cannot make directly
   units/              wrappers for sources whose file names collide
 llama/              libllama in Goose (package `llama`):
   unicode.goose       pre-tokenizer splits, NFD/NFC (unicode_data.* generated)
