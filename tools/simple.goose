@@ -64,6 +64,13 @@ fn main() {
         write_stdout(text);
     }
 
+    // LLAMA_GOOSE_DUMP_LOGITS=file: append each step's logits to file (f32)
+    var dump_path: u8[>..] = [];
+    if env("LLAMA_GOOSE_DUMP_LOGITS", dump_path) {
+        write_file(dump_path, "");
+        write_stderr(str("prompt tokens: ", prompt_tokens, "\n"));
+    }
+
     let t_start = clock();
     var n_decode = 0;
     var logits: f32[>..] = [];
@@ -72,6 +79,7 @@ fn main() {
     var n_pos = 0;
     while n_pos + batch.len < n_prompt + n_predict {
         context::decode(c, m, batch, logits);
+        if dump_path.len > 0 { append_file(dump_path, bytes_of(logits)); }
         n_pos += batch.len;
         let t = argmax(logits);
         if vocab::is_eog(t) { break; }

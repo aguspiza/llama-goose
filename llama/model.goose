@@ -1,5 +1,5 @@
 // A model: its hyperparameters and its weights, loaded from a GGUF file.
-// So far the dense decoder architectures: gemma3.
+// So far the dense decoder architectures: gemma3 and llama.
 // port-of: src/llama-model.cpp src/llama-hparams.cpp src/llama-hparams.h src/llama-model-loader.cpp
 import std;
 import math;
@@ -16,6 +16,7 @@ let SWA_STANDARD = 1;
 
 let ARCH_UNKNOWN = 0;
 let ARCH_GEMMA3 = 1;
+let ARCH_LLAMA = 2;
 
 struct HParams {
     arch: i64,
@@ -51,12 +52,20 @@ struct HParams {
 fn n_embd_k_gqa(hp: HParams&, il: i64) -> i64 { hp.n_embd_head_k as i64 * hp.n_head_kv[il] }
 fn n_embd_v_gqa(hp: HParams&, il: i64) -> i64 { hp.n_embd_head_v as i64 * hp.n_head_kv[il] }
 
+// A layer's tensors; p == 0 for the ones its architecture or file lacks.
 struct Layer {
     attn_norm: ggml::Tensor,
+    wqkv: ggml::Tensor,
     wq: ggml::Tensor,
     wk: ggml::Tensor,
     wv: ggml::Tensor,
+    bqkv: ggml::Tensor,
+    bq: ggml::Tensor,
+    bk: ggml::Tensor,
+    bv: ggml::Tensor,
     wo: ggml::Tensor,
+    bo: ggml::Tensor,
+    rope_freqs: ggml::Tensor,
     attn_post_norm: ggml::Tensor,
     attn_q_norm: ggml::Tensor,
     attn_k_norm: ggml::Tensor,
@@ -64,6 +73,9 @@ struct Layer {
     ffn_gate: ggml::Tensor,
     ffn_up: ggml::Tensor,
     ffn_down: ggml::Tensor,
+    ffn_gate_b: ggml::Tensor,
+    ffn_up_b: ggml::Tensor,
+    ffn_down_b: ggml::Tensor,
     ffn_post_norm: ggml::Tensor,
 }
 
@@ -71,7 +83,7 @@ struct Model {
     hp: HParams,
     meta: gguf::Ctx,
     ctx: ggml::Ctx,          // the weights' tensors
-    buf: ggml::Buffer,       // and their data
+    bufs: ggml::Buffer[8],   // and their data, ending with p == 0
     backend: ggml::Backend,
     tok_embd: ggml::Tensor,
     output_norm: ggml::Tensor,
@@ -84,11 +96,12 @@ struct Model {
 //
 
 fn arch_name_of(arch: i64) -> const u8[:] {
-    match arch { ARCH_GEMMA3 => "gemma3", _ => "unknown" }
+    match arch { ARCH_GEMMA3 => "gemma3", ARCH_LLAMA => "llama", _ => "unknown" }
 }
 
 fn arch_from_name(name: const u8[:]) -> i64 {
     if name == "gemma3" { return ARCH_GEMMA3; }
+    if name == "llama" { return ARCH_LLAMA; }
     return ARCH_UNKNOWN;
 }
 
@@ -187,6 +200,7 @@ fn load_hparams(m: Model&) {
 
     match hp.arch {
         ARCH_GEMMA3 => load_hparams_gemma3(m),
+        ARCH_LLAMA => load_hparams_llama(m),
         _ => abort("unknown architecture"),
     }
 }
@@ -233,6 +247,12 @@ fn load_hparams_gemma3(m: Model&) {
     m.hp.rope_type = ggml::ROPE_TYPE_NEOX;
 }
 
+// models/llama.cpp
+fn load_hparams_llama(m: Model&) {
+    get_f32(m, "attention.layer_norm_rms_epsilon", m.hp.f_norm_rms_eps);
+    m.hp.rope_type = ggml::ROPE_TYPE_NORMAL;
+}
+
 //
 // tensors
 //
@@ -243,8 +263,50 @@ fn tensor(m: Model&, name: const u8[:], required: bool = true) -> ggml::Tensor {
     return t;
 }
 
-fn layer_tensor(m: Model&, il: i64, name: const u8[:], required: bool = true) -> ggml::Tensor {
-    return tensor(m, str("blk.", il, ".", name, ".weight"), required);
+fn layer_tensor(m: Model&, il: i64, name: const u8[:], required: bool = true, suffix: const u8[:] = "weight") -> ggml::Tensor {
+    return tensor(m, str("blk.", il, ".", name, ".", suffix), required);
+}
+
+fn layer_bias(m: Model&, il: i64, name: const u8[:]) -> ggml::Tensor { layer_tensor(m, il, name, false, "bias") }
+
+// Q, K and V: one fused tensor or three, each with an optional bias
+// (create_tensor_qkv).
+fn load_qkv(m: Model&, il: i64, ly: Layer&) {
+    ly.wqkv = layer_tensor(m, il, "attn_qkv", false);
+    if ly.wqkv.p != 0 {
+        ly.bqkv = layer_bias(m, il, "attn_qkv");
+    } else {
+        ly.wq = layer_tensor(m, il, "attn_q");
+        ly.wk = layer_tensor(m, il, "attn_k");
+        ly.wv = layer_tensor(m, il, "attn_v");
+    }
+    ly.bq = layer_bias(m, il, "attn_q");
+    ly.bk = layer_bias(m, il, "attn_k");
+    ly.bv = layer_bias(m, il, "attn_v");
+}
+
+fn load_tensors_llama(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    let rope_freqs = tensor(m, "rope_freqs.weight", false);   // one, shared by every layer
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        load_qkv(m, il, ly);
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.bo = layer_bias(m, il, "attn_output");
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        ly.rope_freqs = rope_freqs;
+        if tensor(m, str("blk.", il, ".ffn_gate_inp.weight"), false).p != 0 { abort("llama with experts (MoE): not ported yet"); }
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        ly.ffn_gate_b = layer_bias(m, il, "ffn_gate");
+        ly.ffn_down_b = layer_bias(m, il, "ffn_down");
+        ly.ffn_up_b = layer_bias(m, il, "ffn_up");
+        m.layers.push(ly);
+    }
 }
 
 fn load_tensors_gemma3(m: Model&) {
@@ -253,22 +315,33 @@ fn load_tensors_gemma3(m: Model&) {
     m.output = tensor(m, "output.weight", false);
     if m.output.p == 0 { m.output = m.tok_embd; }       // tied to the input embeddings
     for il in m.hp.n_layer as i64 {
-        m.layers.push(Layer {
-            attn_norm: layer_tensor(m, il, "attn_norm"),
-            wq: layer_tensor(m, il, "attn_q"),
-            wk: layer_tensor(m, il, "attn_k"),
-            wv: layer_tensor(m, il, "attn_v"),
-            wo: layer_tensor(m, il, "attn_output"),
-            attn_post_norm: layer_tensor(m, il, "post_attention_norm"),
-            attn_q_norm: layer_tensor(m, il, "attn_q_norm"),
-            attn_k_norm: layer_tensor(m, il, "attn_k_norm"),
-            ffn_norm: layer_tensor(m, il, "ffn_norm"),
-            ffn_gate: layer_tensor(m, il, "ffn_gate"),
-            ffn_up: layer_tensor(m, il, "ffn_up"),
-            ffn_down: layer_tensor(m, il, "ffn_down"),
-            ffn_post_norm: layer_tensor(m, il, "post_ffw_norm"),
-        });
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        load_qkv(m, il, ly);
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.attn_post_norm = layer_tensor(m, il, "post_attention_norm");
+        ly.attn_q_norm = layer_tensor(m, il, "attn_q_norm");
+        ly.attn_k_norm = layer_tensor(m, il, "attn_k_norm");
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_post_norm = layer_tensor(m, il, "post_ffw_norm");
+        m.layers.push(ly);
     }
+}
+
+// The weights read by mul_mat, which llama.cpp places in the CPU's repack
+// buffers where it can (its create_tensor gives them GGML_OP_MUL_MAT).
+fn matmul_weights(m: Model&) -> ggml::Tensor[>..] {
+    var out: ggml::Tensor[>..] = [];
+    fn add(t: ggml::Tensor) { if t.p != 0 { out.push(t); } }
+    for ly in m.layers {
+        add(ly.wqkv); add(ly.wq); add(ly.wk); add(ly.wv); add(ly.wo);
+        add(ly.ffn_gate); add(ly.ffn_up); add(ly.ffn_down);
+    }
+    // a tied output is the token embeddings, read by get_rows
+    if m.output.p != m.tok_embd.p { add(m.output); }
+    return out;
 }
 
 // Loads a model, and its vocabulary into the vocab module.
@@ -285,11 +358,37 @@ fn load(m: Model&, path: const u8[:]) {
     load_hparams(m);
     vocab::load(m.meta);
 
-    m.backend = ggml::backend_cpu_init();
-    m.buf = ggml::backend_alloc_ctx_tensors(m.ctx, m.backend);
-    guard gguf::load_tensor_data(m.meta, m.ctx, path) else { abort(str("failed to read the tensors of ", path)); }
     match m.hp.arch {
         ARCH_GEMMA3 => load_tensors_gemma3(m),
+        ARCH_LLAMA => load_tensors_llama(m),
         _ => abort("unknown architecture"),
     }
+
+    m.backend = ggml::backend_cpu_init();
+    guard ggml::alloc_weights(m.ctx, matmul_weights(m), m.bufs) else { abort("failed to allocate the model's weights"); }
+    guard gguf::load_tensor_data(m.meta, m.ctx, path) else { abort(str("failed to read the tensors of ", path)); }
+    print_info(m);
+}
+
+fn print_info(m: Model&) {
+    let hp .= m.hp;
+    var out: u8[>..] = [];
+    format(out, "print_info: arch                  = ", arch_name_of(hp.arch), "\n");
+    format(out, "print_info: n_ctx_train           = ", hp.n_ctx_train, "\n");
+    format(out, "print_info: n_embd                = ", hp.n_embd, "\n");
+    format(out, "print_info: n_layer               = ", hp.n_layer, "\n");
+    format(out, "print_info: n_head                = ", hp.n_head[0], "\n");
+    format(out, "print_info: n_head_kv             = ", hp.n_head_kv[0], "\n");
+    format(out, "print_info: n_rot                 = ", hp.n_rot, "\n");
+    format(out, "print_info: n_swa                 = ", hp.n_swa, "\n");
+    format(out, "print_info: n_embd_head_k         = ", hp.n_embd_head_k, "\n");
+    format(out, "print_info: n_embd_head_v         = ", hp.n_embd_head_v, "\n");
+    format(out, "print_info: f_norm_rms_eps        = ", hp.f_norm_rms_eps, "\n");
+    format(out, "print_info: f_attn_scale          = ", hp.f_attention_scale, "\n");
+    format(out, "print_info: n_ff                  = ", hp.n_ff[0], "\n");
+    format(out, "print_info: rope type             = ", hp.rope_type, "\n");
+    format(out, "print_info: freq_base_train       = ", hp.rope_freq_base_train, "\n");
+    format(out, "print_info: freq_scale_train      = ", hp.rope_freq_scale_train, "\n");
+    format(out, "print_info: n_ctx_orig_yarn       = ", hp.n_ctx_orig_yarn, "\n");
+    write_stderr(out);
 }

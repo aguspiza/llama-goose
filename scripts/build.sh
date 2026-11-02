@@ -10,15 +10,17 @@ set -euo pipefail
 
 goose=${GOOSE:-$HOME/coding/goose-lang/tools/goose/goose-v2026.3-windows-x64/goose.exe}
 export GOOSE_CC=gcc
+# MinGW: gcc spills 32-byte AVX values to the stack with aligned moves, which
+# Win64 does not align for, and the program crashes; this makes them unaligned.
+avx_fix=$([[ $(uname -s) == MINGW* || $(uname -s) == MSYS* ]] && echo '-Wa,-muse-unaligned-vector-move' || true)
 
 for program in "$@"; do
     # the last command of the dry run compiles and links the program
     link=$("$goose" build --dry-run "$program" 2>/dev/null | grep '^"' | tail -1)
-    link=${link/ -O2 / -O3 -march=native }
-    # the first time, goose build makes the runtime and the packages' C
-    if ! eval "$link" 2>/dev/null; then
-        "$goose" build -O0 "$program" > /dev/null
-        eval "$link"
-    fi
+    link=${link/ -O2 / -O3 -march=native $avx_fix }
+    # goose build first: it builds the runtime and recompiles the packages' C
+    # that changed (a quick -O0 build of the program), then the -O3 one
+    "$goose" build -O0 "$program" > /dev/null
+    eval "$link"
     echo "built ${program%.goose}.exe"
 done

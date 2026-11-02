@@ -106,3 +106,8 @@ extern "lg_backend_tensor_set_f32" fn backend_set_f32(t: Tensor, src: const f32[
 extern "lg_backend_tensor_set_f16" fn backend_set_f16(t: Tensor, src: const f32[:]);
 // dst.len floats from element `offset` on.
 extern "lg_backend_tensor_get_f32" fn backend_get_f32(t: Tensor, dst: f32[:], offset: i64);
+
+// Allocates the tensors of ctx as llama.cpp does: the ones in matmul (read
+// by mul_mat) in the CPU's extra buffer types (CPU_REPACK) where they fit,
+// the rest in plain CPU memory. bufs gets the buffers, ending with p == 0.
+extern "lg_alloc_weights" fn alloc_weights(ctx: Ctx, matmul: const Tensor[:], bufs: Buffer[:]) -> bool;

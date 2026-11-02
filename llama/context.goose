@@ -2,9 +2,10 @@
 // through the model's graph. One sequence; flash attention, as llama.cpp
 // picks on the CPU. The graph of each architecture follows llama.cpp's
 // src/models/<arch>.cpp operation by operation.
-// port-of: src/llama-context.cpp src/llama-graph.cpp src/llama-kv-cache.cpp src/models/gemma3.cpp
+// port-of: src/llama-context.cpp src/llama-graph.cpp src/llama-kv-cache.cpp src/models/gemma3.cpp src/models/llama.cpp
 import std;
 import math;
+import os;
 import ggml from "../ggml";
 import .model;
 namespace context;
@@ -58,6 +59,31 @@ struct Build {
     n_tokens: i64,
     n_kv: i64,
     inp: Inputs,
+    // LLAMA_GOOSE_TRACE=1: tensors whose sums decode prints, to compare
+    // with llama.cpp's eval callback
+    tracing: bool,
+    traced: ggml::Tensor[..64],
+}
+
+fn trace(b: Build&, name: const u8[:], t: ggml::Tensor) {
+    guard b.tracing && b.traced.len < b.traced.cap else { return; }
+    ggml::set_name(t, name);
+    ggml::set_output(t);
+    b.traced.push(t);
+}
+
+fn print_traced(b: Build&) {
+    for t in b.traced {
+        var vals: f32[>..] = [];
+        vals.resize(ggml::nelements(t), 0.0);
+        ggml::backend_get_f32(t, vals, 0);
+        var s: f64 = 0.0;
+        var s2: f64 = 0.0;
+        for v, i in vals { s += v; s2 += v as f64 * v * (i % 7 + 1); }
+        var name: u8[>..] = [];
+        ggml::tensor_name(t, name);
+        write_stderr(str("SUM ", name, " ", s, " ", s2, "\n"));
+    }
 }
 
 fn build_norm_rms(b: Build&, m: model::Model&, cur: ggml::Tensor, w: ggml::Tensor) -> ggml::Tensor {
@@ -65,9 +91,52 @@ fn build_norm_rms(b: Build&, m: model::Model&, cur: ggml::Tensor, w: ggml::Tenso
     return if w.p != 0 { ggml::mul(b.ctx, n, w) } else { n };
 }
 
+fn add_bias(b: Build&, cur: ggml::Tensor, bias: ggml::Tensor) -> ggml::Tensor {
+    if bias.p != 0 { ggml::add(b.ctx, cur, bias) } else { cur }
+}
+
+// Q, K and V as [head, n_head(_kv), n_tokens] (build_qkv).
+fn build_qkv(b: Build&, m: model::Model&, ly: model::Layer, cur: ggml::Tensor, il: i64) -> ggml::Tensor, ggml::Tensor, ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let head = hp.n_embd_head_k as i64;
+    let n_head = hp.n_head[il] as i64;
+    let n_head_kv = hp.n_head_kv[il] as i64;
+    if ly.wqkv.p != 0 {
+        var qkv = ggml::mul_mat(ctx, ly.wqkv, cur);
+        if ly.bqkv.p != 0 {
+            qkv = ggml::add(ctx, qkv, ly.bqkv);
+        } else if ly.bq.p != 0 && ly.bk.p != 0 && ly.bv.p != 0 {
+            abort("fused QKV with separate biases: not ported yet");
+        }
+        let ty = ggml::tensor_type(qkv);
+        let nb1 = ggml::nb(qkv, 1);
+        let q = ggml::view_4d(ctx, qkv, head, n_head, b.n_tokens, 1, ggml::row_size(ty, head), nb1, nb1 * b.n_tokens, 0);
+        let k = ggml::view_4d(ctx, qkv, head, n_head_kv, b.n_tokens, 1, ggml::row_size(ty, head), nb1, nb1 * b.n_tokens,
+                              ggml::row_size(ty, head * n_head));
+        let v = ggml::view_4d(ctx, qkv, head, n_head_kv, b.n_tokens, 1, ggml::row_size(ty, head), nb1, nb1 * b.n_tokens,
+                              ggml::row_size(ty, head * (n_head + n_head_kv)));
+        return q, k, v;
+    }
+    let q = add_bias(b, ggml::mul_mat(ctx, ly.wq, cur), ly.bq);
+    let k = add_bias(b, ggml::mul_mat(ctx, ly.wk, cur), ly.bk);
+    let v = add_bias(b, ggml::mul_mat(ctx, ly.wv, cur), ly.bv);
+    return ggml::reshape_3d(ctx, q, head, n_head, b.n_tokens),
+           ggml::reshape_3d(ctx, k, head, n_head_kv, b.n_tokens),
+           ggml::reshape_3d(ctx, v, head, n_head_kv, b.n_tokens);
+}
+
+// The SwiGLU feed-forward, gate and up in parallel, with optional biases (build_ffn).
+fn build_ffn_swiglu(b: Build&, ly: model::Layer, cur: ggml::Tensor) -> ggml::Tensor {
+    let ctx = b.ctx;
+    let up = add_bias(b, ggml::mul_mat(ctx, ly.ffn_up, cur), ly.ffn_up_b);
+    let gate = add_bias(b, ggml::mul_mat(ctx, ly.ffn_gate, cur), ly.ffn_gate_b);
+    return add_bias(b, ggml::mul_mat(ctx, ly.ffn_down, ggml::swiglu_split(ctx, gate, up)), ly.ffn_down_b);
+}
+
 // Writes k and v of this batch into the layer's cache, and attends over the
 // first n_kv cells; q, k, v are [head, n_head(_kv), n_tokens].
-fn build_attn(b: Build&, m: model::Model&, c: Context&, il: i64, wo: ggml::Tensor,
+fn build_attn(b: Build&, m: model::Model&, c: Context&, il: i64, wo: ggml::Tensor, wo_b: ggml::Tensor,
               q: ggml::Tensor, k_cur: ggml::Tensor, v_cur: ggml::Tensor, kq_scale: f32) -> ggml::Tensor {
     let hp .= m.hp;
     let ctx = b.ctx;
@@ -97,16 +166,18 @@ fn build_attn(b: Build&, m: model::Model&, c: Context&, il: i64, wo: ggml::Tenso
     var cur = ggml::flash_attn_ext(ctx, qp, kp, vp, mask, kq_scale, 0.0, 0.0);
     ggml::prec_set_acc(cur, ggml::PREC_F32);
     cur = ggml::reshape_2d(ctx, cur, ggml::ne(cur, 0) * ggml::ne(cur, 1), ggml::ne(cur, 2) * ggml::ne(cur, 3));
+    if il == 0 { trace(b, "kqv_out-0", cur); trace(b, "Vcur-0", v_cur); }
     ggml::build_forward_expand(b.gf, cur);
-    return ggml::mul_mat(ctx, wo, cur);
+    return add_bias(b, ggml::mul_mat(ctx, wo, cur), wo_b);
 }
 
-fn rope(b: Build&, m: model::Model&, x: ggml::Tensor, freq_base: f32, freq_scale: f32) -> ggml::Tensor {
+fn rope(b: Build&, m: model::Model&, x: ggml::Tensor, freq_base: f32, freq_scale: f32,
+        factors: ggml::Tensor = ggml::NONE) -> ggml::Tensor {
     let hp .= m.hp;
     let ext_factor: f32 = if hp.yarn_ext_factor >= 0.0 { hp.yarn_ext_factor } else if hp.rope_scaling_yarn { 1.0 } else { 0.0 };
     guard ext_factor == 0.0 else { abort("YaRN rope scaling: not ported yet"); }
     let attn_factor = hp.yarn_attn_factor * hp.rope_attn_factor;
-    return ggml::rope_ext(b.ctx, x, b.inp.pos, ggml::NONE, hp.n_rot as i32, hp.rope_type,
+    return ggml::rope_ext(b.ctx, x, b.inp.pos, factors, hp.n_rot as i32, hp.rope_type,
                           hp.n_ctx_orig_yarn as i32, freq_base, freq_scale, ext_factor, attn_factor,
                           hp.yarn_beta_fast, hp.yarn_beta_slow);
 }
@@ -129,16 +200,14 @@ fn build_gemma3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
 
         // self-attention
-        var q = ggml::reshape_3d(ctx, ggml::mul_mat(ctx, ly.wq, cur), n_embd_head, hp.n_head[il], b.n_tokens);
-        var k = ggml::reshape_3d(ctx, ggml::mul_mat(ctx, ly.wk, cur), n_embd_head, hp.n_head_kv[il], b.n_tokens);
-        let v = ggml::reshape_3d(ctx, ggml::mul_mat(ctx, ly.wv, cur), n_embd_head, hp.n_head_kv[il], b.n_tokens);
+        var q, k, v = build_qkv(b, m, ly, cur, il);
         q = build_norm_rms(b, m, q, ly.attn_q_norm);
         q = rope(b, m, q, freq_base, freq_scale);
         k = build_norm_rms(b, m, k, ly.attn_k_norm);
         k = rope(b, m, k, freq_base, freq_scale);
         // ref: https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/model.py#L315
         q = ggml::scale(ctx, q, hp.f_attention_scale);
-        cur = build_attn(b, m, c, il, ly.wo, q, k, v, 1.0);
+        cur = build_attn(b, m, c, il, ly.wo, ly.bo, q, k, v, 1.0);
 
         if il == n_layer - 1 {
             cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
@@ -165,6 +234,43 @@ fn build_gemma3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         cur = ggml::scale(ctx, cur, cap);
     }
     return cur;
+}
+
+// models/llama.cpp
+fn build_llama(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_embd_head = hp.n_embd_head_v as i64;
+    assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
+    let n_layer = hp.n_layer as i64;
+    let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var inpSA = inpL;
+        var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
+
+        if il == 0 { trace(b, "attn_norm-0", cur); }
+        var q, k, v = build_qkv(b, m, ly, cur, il);
+        q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train, ly.rope_freqs);
+        k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train, ly.rope_freqs);
+        if il == 0 { trace(b, "Qcur-0", q); trace(b, "Kcur-0", k); }
+        cur = build_attn(b, m, c, il, ly.wo, ly.bo, q, k, v, kq_scale);
+        if il == 0 { trace(b, "attn_out-0", cur); }
+
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            inpSA = ggml::get_rows(ctx, inpSA, b.inp.out_ids);
+        }
+        let ffn_inp = ggml::add(ctx, cur, inpSA);
+        cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
+        cur = build_ffn_swiglu(b, ly, cur);
+        inpL = ggml::add(ctx, cur, ffn_inp);
+        if il == 0 { trace(b, "l_out-0", inpL); }
+    }
+    let cur = build_norm_rms(b, m, inpL, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
 }
 
 let NEG_INF: f32 = -1.0 / 0.0;
@@ -201,18 +307,27 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
             out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, 1),
             kv_idxs: ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens),
             mask: ggml::new_tensor_2d(gctx, ggml::TYPE_F16, c.n_ctx, n_tokens),
-            mask_swa: ggml::new_tensor_2d(gctx, ggml::TYPE_F16, c.n_ctx, n_tokens),
+            mask_swa: ggml::NONE,
         },
+        tracing: false,
+        traced: [],
     };
+    {
+        var flag: u8[>..] = [];
+        b.tracing = env("LLAMA_GOOSE_TRACE", flag) && flag == "1";
+    }
+    let has_swa = m.hp.swa_type != model::SWA_NONE;
+    b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, c.n_ctx, n_tokens) } else { b.inp.mask };
     ggml::set_input(b.inp.tokens);
     ggml::set_input(b.inp.pos);
     ggml::set_input(b.inp.out_ids);
     ggml::set_input(b.inp.kv_idxs);
     ggml::set_input(b.inp.mask);
-    ggml::set_input(b.inp.mask_swa);
+    if has_swa { ggml::set_input(b.inp.mask_swa); }
 
     let out = match m.hp.arch {
         model::ARCH_GEMMA3 => build_gemma3(b, m, c),
+        model::ARCH_LLAMA => build_llama(b, m, c),
         _ => { abort("decode: unknown architecture"); },
     };
     ggml::set_output(out);
@@ -229,12 +344,15 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     var mask: f32[>..] = [];
     fill_mask(mask, c.n_ctx, n_tokens, pos0, pos0 + n_tokens, 0);
     ggml::backend_set_f16(b.inp.mask, mask);
-    fill_mask(mask, c.n_ctx, n_tokens, pos0, pos0 + n_tokens, if m.hp.swa_type == model::SWA_STANDARD { m.hp.n_swa } else { 0 });
-    ggml::backend_set_f16(b.inp.mask_swa, mask);
+    if has_swa {
+        fill_mask(mask, c.n_ctx, n_tokens, pos0, pos0 + n_tokens, m.hp.n_swa);
+        ggml::backend_set_f16(b.inp.mask_swa, mask);
+    }
 
     ggml::backend_cpu_set_n_threads(m.backend, c.n_threads);
     guard ggml::backend_graph_compute(m.backend, b.gf) == 0 else { abort("decode: graph compute failed"); }
 
+    print_traced(b);
     logits.clear();
     logits.resize(ggml::ne(out, 0), 0.0);
     ggml::backend_get_f32(out, logits, 0);

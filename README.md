@@ -15,7 +15,7 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | Unicode, pre-tokenizer splits | ported | `tests/unicode_split` |
 | SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
 | WPM, UGM, RWKV, PLaMo tokenizers | load, do not tokenize yet | |
-| model loading, KV cache, decode | ported for gemma3 | `tools/simple` |
+| model loading, KV cache, decode | ported for gemma3 and llama | `tools/simple` |
 | other architectures | not yet | |
 | sampling, grammars, chat templates, `common/`, server | not yet | |
 
@@ -23,6 +23,16 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 and greedy sampling it writes byte for byte the text llama.cpp's
 `llama-simple` writes, over 200 generated tokens on four prompts, at the
 same speed (77-93 tokens/s on both, on a Ryzen 7 5700U).
+
+With MiniCPM5 2B (llama architecture, Q4_K_M) one of two prompts gives the
+same 100 tokens; the other parts after about 60. The cause is one Q4_K
+matrix product (weights repacked for AVX2, as llama.cpp repacks them):
+same input, same weights in the same buffer type, and llama.cpp's result
+differs from the port's by about 1e-3 at the second step, though not at the
+first. Both are as far from the exact product. Not explained yet; the
+weights are placed exactly as llama.cpp places them (915.47 MiB repacked).
+`LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
+llama.cpp's eval callback.
 
 The rest of this README is the feasibility study written before the port.
 
