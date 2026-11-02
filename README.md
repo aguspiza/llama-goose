@@ -75,19 +75,32 @@ Cheaper alternative, for reference: precompiled headers or unity builds for
 `common/` and the server would cut a large part of those 78% without porting
 anything. CMake and Meson both support them.
 
-### Memory: no gain, with a risk of loss
+### Goose and C in one program
+
+Goose mixes with C source code. A sidecar file next to the Goose root
+(`llama.build` beside `llama.goose`) lists C files with `c_sources`,
+`c_include`, `c_defines` and `c_libs`, and `goose build` compiles and links
+them with the program (docs/packages.md §3). Goose calls that C through
+`extern fn`. ggml can therefore stay C, built as part of the Goose program,
+while the logic above it moves to Goose.
+
+What crosses the boundary: scalars, flat structs, slices and pointers to
+them. Returns are a scalar or a flat struct, so ggml objects (`ggml_context`,
+`ggml_tensor`, a backend) cross as opaque `i64` handles.
+
+### Memory: no gain, no loss
 
 Memory use in llama.cpp is mostly the model weights (memory-mapped) and the
 KV cache. The language does not change either of them.
 
 Goose threads **share no memory**: every worker gets its own copy of the
 globals (spec §11.2). If the weights or the KV cache lived in Goose memory,
-each thread would need its own copy, multiplying memory by the thread count.
-So both must stay in C memory, reached through `extern fn`. The possible
+each thread would need its own copy. With ggml kept in C they stay in C
+memory, shared by ggml's own C thread pool, as they are today. The possible
 saving is the C++ runtime and the heap churn of `std::string` and json in
 the server: megabytes, not gigabytes.
 
-### Inference speed: no gain expected
+### Inference speed: same as today
 
 - CPU token generation is limited by memory bandwidth and by hand-written
   SIMD kernels (AVX2/AVX-512/NEON quantized dot products). Goose has no
@@ -96,11 +109,12 @@ the server: megabytes, not gigabytes.
   would be slower.
 - The CUDA, Vulkan and Metal backends cannot be written in Goose.
 - The thread pool in ggml splits each matrix multiply across threads that
-  share the same tensors. Goose's no-sharing model cannot express that
-  without going through C.
+  share the same tensors. Goose's no-sharing model cannot express that.
 
-So the kernels and backends should stay in C. Speed would then stay where it
-is.
+All three stay in C, mixed into the Goose program, so the speed of the
+kernels does not change. Goose code calls ggml per graph node (a few
+thousand direct C calls per token), never per element, so the boundary
+should not show up in tokens per second.
 
 ### Readability: real gain where the logic lives
 
@@ -118,7 +132,10 @@ so readability and build time point to the same parts of the code.
    large C file.
 2. **Meson for ggml.** Build `ggml` (C, CPU backend, then Vulkan) with
    Meson. It is checked by running `test-backend-ops` against the CMake
-   build.
+   build. Open question: `goose build` already compiles the C listed in the
+   sidecar, so Meson may only be needed for what the sidecar cannot do
+   (Vulkan shader generation, CUDA). Avoid `cmake_target` in the sidecar,
+   since the goal is to drop CMake.
 3. **Port `common/`, then `src/`**, file by file, behind the existing
    `llama.h` C API (Goose `export fn`). The C++ build stays as the reference:
    every step must give identical tokens on a fixed prompt and seed.
