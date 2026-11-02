@@ -1,8 +1,8 @@
 # llama.goose
 
 A plan to port [llama.cpp](https://github.com/ggml-org/llama.cpp) to
-[Goose](https://aardappel.github.io/goose/) and to build it with Meson instead
-of CMake. The goals are shorter build times, lower memory use, faster
+[Goose](https://aardappel.github.io/goose/) and to build it with `goose build`
+instead of CMake. The goals are shorter build times, lower memory use, faster
 inference and source code that is easier to read.
 
 This README is the feasibility study. No code has been ported yet.
@@ -66,14 +66,32 @@ There is a risk. Goose emits **one C file per program**, so gcc cannot split
 that file across cores. A 100k-line Goose program becomes one very large C file,
 and its compile time must be measured early (see step 1 below).
 
-**Meson on its own will not make the build faster.** CMake and Meson both
-hand compilation to Ninja, so they compile the same files with the same
-commands. Meson may save a few seconds of configure time and gives simpler
-build files. The speedup comes from changing what is compiled.
+### The cheap alternative was tried: unity builds
 
-Cheaper alternative, for reference: precompiled headers or unity builds for
-`common/` and the server would cut a large part of those 78% without porting
-anything. CMake and Meson both support them.
+CMake can merge the `.cpp` files of each target into a few large ones
+(`-DCMAKE_UNITY_BUILD=ON`), with no change to the sources. On this fork
+(branch `mtp-clean`, all 87 executables, tests included):
+
+| Build  | Wall time | CPU time |
+|--------|----------:|---------:|
+| normal |    445 s  |  7,021 s |
+| unity  |   ~328 s  |  3,746 s |
+
+The machine was shared with other jobs, and the unity build was interrupted
+once and resumed, so these are rough numbers. It did not work as is:
+
+- Four `static` helpers have the same name in two files each (`chat.cpp`,
+  `llama-kv-cache.cpp`, `models/gemma4.cpp`) and `mtmd-helper.cpp` refuses
+  mtmd's internal headers. Each needed a `SKIP_UNITY_BUILD_INCLUSION` line,
+  and new clashes will appear as upstream adds files.
+- Under 16 parallel jobs one merged file failed without a message and
+  compiled fine alone, most likely because the compiler ran out of memory.
+- The resulting test programs failed to start (`0xc0000139`, a function
+  missing from a DLL). The cause was not investigated.
+
+It needs patches to the CMake files and constant care on every upstream
+merge, so it was dropped. Precompiled headers were ruled out too, because
+they complicate the build.
 
 ### Goose and C in one program
 
@@ -130,12 +148,12 @@ so readability and build time point to the same parts of the code.
    its output on the existing tests and the size of the generated C. Then
    generate a synthetic 50k-line Goose program to see how gcc handles one
    large C file.
-2. **Meson for ggml.** Build `ggml` (C, CPU backend, then Vulkan) with
-   Meson. It is checked by running `test-backend-ops` against the CMake
-   build. Open question: `goose build` already compiles the C listed in the
-   sidecar, so Meson may only be needed for what the sidecar cannot do
-   (Vulkan shader generation, CUDA). Avoid `cmake_target` in the sidecar,
-   since the goal is to drop CMake.
+2. **ggml with `goose build`.** List ggml's C sources (CPU backend first,
+   then Vulkan) in the `.build` sidecar, so `goose build` compiles them with
+   the program. It is checked by running `test-backend-ops` against the
+   CMake build. Vulkan shader generation and CUDA need a step the sidecar
+   cannot express yet. Avoid `cmake_target` in the sidecar, since the goal
+   is to drop CMake.
 3. **Port `common/`, then `src/`**, file by file, behind the existing
    `llama.h` C API (Goose `export fn`). The C++ build stays as the reference:
    every step must give identical tokens on a fixed prompt and seed.
@@ -148,5 +166,5 @@ folders next to this one, named `<name>.goose`.
 ## Layout
 
 ```
-llama.goose/        this repo: the plan, then the Goose port and meson.build
+llama.goose/        this repo: the plan, then the Goose port and its .build sidecar
 ```
