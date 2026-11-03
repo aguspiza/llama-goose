@@ -4,6 +4,7 @@
 // port-of: common/jinja/value.cpp (builtins)
 import std;
 import .jinja;
+import .number;
 import .jinja_lexer;
 import .jinja_parser;
 import .jinja_runtime;
@@ -395,7 +396,7 @@ fn call_other(id: i64, a: Args) -> i64 {
     if id == B_STRFTIME_NOW {
         ensure_vals(a, "S", 1);
         var buf: u8[100] = [0; 100];
-        let n = c_strftime(buf[..], sbytes(arg(a, 0)), now);
+        let n = number::c_strftime(buf[..], sbytes(arg(a, 0)), now);
         if n == 0 { fail("strftime_now: failed to format time"); }
         return mk_str(buf[..n], false);
     }
@@ -441,7 +442,7 @@ fn call_other(id: i64, a: Args) -> i64 {
     if id == B_FLOAT_STRING {
         ensure_vals(a, "F", 1);
         var out: u8[>..] = [];
-        float_repr(out, vals[arg(a, 0)].f);
+        number::float_repr(out, vals[arg(a, 0)].f);
         return mk_str(out, false);
     }
     if id == B_BOOL_INT { ensure_vals(a, "B", 1); return mk_int(vals[arg(a, 0)].i); }
@@ -1110,7 +1111,7 @@ fn call_string(id: i64, a: Args) -> i64 {
         if base != 0 && (base < 2 || base > 36) { fail("int() base must be 0 or between 2 and 36"); }
         if kind(input) != K_STRING { fail("int() first argument must be a string"); }
         var ok = 0;
-        let v = c_stoi(sbytes(input), base, ok);
+        let v = number::c_stoi(sbytes(input), base, ok);
         if ok != 0 { return mk_int(v); }
         return mk_int(if kind(d) == K_UNDEF { 0 } else { as_int(d) });
     }
@@ -1118,7 +1119,7 @@ fn call_string(id: i64, a: Args) -> i64 {
         ensure_vals(a, "S", 1);
         let d = get_kwarg_or_pos(a, "default", 1);
         var used = 0;
-        let v = c_strtod(sbytes(arg(a, 0)), used);
+        let v = number::c_strtod(sbytes(arg(a, 0)), used);
         if used > 0 { return mk_float(v); }
         return mk_float(if kind(d) == K_UNDEF { 0.0 } else { as_float(d) });
     }

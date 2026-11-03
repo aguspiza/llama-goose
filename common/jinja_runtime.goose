@@ -3,7 +3,9 @@
 // call and call block, so assignments inside one stay inside it.
 // port-of: common/jinja/runtime.cpp, common/jinja/runtime.h (runtime, gather_string_parts)
 import std;
+import exception;
 import .jinja;
+import .number;
 import .jinja_lexer;
 import .jinja_parser;
 import .jinja_builtins;
@@ -44,7 +46,7 @@ fn new_ctx() -> Ctx {
     obj_set_name(env, "False", mk_bool(false));
     obj_set_name(env, "none", mk_none());
     obj_set_name(env, "None", mk_none());
-    now = c_time();
+    now = number::c_time();
     return Ctx { env: env, depth: 0 };
 }
 
@@ -746,4 +748,17 @@ fn member(c: Ctx, object: i64, property: i64) -> i64 {
         if ok != K_OBJECT && (pk == K_INT || pk == K_BOOL) { vals[object].ops |= OP_ARRAY_ACCESS; }
     }
     return v;
+}
+
+// render with its own handler: the output's text into out; false, and the
+// message in err, if the template fails.
+fn try_render(p: Program, c: Ctx, out: u8[>..]&) -> bool {
+    var ok = false;
+    fn body() {
+        let r = render(p, c);
+        out.append(sbytes(r));
+        ok = true;
+    }
+    exception::try<Fail>(body);
+    return ok;
 }

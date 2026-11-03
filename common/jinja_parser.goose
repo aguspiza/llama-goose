@@ -4,6 +4,7 @@
 // port-of: common/jinja/parser.cpp, common/jinja/runtime.h (the node types)
 import std;
 import .jinja;
+import .number;
 import .jinja_lexer;
 
 namespace jinja;
@@ -683,7 +684,7 @@ recursive fn parse_primary() -> i64 {
         if find(s, ".") >= 0 {
             let r = mk_node(N_FLOAT, start);
             var used = 0;
-            nodes[r].f = c_strtod(s, used);
+            nodes[r].f = number::c_strtod(s, used);
             return r;
         }
         let v, ok = parse_int(s);

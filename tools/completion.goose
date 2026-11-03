@@ -26,6 +26,7 @@ import common from "../common";
 import common.jinja;
 import common.chat;
 import common.console;
+import common.json_schema;
 
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
@@ -222,6 +223,17 @@ fn main() {
             let path = value();
             grammar_text.clear();
             if !read_file(path, grammar_text) { fail(str("failed to open file '", path, "'")); }
+        }
+        else if a == "-j" || a == "--json-schema" {
+            grammar_text.clear();
+            if !json_schema::to_grammar(value(), grammar_text) { fail(str("error while handling argument \"", a, "\": ", json_schema::err)); }
+        }
+        else if a == "-jf" || a == "--json-schema-file" {
+            let path = value();
+            var schema: u8[>..] = [];
+            if !read_file(path, schema) { fail(str("error while handling argument \"", a, "\": error: failed to open file '", path, "'")); }
+            grammar_text.clear();
+            if !json_schema::to_grammar(schema, grammar_text) { fail(str("error while handling argument \"", a, "\": ", json_schema::err)); }
         }
         else if a == "--mirostat" { sp.mirostat = int_value(); sp.user_set |= sampler::USER_MIROSTAT; }
         else if a == "--mirostat-lr" { sp.mirostat_eta = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_ETA; }

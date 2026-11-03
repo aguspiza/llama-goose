@@ -1,0 +1,1653 @@
+1
+S
+5
+min 0
+67
+{
+            "type": "integer",
+            "minimum": 0
+        }
+1
+1
+75
+root ::= ([0] | [1-9] [0-9]{0,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+5
+min 1
+67
+{
+            "type": "integer",
+            "minimum": 1
+        }
+1
+1
+69
+root ::= ([1-9] [0-9]{0,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+5
+min 3
+67
+{
+            "type": "integer",
+            "minimum": 3
+        }
+1
+1
+89
+root ::= ([1-2] [0-9]{1,15} | [3-9] [0-9]{0,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+5
+min 9
+67
+{
+            "type": "integer",
+            "minimum": 9
+        }
+1
+1
+87
+root ::= ([1-8] [0-9]{1,15} | [9] [0-9]{0,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+6
+min 10
+68
+{
+            "type": "integer",
+            "minimum": 10
+        }
+1
+1
+89
+root ::= ([1] ([0-9]{1,15}) | [2-9] [0-9]{1,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+6
+min 25
+68
+{
+            "type": "integer",
+            "minimum": 25
+        }
+1
+1
+133
+root ::= ([1] [0-9]{2,15} | [2] ([0-4] [0-9]{1,14} | [5-9] [0-9]{0,14}) | [3-9] [0-9]{1,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+6
+max 30
+68
+{
+            "type": "integer",
+            "maximum": 30
+        }
+1
+1
+107
+root ::= ("-" [1-9] [0-9]{0,15} | [0-9] | ([1-2] [0-9] | [3] "0"))
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+6
+min -5
+68
+{
+            "type": "integer",
+            "minimum": -5
+        }
+1
+1
+89
+root ::= ("-" ([0-5]) | [0] | [1-9] [0-9]{0,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+8
+min -123
+70
+{
+            "type": "integer",
+            "minimum": -123
+        }
+1
+1
+149
+root ::= ("-" ([0-9] | ([1-8] [0-9] | [9] [0-9]) | "1" ([0-1] [0-9] | [2] [0-3])) | [0] | [1-9] [0-9]{0,15})
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+6
+max -5
+68
+{
+            "type": "integer",
+            "maximum": -5
+        }
+1
+1
+95
+root ::= ("-" ([0-4] [0-9]{1,15} | [5-9] [0-9]{0,15}))
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+5
+max 1
+67
+{
+            "type": "integer",
+            "maximum": 1
+        }
+1
+1
+81
+root ::= ("-" [1-9] [0-9]{0,15} | [0-1])
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+7
+max 100
+69
+{
+            "type": "integer",
+            "maximum": 100
+        }
+1
+1
+117
+root ::= ("-" [1-9] [0-9]{0,15} | [0-9] | ([1-8] [0-9] | [9] [0-9]) | "100")
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+12
+min 0 max 23
+94
+{
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23
+        }
+1
+1
+83
+root ::= ([0-9] | ([1] [0-9] | [2] [0-3]))
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+14
+min 15 max 300
+96
+{
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 300
+        }
+1
+1
+109
+root ::= (([1] ([5-9]) | [2-9] [0-9]) | ([1-2] [0-9]{2} | [3] "00"))
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+12
+min 5 max 30
+94
+{
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 30
+        }
+1
+1
+83
+root ::= ([5-9] | ([1-2] [0-9] | [3] "0"))
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+15
+min -123 max 42
+97
+{
+            "type": "integer",
+            "minimum": -123,
+            "maximum": 42
+        }
+1
+1
+159
+root ::= ("-" ([0-9] | ([1-8] [0-9] | [9] [0-9]) | "1" ([0-1] [0-9] | [2] [0-3])) | [0-9] | ([1-3] [0-9] | [4] [0-2]))
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+14
+min -10 max 10
+96
+{
+            "type": "integer",
+            "minimum": -10,
+            "maximum": 10
+        }
+1
+1
+85
+root ::= ("-" ([0-9] | "10") | [0-9] | "10")
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+12
+unknown type
+40
+{
+            "type": "kaboom"
+        }
+1
+0
+79
+JSON schema conversion failed:
+JSON schema error at #: unrecognized type kaboom
+1
+S
+12
+invalid type
+35
+{
+            "type": 123
+        }
+1
+0
+99
+JSON schema conversion failed:
+JSON schema error at #: type must be a string or an array of strings
+1
+S
+24
+empty schema (any value)
+2
+{}
+1
+1
+565
+array ::= "[" space ( value ("," space value)* )? space "]"
+boolean ::= ("true" | "false")
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+null ::= "null"
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? space "}"
+root ::= value
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+value ::= object | array | string | number | boolean | null
+
+1
+S
+14
+exotic formats
+204
+{
+            "items": [
+                { "format": "date" },
+                { "format": "uuid" },
+                { "format": "time" },
+                { "format": "date-time" }
+            ]
+        }
+1
+1
+690
+date ::= [0-9]{4} "-" ( "0" [1-9] | "1" [0-2] ) "-" ( "0" [1-9] | [1-2] [0-9] | "3" [0-1] )
+date-string ::= "\"" date "\""
+date-time ::= date "T" time
+date-time-string ::= "\"" date-time "\""
+root ::= "[" space tuple-0 "," space uuid "," space tuple-2 "," space tuple-3 space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+time ::= ([01] [0-9] | "2" [0-3]) ":" [0-5] [0-9] ":" [0-5] [0-9] ( "." [0-9]{3} )? ( "Z" | ( "+" | "-" ) ( [01] [0-9] | "2" [0-3] ) ":" [0-5] [0-9] )
+time-string ::= "\"" time "\""
+tuple-0 ::= date-string
+tuple-2 ::= time-string
+tuple-3 ::= date-time-string
+uuid ::= "\"" [0-9a-fA-F]{8} "-" [0-9a-fA-F]{4} "-" [0-9a-fA-F]{4} "-" [0-9a-fA-F]{4} "-" [0-9a-fA-F]{12} "\""
+
+1
+S
+6
+string
+40
+{
+            "type": "string"
+        }
+1
+1
+135
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "\"" char* "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+22
+string w/ min length 1
+68
+{
+            "type": "string",
+            "minLength": 1
+        }
+1
+1
+135
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "\"" char+ "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+22
+string w/ min length 3
+68
+{
+            "type": "string",
+            "minLength": 3
+        }
+1
+1
+138
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "\"" char{3,} "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+20
+string w/ max length
+68
+{
+            "type": "string",
+            "maxLength": 3
+        }
+1
+1
+139
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "\"" char{0,3} "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+26
+string w/ min & max length
+96
+{
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4
+        }
+1
+1
+139
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "\"" char{1,4} "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+7
+boolean
+41
+{
+            "type": "boolean"
+        }
+1
+1
+68
+root ::= ("true" | "false")
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+7
+integer
+41
+{
+            "type": "integer"
+        }
+1
+1
+112
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+root ::= ("-"? integral-part)
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+12
+string const
+38
+{
+            "const": "foo"
+        }
+1
+1
+59
+root ::= "\"foo\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+16
+non-string const
+36
+{
+            "const": 123
+        }
+1
+1
+55
+root ::= "123"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+15
+non-string enum
+76
+{
+            "enum": ["red", "amber", "green", null, 42, ["foo"]]
+        }
+1
+1
+119
+root ::= ("\"red\"" | "\"amber\"" | "\"green\"" | "null" | "42" | "[\"foo\"]")
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+12
+string array
+88
+{
+            "type": "array",
+            "prefixItems": { "type": "string" }
+        }
+1
+1
+196
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "[" space (string ("," space string)*)? space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+21
+nullable string array
+98
+{
+            "type": ["array", "null"],
+            "prefixItems": { "type": "string" }
+        }
+1
+1
+251
+alternative-0 ::= "[" space (string ("," space string)*)? space "]"
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+null ::= "null"
+root ::= alternative-0 | null
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+6
+tuple1
+61
+{
+            "prefixItems": [{ "type": "string" }]
+        }
+1
+1
+173
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "[" space string space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+6
+tuple2
+83
+{
+            "prefixItems": [{ "type": "string" }, { "type": "number" }]
+        }
+1
+1
+341
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "[" space string "," space number space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+22
+array with empty items
+64
+{
+            "type": "array",
+            "items": {}
+        }
+1
+1
+609
+array ::= "[" space ( value ("," space value)* )? space "]"
+boolean ::= ("true" | "false")
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+null ::= "null"
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? space "}"
+root ::= "[" space ( value ("," space value)* )? space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+value ::= object | array | string | number | boolean | null
+
+1
+S
+38
+array with empty items and prefixItems
+113
+{
+            "type": "array",
+            "items": {},
+            "prefixItems": { "type": "string" }
+        }
+1
+1
+609
+array ::= "[" space ( value ("," space value)* )? space "]"
+boolean ::= ("true" | "false")
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+null ::= "null"
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? space "}"
+root ::= "[" space ( value ("," space value)* )? space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+value ::= object | array | string | number | boolean | null
+
+1
+S
+6
+number
+40
+{
+            "type": "number"
+        }
+1
+1
+189
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+root ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+8
+minItems
+109
+{
+            "items": {
+                "type": "boolean"
+            },
+            "minItems": 2
+        }
+1
+1
+129
+boolean ::= ("true" | "false")
+root ::= "[" space boolean ("," space boolean)+ space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+10
+maxItems 0
+109
+{
+            "items": {
+                "type": "boolean"
+            },
+            "maxItems": 0
+        }
+1
+1
+101
+boolean ::= ("true" | "false")
+root ::= "[" space  space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+10
+maxItems 1
+109
+{
+            "items": {
+                "type": "boolean"
+            },
+            "maxItems": 1
+        }
+1
+1
+109
+boolean ::= ("true" | "false")
+root ::= "[" space boolean? space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+10
+maxItems 2
+109
+{
+            "items": {
+                "type": "boolean"
+            },
+            "maxItems": 2
+        }
+1
+1
+132
+boolean ::= ("true" | "false")
+root ::= "[" space (boolean ("," space boolean)?)? space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+14
+min + maxItems
+148
+{
+            "items": {
+                "type": ["number", "integer"]
+            },
+            "minItems": 3,
+            "maxItems": 5
+        }
+1
+1
+306
+decimal-part ::= [0-9]{1,16}
+integer ::= ("-"? integral-part)
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+item ::= number | integer
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "[" space item ("," space item){2,4} space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+49
+min + max items with min + max values across zero
+200
+{
+            "items": {
+                "type": "integer",
+                "minimum": -12,
+                "maximum": 207
+            },
+            "minItems": 3,
+            "maxItems": 5
+        }
+1
+1
+200
+item ::= ("-" ([0-9] | "1" [0-2]) | [0-9] | ([1-8] [0-9] | [9] [0-9]) | ([1] [0-9]{2} | [2] "0" [0-7]))
+root ::= "[" space item ("," space item){2,4} space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+37
+min + max items with min + max values
+199
+{
+            "items": {
+                "type": "integer",
+                "minimum": 12,
+                "maximum": 207
+            },
+            "minItems": 3,
+            "maxItems": 5
+        }
+1
+1
+168
+item ::= (([1] ([2-9]) | [2-9] [0-9]) | ([1] [0-9]{2} | [2] "0" [0-7]))
+root ::= "[" space item ("," space item){2,4} space "]"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+13
+simple regexp
+87
+{
+            "type": "string",
+            "pattern": "^abc?d*efg+(hij)?kl$"
+        }
+1
+1
+100
+root ::= "\"" ("ab" "c"? "d"* "ef" "g"+ ("hij")? "kl") "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+14
+regexp escapes
+99
+{
+            "type": "string",
+            "pattern": "^\\[\\]\\{\\}\\(\\)\\|\\+\\*\\?$"
+        }
+1
+1
+74
+root ::= "\"" ("[]{}()|+*?") "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+12
+regexp quote
+71
+{
+            "type": "string",
+            "pattern": "^\"$"
+        }
+1
+1
+66
+root ::= "\"" ("\"") "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+33
+regexp with top-level alternation
+76
+{
+            "type": "string",
+            "pattern": "^A|B|C|D$"
+        }
+1
+1
+83
+root ::= "\"" ("A" | "B" | "C" | "D") "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+6
+regexp
+117
+{
+            "type": "string",
+            "pattern": "^(\\([0-9]{1,3}\\))?[0-9]{3}-[0-9]{4} a{3,5}nd...$"
+        }
+1
+1
+179
+dot ::= [^\x0A\x0D]
+root ::= "\"" (("(" root-1{1,3} ")")? root-1{3,3} "-" root-1{4,4} " " "a"{3,5} "nd" dot dot dot) "\""
+root-1 ::= [0-9]
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+32
+required props in original order
+382
+{
+            "type": "object",
+            "properties": {
+                "b": {"type": "string"},
+                "c": {"type": "string"},
+                "a": {"type": "string"}
+            },
+            "required": [
+                "a",
+                "b",
+                "c"
+            ],
+            "additionalProperties": false,
+            "definitions": {}
+        }
+1
+1
+321
+a-kv ::= "\"a\"" space ":" space string
+b-kv ::= "\"b\"" space ":" space string
+c-kv ::= "\"c\"" space ":" space string
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "{" space b-kv "," space c-kv "," space a-kv space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+15
+1 optional prop
+170
+{
+            "properties": {
+                "a": {
+                "type": "string"
+                }
+            },
+            "additionalProperties": false
+        }
+1
+1
+216
+a-kv ::= "\"a\"" space ":" space string
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "{" space  (a-kv )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+16
+N optional props
+218
+{
+            "properties": {
+                "a": {"type": "string"},
+                "b": {"type": "string"},
+                "c": {"type": "string"}
+            },
+            "additionalProperties": false
+        }
+1
+1
+393
+a-kv ::= "\"a\"" space ":" space string
+a-rest ::= ( "," space b-kv )? b-rest
+b-kv ::= "\"b\"" space ":" space string
+b-rest ::= ( "," space c-kv )?
+c-kv ::= "\"c\"" space ":" space string
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "{" space  (a-kv a-rest | b-kv b-rest | c-kv )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+48
+required + optional props each in original order
+295
+{
+            "properties": {
+                "b": {"type": "string"},
+                "a": {"type": "string"},
+                "d": {"type": "string"},
+                "c": {"type": "string"}
+            },
+            "required": ["a", "b"],
+            "additionalProperties": false
+        }
+1
+1
+415
+a-kv ::= "\"a\"" space ":" space string
+b-kv ::= "\"b\"" space ":" space string
+c-kv ::= "\"c\"" space ":" space string
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+d-kv ::= "\"d\"" space ":" space string
+d-rest ::= ( "," space c-kv )?
+root ::= "{" space b-kv "," space a-kv ( "," space ( d-kv d-rest | c-kv ) )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+16
+additional props
+124
+{
+            "type": "object",
+            "additionalProperties": {"type": "array", "items": {"type": "number"}}
+        }
+1
+1
+488
+additional-kv ::= string ":" space additional-value
+additional-value ::= "[" space (number ("," space number)*)? space "]"
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "{" space  (additional-kv ( "," space additional-kv )* )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+23
+additional props (true)
+82
+{
+            "type": "object",
+            "additionalProperties": true
+        }
+1
+1
+566
+array ::= "[" space ( value ("," space value)* )? space "]"
+boolean ::= ("true" | "false")
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+null ::= "null"
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? space "}"
+root ::= object
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+value ::= object | array | string | number | boolean | null
+
+1
+S
+27
+additional props (implicit)
+40
+{
+            "type": "object"
+        }
+1
+1
+566
+array ::= "[" space ( value ("," space value)* )? space "]"
+boolean ::= ("true" | "false")
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+null ::= "null"
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? space "}"
+root ::= object
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+value ::= object | array | string | number | boolean | null
+
+1
+S
+26
+empty w/o additional props
+83
+{
+            "type": "object",
+            "additionalProperties": false
+        }
+1
+1
+63
+root ::= "{" space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+27
+required + additional props
+210
+{
+            "type": "object",
+            "properties": {
+                "a": {"type": "number"}
+            },
+            "required": ["a"],
+            "additionalProperties": {"type": "string"}
+        }
+1
+1
+526
+a-kv ::= "\"a\"" space ":" space number
+additional-k ::= ["] ( [a] char+ | [^"a] char* )? ["]
+additional-kv ::= additional-k ":" space string
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "{" space a-kv ( "," space ( additional-kv ( "," space additional-kv )* ) )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+27
+optional + additional props
+179
+{
+            "type": "object",
+            "properties": {
+                "a": {"type": "number"}
+            },
+            "additionalProperties": {"type": "number"}
+        }
+1
+1
+534
+a-kv ::= "\"a\"" space ":" space number
+a-rest ::= ( "," space additional-kv )*
+additional-k ::= ["] ( [a] char+ | [^"a] char* )? ["]
+additional-kv ::= additional-k ":" space number
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "{" space  (a-kv a-rest | additional-kv ( "," space additional-kv )* )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+38
+required + optional + additional props
+258
+{
+            "type": "object",
+            "properties": {
+                "and": {"type": "number"},
+                "also": {"type": "number"}
+            },
+            "required": ["and"],
+            "additionalProperties": {"type": "number"}
+        }
+1
+1
+707
+additional-k ::= ["] ( [a] ([l] ([s] ([o] char+ | [^"o] char*) | [^"s] char*) | [n] ([d] char+ | [^"d] char*) | [^"ln] char*) | [^"a] char* )? ["]
+additional-kv ::= additional-k ":" space number
+also-kv ::= "\"also\"" space ":" space number
+also-rest ::= ( "," space additional-kv )*
+and-kv ::= "\"and\"" space ":" space number
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "{" space and-kv ( "," space ( also-kv also-rest | additional-kv ( "," space additional-kv )* ) )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+30
+optional props with empty name
+192
+{
+            "properties": {
+                "": {"type": "integer"},
+                "a": {"type": "integer"}
+            },
+            "additionalProperties": {"type": "integer"}
+        }
+1
+1
+575
+-kv ::= "\"\"" space ":" space root
+-rest ::= ( "," space a-kv )? a-rest
+a-kv ::= "\"a\"" space ":" space integer
+a-rest ::= ( "," space additional-kv )*
+additional-k ::= ["] ( [a] char+ | [^"a] char* ) ["]
+additional-kv ::= additional-k ":" space integer
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+integer ::= ("-"? integral-part)
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+root ::= ("-"? integral-part)
+root0 ::= "{" space  (-kv -rest | a-kv a-rest | additional-kv ( "," space additional-kv )* )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+32
+optional props with nested names
+194
+{
+            "properties": {
+                "a": {"type": "integer"},
+                "aa": {"type": "integer"}
+            },
+            "additionalProperties": {"type": "integer"}
+        }
+1
+1
+580
+a-kv ::= "\"a\"" space ":" space integer
+a-rest ::= ( "," space aa-kv )? aa-rest
+aa-kv ::= "\"aa\"" space ":" space integer
+aa-rest ::= ( "," space additional-kv )*
+additional-k ::= ["] ( [a] ([a] char+ | [^"a] char*) | [^"a] char* )? ["]
+additional-kv ::= additional-k ":" space integer
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+integer ::= ("-"? integral-part)
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+root ::= "{" space  (a-kv a-rest | aa-kv aa-rest | additional-kv ( "," space additional-kv )* )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+33
+optional props with common prefix
+195
+{
+            "properties": {
+                "ab": {"type": "integer"},
+                "ac": {"type": "integer"}
+            },
+            "additionalProperties": {"type": "integer"}
+        }
+1
+1
+598
+ab-kv ::= "\"ab\"" space ":" space integer
+ab-rest ::= ( "," space ac-kv )? ac-rest
+ac-kv ::= "\"ac\"" space ":" space integer
+ac-rest ::= ( "," space additional-kv )*
+additional-k ::= ["] ( [a] ([b] char+ | [c] char+ | [^"bc] char*) | [^"a] char* )? ["]
+additional-kv ::= additional-k ":" space integer
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+integer ::= ("-"? integral-part)
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+root ::= "{" space  (ab-kv ab-rest | ac-kv ac-rest | additional-kv ( "," space additional-kv )* )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+14
+top-level $ref
+472
+{
+            "$ref": "#/definitions/foo",
+            "definitions": {
+                "foo": {
+                    "type": "object",
+                    "properties": {
+                        "a": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "a"
+                    ],
+                    "additionalProperties": false
+                }
+            }
+        }
+1
+1
+295
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+ref-definitions-foo ::= "{" space ref-definitions-foo-a-kv space "}"
+ref-definitions-foo-a-kv ::= "\"a\"" space ":" space string
+root ::= ref-definitions-foo
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+5
+anyOf
+422
+{
+            "anyOf": [
+                {"$ref": "#/definitions/foo"},
+                {"$ref": "#/definitions/bar"}
+            ],
+            "definitions": {
+                "foo": {
+                    "properties": {"a": {"type": "number"}}
+                },
+                "bar": {
+                    "properties": {"b": {"type": "number"}}
+                }
+            },
+            "type": "object"
+        }
+1
+1
+574
+alternative-0 ::= ref-definitions-foo
+alternative-1 ::= ref-definitions-bar
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+ref-definitions-bar ::= "{" space  (ref-definitions-bar-b-kv )? space "}"
+ref-definitions-bar-b-kv ::= "\"b\"" space ":" space number
+ref-definitions-foo ::= "{" space  (ref-definitions-foo-a-kv )? space "}"
+ref-definitions-foo-a-kv ::= "\"a\"" space ":" space number
+root ::= alternative-0 | alternative-1
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+10
+anyOf $ref
+463
+{
+            "properties": {
+                "a": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "number"}
+                    ]
+                },
+                "b": {
+                    "anyOf": [
+                        {"$ref": "#/properties/a/anyOf/0"},
+                        {"type": "boolean"}
+                    ]
+                }
+            },
+            "type": "object"
+        }
+1
+1
+530
+a ::= string | number
+a-kv ::= "\"a\"" space ":" space a
+a-rest ::= ( "," space b-kv )?
+b ::= b-0 | boolean
+b-0 ::= string
+b-kv ::= "\"b\"" space ":" space b
+boolean ::= ("true" | "false")
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "{" space  (a-kv a-rest | b-kv )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+84
+mix of allOf, anyOf and $ref (similar to https://json.schemastore.org/tsconfig.json)
+813
+{
+            "allOf": [
+                {"$ref": "#/definitions/foo"},
+                {"$ref": "#/definitions/bar"},
+                {
+                "anyOf": [
+                    {"$ref": "#/definitions/baz"},
+                    {"$ref": "#/definitions/bam"}
+                ]
+                }
+            ],
+            "definitions": {
+                "foo": {
+                    "properties": {"a": {"type": "number"}}
+                },
+                "bar": {
+                    "properties": {"b": {"type": "number"}}
+                },
+                "bam": {
+                    "properties": {"c": {"type": "number"}}
+                },
+                "baz": {
+                    "properties": {"d": {"type": "number"}}
+                }
+            },
+            "type": "object"
+        }
+1
+1
+469
+a-kv ::= "\"a\"" space ":" space number
+b-kv ::= "\"b\"" space ":" space number
+c-kv ::= "\"c\"" space ":" space number
+d-kv ::= "\"d\"" space ":" space number
+d-rest ::= ( "," space c-kv )?
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+root ::= "{" space a-kv "," space b-kv ( "," space ( d-kv d-rest | c-kv ) )? space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+22
+allOf with enum schema
+258
+{
+            "allOf": [
+                {"$ref": "#/definitions/foo"}
+            ],
+            "definitions": {
+                "foo": {
+                    "type": "string",
+                    "enum": ["a", "b"]
+                }
+            }
+        }
+1
+1
+69
+root ::= ("\"a\"" | "\"b\"")
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+32
+allOf with multiple enum schemas
+436
+{
+            "allOf": [
+                {"$ref": "#/definitions/foo"},
+                {"$ref": "#/definitions/bar"}
+            ],
+            "definitions": {
+                "foo": {
+                    "type": "string",
+                    "enum": ["a", "b", "c"]
+                },
+                "bar": {
+                    "type": "string",
+                    "enum": ["b", "c", "d"]
+                }
+            }
+        }
+1
+1
+69
+root ::= ("\"b\"" | "\"c\"")
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+17
+conflicting names
+908
+{
+            "type": "object",
+            "properties": {
+                "number": {
+                "type": "object",
+                "properties": {
+                    "number": {
+                    "type": "object",
+                        "properties": {
+                            "root": {
+                                "type": "number"
+                            }
+                        },
+                        "required": [
+                            "root"
+                        ],
+                        "additionalProperties": false
+                    }
+                },
+                "required": [
+                    "number"
+                ],
+                "additionalProperties": false
+                }
+            },
+            "required": [
+                "number"
+            ],
+            "additionalProperties": false,
+            "definitions": {}
+        }
+1
+1
+514
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+number- ::= "{" space number-number-kv space "}"
+number-kv ::= "\"number\"" space ":" space number-
+number-number ::= "{" space number-number-root-kv space "}"
+number-number-kv ::= "\"number\"" space ":" space number-number
+number-number-root-kv ::= "\"root\"" space ":" space number
+root ::= "{" space number-kv space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+51
+description only (no type) treated as unconstrained
+123
+{"description": "The 0-based index of the last line to be retrieved (inclusive). If None, read until the end of the file."}
+1
+1
+565
+array ::= "[" space ( value ("," space value)* )? space "]"
+boolean ::= ("true" | "false")
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+null ::= "null"
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)?
+object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? space "}"
+root ::= value
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+value ::= object | array | string | number | boolean | null
+
+1
+S
+27
+literal string with escapes
+404
+{
+            "properties": {
+                "code": {
+                    "const": " \r \n \" \\ ",
+                    "description": "Generated code",
+                    "title": "Code",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "code"
+            ],
+            "title": "DecoderResponse",
+            "type": "object"
+        }
+1
+1
+156
+code ::= "\" \\r \\n \\\" \\\\ \""
+code-kv ::= "\"code\"" space ":" space code
+root ::= "{" space code-kv space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+31
+regexp with non-capturing group
+83
+{
+            "type": "string",
+            "pattern": "^(?:foo|bar)baz$"
+        }
+1
+1
+83
+root ::= "\"" (("foo" | "bar") "baz") "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+39
+regexp with nested non-capturing groups
+83
+{
+            "type": "string",
+            "pattern": "^(?:(?:ab)+c)?d$"
+        }
+1
+1
+80
+root ::= "\"" ((("ab")+ "c")? "d") "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+17
+unanchored regexp
+73
+{
+            "type": "string",
+            "pattern": "[0-9]+"
+        }
+1
+1
+153
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= string
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+33
+regexp with unsupported shorthand
+80
+{
+            "type": "string",
+            "pattern": "^[0-9]{3}\\w$"
+        }
+1
+1
+153
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= string
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+
+1
+S
+47
+regexp with escaped hyphen in a character class
+78
+{
+            "type": "string",
+            "pattern": "^[a-z\\-]+$"
+        }
+1
+1
+70
+root ::= "\"" ([a-z\-]+) "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+52
+regexp with escaped hyphen outside a character class
+74
+{
+            "type": "string",
+            "pattern": "^a\\-b$"
+        }
+1
+1
+68
+root ::= "\"" ("a\-b") "\""
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+34
+regexp with unbalanced parentheses
+71
+{
+            "type": "string",
+            "pattern": "^(a$"
+        }
+1
+0
+75
+JSON schema conversion failed:
+Invalid pattern ^(a$: unbalanced parentheses
+1
+S
+23
+allOf with a $ref cycle
+107
+{
+            "allOf": [{"$ref": "#/$defs/a"}],
+            "$defs": {"a": {"$ref": "#/$defs/a"}}
+        }
+1
+0
+47
+JSON schema is nested more than 128 levels deep
+1
+S
+44
+long property name with additionalProperties
+1088
+{"type": "object", "properties": {"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {"type": "string"}}, "additionalProperties": true}
+1
+0
+50
+JSON schema property name is longer than 128 chars
+1
+S
+32
+unsupported regexp in a property
+222
+{
+            "type": "object",
+            "properties": {
+                "a": { "type": "string", "pattern": "^(?=a)a$" }
+            },
+            "required": ["a"],
+            "additionalProperties": false
+        }
+1
+1
+219
+a ::= string
+a-kv ::= "\"a\"" space ":" space a
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+root ::= "{" space a-kv space "}"
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+string ::= "\"" char* "\""
+

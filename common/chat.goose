@@ -5,6 +5,7 @@
 import std;
 import exception;
 import .jinja;
+import .number;
 import .jinja_lexer;
 import .jinja_parser;
 import .jinja_runtime;
@@ -152,7 +153,7 @@ var prompt_parts: PromptPart[>..<] = [];
 // "%b %d %Y" and the like, of the local time now.
 fn local_time(fmt: const u8[:]) -> u8[>..] {
     var buf: u8[100] = [0; 100];
-    let n = jinja::c_strftime(buf[..], fmt, jinja::c_time());
+    let n = number::c_strftime(buf[..], fmt, number::c_time());
     return str(buf[..n]);
 }
 

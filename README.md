@@ -19,7 +19,8 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | other architectures | not yet | |
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
-| sampling: adaptive-p, infill; lazy grammars (tool calls); JSON schema to grammar | not yet | |
+| JSON schema to grammar | ported | `tests/json_schema`: the 83 cases of `test-json-schema-to-grammar.cpp`, the same grammar text; `tools/completion -j`/`-jf` |
+| sampling: adaptive-p, infill; lazy grammars (tool calls) | not yet | |
 | built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
 | Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
 | Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported, except the specialized handlers that rewrite messages (Ministral 3, GPT-OSS, DeepSeek V3.2+, K2 Horizon, LLM-jp, TranslateGemma, old Gemma 4); LFM2's is ported | `tests/chat_template`, `tools/completion --jinja` |
@@ -79,6 +80,14 @@ grammars of llama.cpp's `grammars/` (JSON, lists, arithmetic, chess, C,
 Japanese) and a conversation with a grammar, `tools/completion --grammar`
 writes the same text as `llama-completion` on the three models.
 `scripts/gen-grammar-cases.sh` regenerates `tests/data/grammar_cases.txt`.
+
+`common/json_schema.goose` is `json-schema-to-grammar.cpp` with the schema
+model of `json-schema.cpp`: the schema is read with the standard library's
+`json` into a table of values, parsed into schema nodes, and each node
+becomes a rule. `tests/json_schema` compares the grammar text with what
+llama.cpp writes for every case of its test, errors and warnings included
+(`scripts/gen-schema-cases.sh` regenerates `tests/data/schema_cases.txt`),
+and `tools/completion -j` writes the same text as `llama-completion`.
 
 Goose programs get their arguments in the Windows code page, where
 llama.cpp's get UTF-8 from their manifest; `console::utf8_args` reads the
