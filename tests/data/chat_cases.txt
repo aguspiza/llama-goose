@@ -1,0 +1,2886 @@
+1
+6
+6
+system
+27
+You are a helpful assistant
+4
+user
+5
+Hello
+9
+assistant
+8
+Hi there
+4
+user
+11
+Who are you
+9
+assistant
+23
+   I am an assistant   
+4
+user
+16
+Another question
+2
+54
+7
+bailing
+229
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question<role>ASSISTANT</role>
+207
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question
+13
+bailing-think
+236
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question<role>ASSISTANT</role><think>
+207
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question
+8
+bailing2
+301
+<role>SYSTEM</role>You are a helpful assistant<|role_end|><role>HUMAN</role>Hello<|role_end|><role>ASSISTANT</role>Hi there<|role_end|><role>HUMAN</role>Who are you<|role_end|><role>ASSISTANT</role>   I am an assistant   <|role_end|><role>HUMAN</role>Another question<|role_end|><role>ASSISTANT</role>
+279
+<role>SYSTEM</role>You are a helpful assistant<|role_end|><role>HUMAN</role>Hello<|role_end|><role>ASSISTANT</role>Hi there<|role_end|><role>HUMAN</role>Who are you<|role_end|><role>ASSISTANT</role>   I am an assistant   <|role_end|><role>HUMAN</role>Another question<|role_end|>
+8
+chatglm3
+185
+[gMASK]sop<|system|>
+ You are a helpful assistant<|user|>
+ Hello<|assistant|>
+ Hi there<|user|>
+ Who are you<|assistant|>
+    I am an assistant   <|user|>
+ Another question<|assistant|>
+172
+[gMASK]sop<|system|>
+ You are a helpful assistant<|user|>
+ Hello<|assistant|>
+ Hi there<|user|>
+ Who are you<|assistant|>
+    I am an assistant   <|user|>
+ Another question
+8
+chatglm4
+182
+[gMASK]<sop><|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+
+168
+[gMASK]<sop><|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question
+6
+chatml
+292
+<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+Who are you<|im_end|>
+<|im_start|>assistant
+   I am an assistant   <|im_end|>
+<|im_start|>user
+Another question<|im_end|>
+<|im_start|>assistant
+
+270
+<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+Who are you<|im_end|>
+<|im_start|>assistant
+   I am an assistant   <|im_end|>
+<|im_start|>user
+Another question<|im_end|>
+
+9
+command-r
+480
+<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>
+440
+<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|>
+8
+deepseek
+204
+You are a helpful assistant### Instruction:
+Hello
+### Response:
+Hi there
+<|EOT|>
+### Instruction:
+Who are you
+### Response:
+   I am an assistant   
+<|EOT|>
+### Instruction:
+Another question
+### Response:
+
+190
+You are a helpful assistant### Instruction:
+Hello
+### Response:
+Hi there
+<|EOT|>
+### Instruction:
+Who are you
+### Response:
+   I am an assistant   
+<|EOT|>
+### Instruction:
+Another question
+
+12
+deepseek-ocr
+90
+You are a helpful assistantHelloHi thereWho are you   I am an assistant   Another question
+90
+You are a helpful assistantHelloHi thereWho are you   I am an assistant   Another question
+9
+deepseek2
+202
+You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there<｜end▁of▁sentence｜>User: Who are you
+
+Assistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question
+
+Assistant:
+192
+You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there<｜end▁of▁sentence｜>User: Who are you
+
+Assistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question
+
+
+9
+deepseek3
+233
+You are a helpful assistant
+
+<｜User｜>Hello<｜Assistant｜>Hi there<｜end▁of▁sentence｜><｜User｜>Who are you<｜Assistant｜>   I am an assistant   <｜end▁of▁sentence｜><｜User｜>Another question<｜Assistant｜>
+216
+You are a helpful assistant
+
+<｜User｜>Hello<｜Assistant｜>Hi there<｜end▁of▁sentence｜><｜User｜>Who are you<｜Assistant｜>   I am an assistant   <｜end▁of▁sentence｜><｜User｜>Another question
+10
+exaone-moe
+248
+<|system|>
+You are a helpful assistant<|endofturn|>
+<|user|>
+Hello<|endofturn|>
+<|assistant|>
+Hi there<|endofturn|>
+<|user|>
+Who are you<|endofturn|>
+<|assistant|>
+I am an assistant<|endofturn|>
+<|user|>
+Another question<|endofturn|>
+<|assistant|>
+
+234
+<|system|>
+You are a helpful assistant<|endofturn|>
+<|user|>
+Hello<|endofturn|>
+<|assistant|>
+Hi there<|endofturn|>
+<|user|>
+Who are you<|endofturn|>
+<|assistant|>
+I am an assistant<|endofturn|>
+<|user|>
+Another question<|endofturn|>
+
+7
+exaone3
+202
+[|system|]You are a helpful assistant[|endofturn|]
+[|user|]Hello
+[|assistant|]Hi there[|endofturn|]
+[|user|]Who are you
+[|assistant|]I am an assistant[|endofturn|]
+[|user|]Another question
+[|assistant|]
+189
+[|system|]You are a helpful assistant[|endofturn|]
+[|user|]Hello
+[|assistant|]Hi there[|endofturn|]
+[|user|]Who are you
+[|assistant|]I am an assistant[|endofturn|]
+[|user|]Another question
+
+7
+exaone4
+202
+[|system|]You are a helpful assistant[|endofturn|]
+[|user|]Hello
+[|assistant|]Hi there[|endofturn|]
+[|user|]Who are you
+[|assistant|]I am an assistant[|endofturn|]
+[|user|]Another question
+[|assistant|]
+189
+[|system|]You are a helpful assistant[|endofturn|]
+[|user|]Hello
+[|assistant|]Hi there[|endofturn|]
+[|user|]Who are you
+[|assistant|]I am an assistant[|endofturn|]
+[|user|]Another question
+
+7
+falcon3
+176
+<|system|>
+You are a helpful assistant
+<|user|>
+Hello
+<|assistant|>
+Hi there
+<|user|>
+Who are you
+<|assistant|>
+   I am an assistant   
+<|user|>
+Another question
+<|assistant|>
+
+162
+<|system|>
+You are a helpful assistant
+<|user|>
+Hello
+<|assistant|>
+Hi there
+<|user|>
+Who are you
+<|assistant|>
+   I am an assistant   
+<|user|>
+Another question
+
+5
+gemma
+279
+<start_of_turn>user
+You are a helpful assistant
+
+Hello<end_of_turn>
+<start_of_turn>model
+Hi there<end_of_turn>
+<start_of_turn>user
+Who are you<end_of_turn>
+<start_of_turn>model
+I am an assistant<end_of_turn>
+<start_of_turn>user
+Another question<end_of_turn>
+<start_of_turn>model
+
+258
+<start_of_turn>user
+You are a helpful assistant
+
+Hello<end_of_turn>
+<start_of_turn>model
+Hi there<end_of_turn>
+<start_of_turn>user
+Who are you<end_of_turn>
+<start_of_turn>model
+I am an assistant<end_of_turn>
+<start_of_turn>user
+Another question<end_of_turn>
+
+8
+gigachat
+438
+<s>You are a helpful assistant<|message_sep|>user<|role_sep|>Hello<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>Hi there<|message_sep|>user<|role_sep|>Who are you<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>   I am an assistant   <|message_sep|>user<|role_sep|>Another question<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>
+417
+<s>You are a helpful assistant<|message_sep|>user<|role_sep|>Hello<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>Hi there<|message_sep|>user<|role_sep|>Who are you<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>   I am an assistant   <|message_sep|>user<|role_sep|>Another question<|message_sep|>available functions<|role_sep|>[]<|message_sep|>
+7
+glmedge
+169
+<|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+156
+<|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question
+7
+gpt-oss
+312
+<|start|>system<|message|>You are a helpful assistant<|end|><|start|>user<|message|>Hello<|end|><|start|>assistant<|message|>Hi there<|return|><|start|>user<|message|>Who are you<|end|><|start|>assistant<|message|>   I am an assistant   <|return|><|start|>user<|message|>Another question<|end|><|start|>assistant
+294
+<|start|>system<|message|>You are a helpful assistant<|end|><|start|>user<|message|>Hello<|end|><|start|>assistant<|message|>Hi there<|return|><|start|>user<|message|>Who are you<|end|><|start|>assistant<|message|>   I am an assistant   <|return|><|start|>user<|message|>Another question<|end|>
+7
+granite
+455
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+414
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+
+11
+granite-4.0
+455
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+414
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+
+11
+granite-4.1
+455
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+414
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+
+6
+grok-2
+241
+System: You are a helpful assistant<|separator|>
+
+Human: Hello<|separator|>
+
+Assistant: Hi there<|separator|>
+
+Human: Who are you<|separator|>
+
+Assistant:    I am an assistant   <|separator|>
+
+Human: Another question<|separator|>
+
+Assistant:
+231
+System: You are a helpful assistant<|separator|>
+
+Human: Hello<|separator|>
+
+Assistant: Hi there<|separator|>
+
+Human: Who are you<|separator|>
+
+Assistant:    I am an assistant   <|separator|>
+
+Human: Another question<|separator|>
+
+
+13
+hunyuan-dense
+337
+You are a helpful assistant<｜hy_place▁holder▁no▁3｜><｜hy_User｜>Hello<｜hy_Assistant｜><｜hy_Assistant｜>Hi there<｜hy_place▁holder▁no▁2｜><｜hy_User｜>Who are you<｜hy_Assistant｜><｜hy_Assistant｜>   I am an assistant   <｜hy_place▁holder▁no▁2｜><｜hy_User｜>Another question<｜hy_Assistant｜>
+337
+You are a helpful assistant<｜hy_place▁holder▁no▁3｜><｜hy_User｜>Hello<｜hy_Assistant｜><｜hy_Assistant｜>Hi there<｜hy_place▁holder▁no▁2｜><｜hy_User｜>Who are you<｜hy_Assistant｜><｜hy_Assistant｜>   I am an assistant   <｜hy_place▁holder▁no▁2｜><｜hy_User｜>Another question<｜hy_Assistant｜>
+11
+hunyuan-moe
+208
+<|startoftext|>You are a helpful assistant<|extra_4|><|startoftext|>Hello<|extra_0|>Hi there<|eos|><|startoftext|>Who are you<|extra_0|>   I am an assistant   <|eos|><|startoftext|>Another question<|extra_0|>
+208
+<|startoftext|>You are a helpful assistant<|extra_4|><|startoftext|>Hello<|extra_0|>Hi there<|eos|><|startoftext|>Who are you<|extra_0|>   I am an assistant   <|eos|><|startoftext|>Another question<|extra_0|>
+10
+hunyuan-vl
+241
+<｜hy_begin▁of▁sentence｜>You are a helpful assistant<｜hy_place▁holder▁no▁3｜>Hello<｜hy_User｜>Hi there<｜hy_Assistant｜>Who are you<｜hy_User｜>   I am an assistant   <｜hy_Assistant｜>Another question<｜hy_User｜>
+241
+<｜hy_begin▁of▁sentence｜>You are a helpful assistant<｜hy_place▁holder▁no▁3｜>Hello<｜hy_User｜>Hi there<｜hy_Assistant｜>Who are you<｜hy_User｜>   I am an assistant   <｜hy_Assistant｜>Another question<｜hy_User｜>
+7
+kimi-k2
+380
+<|im_system|>system<|im_middle|>You are a helpful assistant<|im_end|><|im_user|>user<|im_middle|>Hello<|im_end|><|im_assistant|>assistant<|im_middle|>Hi there<|im_end|><|im_user|>user<|im_middle|>Who are you<|im_end|><|im_assistant|>assistant<|im_middle|>   I am an assistant   <|im_end|><|im_user|>user<|im_middle|>Another question<|im_end|><|im_assistant|>assistant<|im_middle|>
+342
+<|im_system|>system<|im_middle|>You are a helpful assistant<|im_end|><|im_user|>user<|im_middle|>Hello<|im_end|><|im_assistant|>assistant<|im_middle|>Hi there<|im_end|><|im_user|>user<|im_middle|>Who are you<|im_end|><|im_assistant|>assistant<|im_middle|>   I am an assistant   <|im_end|><|im_user|>user<|im_middle|>Another question<|im_end|>
+6
+llama2
+144
+[INST] You are a helpful assistant
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
+144
+[INST] You are a helpful assistant
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
+10
+llama2-sys
+162
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
+162
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
+14
+llama2-sys-bos
+168
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s><s>[INST] Who are you [/INST]   I am an assistant   </s><s>[INST] Another question [/INST]
+168
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s><s>[INST] Who are you [/INST]   I am an assistant   </s><s>[INST] Another question [/INST]
+16
+llama2-sys-strip
+156
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]I am an assistant</s>[INST] Another question [/INST]
+156
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]I am an assistant</s>[INST] Another question [/INST]
+6
+llama3
+455
+<|start_header_id|>system<|end_header_id|>
+
+You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Hi there<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Who are you<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+I am an assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Another question<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+
+408
+<|start_header_id|>system<|end_header_id|>
+
+You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Hi there<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Who are you<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+I am an assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Another question<|eot_id|>
+6
+llama4
+395
+<|header_start|>system<|header_end|>
+
+You are a helpful assistant<|eot|><|header_start|>user<|header_end|>
+
+Hello<|eot|><|header_start|>assistant<|header_end|>
+
+Hi there<|eot|><|header_start|>user<|header_end|>
+
+Who are you<|eot|><|header_start|>assistant<|header_end|>
+
+I am an assistant<|eot|><|header_start|>user<|header_end|>
+
+Another question<|eot|><|header_start|>assistant<|header_end|>
+
+
+354
+<|header_start|>system<|header_end|>
+
+You are a helpful assistant<|eot|><|header_start|>user<|header_end|>
+
+Hello<|eot|><|header_start|>assistant<|header_end|>
+
+Hi there<|eot|><|header_start|>user<|header_end|>
+
+Who are you<|eot|><|header_start|>assistant<|header_end|>
+
+I am an assistant<|eot|><|header_start|>user<|header_end|>
+
+Another question<|eot|>
+6
+megrez
+389
+<|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|><|role_start|>assistant<|role_end|>
+354
+<|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|>
+7
+minicpm
+120
+You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>
+120
+You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>
+10
+mistral-v1
+150
+ [INST] You are a helpful assistant
+
+Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s> [INST] Another question [/INST]
+150
+ [INST] You are a helpful assistant
+
+Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s> [INST] Another question [/INST]
+10
+mistral-v3
+138
+[INST] You are a helpful assistant
+
+Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] Another question[/INST]
+138
+[INST] You are a helpful assistant
+
+Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] Another question[/INST]
+17
+mistral-v3-tekken
+139
+[INST]You are a helpful assistant
+
+Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+139
+[INST]You are a helpful assistant
+
+Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+10
+mistral-v7
+174
+[SYSTEM_PROMPT] You are a helpful assistant[/SYSTEM_PROMPT][INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST]    I am an assistant   </s>[INST] Another question[/INST]
+174
+[SYSTEM_PROMPT] You are a helpful assistant[/SYSTEM_PROMPT][INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST]    I am an assistant   </s>[INST] Another question[/INST]
+17
+mistral-v7-tekken
+168
+[SYSTEM_PROMPT]You are a helpful assistant[/SYSTEM_PROMPT][INST]Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+168
+[SYSTEM_PROMPT]You are a helpful assistant[/SYSTEM_PROMPT][INST]Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+7
+monarch
+190
+system
+You are a helpful assistant</s>
+<s>user
+Hello</s>
+<s>assistant
+Hi there</s>
+<s>user
+Who are you</s>
+<s>assistant
+   I am an assistant   </s>
+<s>user
+Another question</s>
+<s>assistant
+
+177
+system
+You are a helpful assistant</s>
+<s>user
+Hello</s>
+<s>assistant
+Hi there</s>
+<s>user
+Who are you</s>
+<s>assistant
+   I am an assistant   </s>
+<s>user
+Another question</s>
+
+8
+openchat
+308
+You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>GPT4 Correct Assistant:
+285
+You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>
+5
+orion
+172
+Human: You are a helpful assistant
+
+Hello
+
+Assistant: </s>Hi there</s>Human: Who are you
+
+Assistant: </s>   I am an assistant   </s>Human: Another question
+
+Assistant: </s>
+172
+Human: You are a helpful assistant
+
+Hello
+
+Assistant: </s>Hi there</s>Human: Who are you
+
+Assistant: </s>   I am an assistant   </s>Human: Another question
+
+Assistant: </s>
+14
+pangu-embedded
+276
+[unused9]系统：You are a helpful assistant[unused10][unused9]用户：Hello[unused10][unused9]助手：Hi there[unused10][unused9]用户：Who are you[unused10][unused9]助手：   I am an assistant   [unused10][unused9]用户：Another question[unused10][unused9]助手：
+258
+[unused9]系统：You are a helpful assistant[unused10][unused9]用户：Hello[unused10][unused9]助手：Hi there[unused10][unused9]用户：Who are you[unused10][unused9]助手：   I am an assistant   [unused10][unused9]用户：Another question[unused10]
+4
+phi3
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+204
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+
+4
+phi4
+349
+<|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|><|im_start|>assistant<|im_sep|>
+318
+<|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|>
+10
+rwkv-world
+154
+System: You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there
+
+User: Who are you
+
+Assistant: I am an assistant
+
+User: Another question
+
+Assistant:
+154
+System: You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there
+
+User: Who are you
+
+Assistant: I am an assistant
+
+User: Another question
+
+Assistant:
+8
+seed_oss
+266
+<seed:bos>system
+You are a helpful assistant<seed:eos><seed:bos>user
+Hello<seed:eos><seed:bos>assistant
+Hi there<seed:eos><seed:bos>user
+Who are you<seed:eos><seed:bos>assistant
+I am an assistant<seed:eos><seed:bos>user
+Another question<seed:eos><seed:bos>assistant
+
+246
+<seed:bos>system
+You are a helpful assistant<seed:eos><seed:bos>user
+Hello<seed:eos><seed:bos>assistant
+Hi there<seed:eos><seed:bos>user
+Who are you<seed:eos><seed:bos>assistant
+I am an assistant<seed:eos><seed:bos>user
+Another question<seed:eos>
+7
+smolvlm
+249
+<|im_start|>You are a helpful assistant
+
+User: Hello<end_of_utterance>
+Assistant: Hi there<end_of_utterance>
+User: Who are you<end_of_utterance>
+Assistant:    I am an assistant   <end_of_utterance>
+User: Another question<end_of_utterance>
+Assistant:
+239
+<|im_start|>You are a helpful assistant
+
+User: Hello<end_of_utterance>
+Assistant: Hi there<end_of_utterance>
+User: Who are you<end_of_utterance>
+Assistant:    I am an assistant   <end_of_utterance>
+User: Another question<end_of_utterance>
+
+10
+solar-open
+306
+<|begin|>system<|content|>You are a helpful assistant<|end|><|begin|>user<|content|>Hello<|end|><|begin|>assistant<|content|>Hi there<|end|><|begin|>user<|content|>Who are you<|end|><|begin|>assistant<|content|>   I am an assistant   <|end|><|begin|>user<|content|>Another question<|end|><|begin|>assistant
+288
+<|begin|>system<|content|>You are a helpful assistant<|end|><|begin|>user<|content|>Hello<|end|><|begin|>assistant<|content|>Hi there<|end|><|begin|>user<|content|>Who are you<|end|><|begin|>assistant<|content|>   I am an assistant   <|end|><|begin|>user<|content|>Another question<|end|>
+6
+vicuna
+155
+You are a helpful assistant
+
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
+145
+You are a helpful assistant
+
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+
+11
+vicuna-orca
+162
+SYSTEM: You are a helpful assistant
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
+152
+SYSTEM: You are a helpful assistant
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+
+6
+yandex
+221
+ Пользователь: Hello
+
+ Ассистент: Hi there
+
+ Пользователь: Who are you
+
+ Ассистент:    I am an assistant   
+
+ Пользователь: Another question
+
+ Ассистент:[SEP]
+196
+ Пользователь: Hello
+
+ Ассистент: Hi there
+
+ Пользователь: Who are you
+
+ Ассистент:    I am an assistant   
+
+ Пользователь: Another question
+
+
+6
+zephyr
+254
+<|system|>
+You are a helpful assistant<|endoftext|>
+<|user|>
+Hello<|endoftext|>
+<|assistant|>
+Hi there<|endoftext|>
+<|user|>
+Who are you<|endoftext|>
+<|assistant|>
+   I am an assistant   <|endoftext|>
+<|user|>
+Another question<|endoftext|>
+<|assistant|>
+
+240
+<|system|>
+You are a helpful assistant<|endoftext|>
+<|user|>
+Hello<|endoftext|>
+<|assistant|>
+Hi there<|endoftext|>
+<|user|>
+Who are you<|endoftext|>
+<|assistant|>
+   I am an assistant   <|endoftext|>
+<|user|>
+Another question<|endoftext|>
+
+2
+36
+33
+teknium/OpenHermes-2.5-Mistral-7B
+199
+{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}
+292
+<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+Who are you<|im_end|>
+<|im_start|>assistant
+   I am an assistant   <|im_end|>
+<|im_start|>user
+Another question<|im_end|>
+<|im_start|>assistant
+
+0
+
+0
+
+0
+
+1
+1
+1
+0
+292
+<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+Who are you<|im_end|>
+<|im_start|>assistant
+   I am an assistant   <|im_end|>
+<|im_start|>user
+Another question<|im_end|>
+<|im_start|>assistant
+
+270
+<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+Who are you<|im_end|>
+<|im_start|>assistant
+   I am an assistant   <|im_end|>
+<|im_start|>user
+Another question<|im_end|>
+
+77
+mistralai/Mistral-7B-Instruct-v0.2 (NOTE: Old pre-v1 without a system prompt)
+470
+{{ bos_token }}{% for message in messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if message['role'] == 'user' %}{{ '[INST] ' + message['content'] + ' [/INST]' }}{% elif message['role'] == 'assistant' %}{{ message['content'] + eos_token}}{% else %}{{ raise_exception('Only user and assistant roles are supported!') }}{% endif %}{% endfor %}
+144
+[INST] You are a helpful assistant
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
+0
+
+0
+
+4
+</s>
+1
+1
+1
+0
+144
+[INST] You are a helpful assistant
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
+144
+[INST] You are a helpful assistant
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
+32
+TheBloke/FusionNet_34Bx2_MoE-AWQ
+500
+{%- for idx in range(0, messages|length) -%}
+{%- if messages[idx]['role'] == 'user' -%}
+{%- if idx > 1 -%}
+{{- bos_token + '[INST] ' + messages[idx]['content'] + ' [/INST]' -}}
+{%- else -%}
+{{- messages[idx]['content'] + ' [/INST]' -}}
+{%- endif -%}
+{% elif messages[idx]['role'] == 'system' %}
+{{- '[INST] <<SYS>>\n' + messages[idx]['content'] + '\n<</SYS>>\n\n' -}}
+{%- elif messages[idx]['role'] == 'assistant' -%}
+{{- ' '  + messages[idx]['content'] + ' ' + eos_token -}}
+{% endif %}
+{% endfor %}
+168
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s><s>[INST] Who are you [/INST]   I am an assistant   </s><s>[INST] Another question [/INST]
+172
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST] Hi there </s><s>[INST] Who are you [/INST]    I am an assistant    </s><s>[INST] Another question [/INST]
+3
+<s>
+4
+</s>
+1
+1
+1
+0
+168
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s><s>[INST] Who are you [/INST]   I am an assistant   </s><s>[INST] Another question [/INST]
+168
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s><s>[INST] Who are you [/INST]   I am an assistant   </s><s>[INST] Another question [/INST]
+30
+bofenghuang/vigogne-2-70b-chat
+1178
+{{ bos_token }}{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content'] %}{% elif true == true and not '<<SYS>>' in messages[0]['content'] %}{% set loop_messages = messages %}{% set system_message = 'Vous êtes Vigogne, un assistant IA créé par Zaion Lab. Vous suivez extrêmement bien les instructions. Aidez autant que vous le pouvez.' %}{% else %}{% set loop_messages = messages %}{% set system_message = false %}{% endif %}{% for message in loop_messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if loop.index0 == 0 and system_message != false %}{% set content = '<<SYS>>\n' + system_message + '\n<</SYS>>\n\n' + message['content'] %}{% else %}{% set content = message['content'] %}{% endif %}{% if message['role'] == 'user' %}{{ '[INST] ' + content.strip() + ' [/INST]' }}{% elif message['role'] == 'system' %}{{ '<<SYS>>\n' + content.strip() + '\n<</SYS>>\n\n' }}{% elif message['role'] == 'assistant' %}{{ ' '  + content.strip() + ' ' + eos_token }}{% endif %}{% endfor %}
+156
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]I am an assistant</s>[INST] Another question [/INST]
+160
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST] Hi there </s>[INST] Who are you [/INST] I am an assistant </s>[INST] Another question [/INST]
+0
+
+4
+</s>
+1
+1
+1
+0
+156
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]I am an assistant</s>[INST] Another question [/INST]
+156
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]I am an assistant</s>[INST] Another question [/INST]
+24
+mlabonne/AlphaMonarch-7B
+191
+{% for message in messages %}{{bos_token + message['role'] + '\n' + message['content'] + eos_token + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ bos_token + 'assistant\n' }}{% endif %}
+190
+system
+You are a helpful assistant</s>
+<s>user
+Hello</s>
+<s>assistant
+Hi there</s>
+<s>user
+Who are you</s>
+<s>assistant
+   I am an assistant   </s>
+<s>user
+Another question</s>
+<s>assistant
+
+193
+<s>system
+You are a helpful assistant</s>
+<s>user
+Hello</s>
+<s>assistant
+Hi there</s>
+<s>user
+Who are you</s>
+<s>assistant
+   I am an assistant   </s>
+<s>user
+Another question</s>
+<s>assistant
+
+3
+<s>
+4
+</s>
+1
+1
+1
+0
+190
+system
+You are a helpful assistant</s>
+<s>user
+Hello</s>
+<s>assistant
+Hi there</s>
+<s>user
+Who are you</s>
+<s>assistant
+   I am an assistant   </s>
+<s>user
+Another question</s>
+<s>assistant
+
+177
+system
+You are a helpful assistant</s>
+<s>user
+Hello</s>
+<s>assistant
+Hi there</s>
+<s>user
+Who are you</s>
+<s>assistant
+   I am an assistant   </s>
+<s>user
+Another question</s>
+
+18
+google/gemma-7b-it
+579
+{% if messages[0]['role'] == 'system' %}{{ raise_exception('System role not supported') }}{% endif %}{% for message in messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if (message['role'] == 'assistant') %}{% set role = 'model' %}{% else %}{% set role = message['role'] %}{% endif %}{{ '<start_of_turn>' + role + '\n' + message['content'] | trim + '<end_of_turn>\n' }}{% endfor %}{% if add_generation_prompt %}{{'<start_of_turn>model\n'}}{% endif %}
+279
+<start_of_turn>user
+You are a helpful assistant
+
+Hello<end_of_turn>
+<start_of_turn>model
+Hi there<end_of_turn>
+<start_of_turn>user
+Who are you<end_of_turn>
+<start_of_turn>model
+I am an assistant<end_of_turn>
+<start_of_turn>user
+Another question<end_of_turn>
+<start_of_turn>model
+
+278
+<start_of_turn>user
+You are a helpful assistant
+Hello<end_of_turn>
+<start_of_turn>model
+Hi there<end_of_turn>
+<start_of_turn>user
+Who are you<end_of_turn>
+<start_of_turn>model
+I am an assistant<end_of_turn>
+<start_of_turn>user
+Another question<end_of_turn>
+<start_of_turn>model
+
+0
+
+0
+
+1
+1
+1
+0
+279
+<start_of_turn>user
+You are a helpful assistant
+
+Hello<end_of_turn>
+<start_of_turn>model
+Hi there<end_of_turn>
+<start_of_turn>user
+Who are you<end_of_turn>
+<start_of_turn>model
+I am an assistant<end_of_turn>
+<start_of_turn>user
+Another question<end_of_turn>
+<start_of_turn>model
+
+258
+<start_of_turn>user
+You are a helpful assistant
+
+Hello<end_of_turn>
+<start_of_turn>model
+Hi there<end_of_turn>
+<start_of_turn>user
+Who are you<end_of_turn>
+<start_of_turn>model
+I am an assistant<end_of_turn>
+<start_of_turn>user
+Another question<end_of_turn>
+
+26
+OrionStarAI/Orion-14B-Chat
+276
+{% for message in messages %}{% if loop.first %}{{ bos_token }}{% endif %}{% if message['role'] == 'user' %}{{ 'Human: ' + message['content'] + '\n\nAssistant: ' + eos_token }}{% elif message['role'] == 'assistant' %}{{ message['content'] + eos_token }}{% endif %}{% endfor %}
+172
+Human: You are a helpful assistant
+
+Hello
+
+Assistant: </s>Hi there</s>Human: Who are you
+
+Assistant: </s>   I am an assistant   </s>Human: Another question
+
+Assistant: </s>
+171
+Human: You are a helpful assistant
+Hello
+
+Assistant: </s>Hi there</s>Human: Who are you
+
+Assistant: </s>   I am an assistant   </s>Human: Another question
+
+Assistant: </s>
+0
+
+4
+</s>
+1
+1
+1
+0
+172
+Human: You are a helpful assistant
+
+Hello
+
+Assistant: </s>Hi there</s>Human: Who are you
+
+Assistant: </s>   I am an assistant   </s>Human: Another question
+
+Assistant: </s>
+172
+Human: You are a helpful assistant
+
+Hello
+
+Assistant: </s>Hi there</s>Human: Who are you
+
+Assistant: </s>   I am an assistant   </s>Human: Another question
+
+Assistant: </s>
+26
+openchat/openchat-3.5-0106
+222
+{{ bos_token }}{% for message in messages %}{{ 'GPT4 Correct ' + message['role'].title() + ': ' + message['content'] + '<|end_of_turn|>'}}{% endfor %}{% if add_generation_prompt %}{{ 'GPT4 Correct Assistant:' }}{% endif %}
+308
+You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>GPT4 Correct Assistant:
+329
+GPT4 Correct System: You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>GPT4 Correct Assistant:
+0
+
+0
+
+1
+1
+1
+0
+308
+You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>GPT4 Correct Assistant:
+285
+You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>
+39
+deepseek-ai/deepseek-coder-33b-instruct
+1041
+{% if not add_generation_prompt is defined %}
+{% set add_generation_prompt = false %}
+{% endif %}
+{%- set ns = namespace(found=false) -%}
+{%- for message in messages -%}
+    {%- if message['role'] == 'system' -%}
+        {%- set ns.found = true -%}
+    {%- endif -%}
+{%- endfor -%}
+{{bos_token}}{%- if not ns.found -%}
+{{'You are an AI programming assistant, utilizing the Deepseek Coder model, developed by Deepseek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer\n'}}
+{%- endif %}
+{%- for message in messages %}
+    {%- if message['role'] == 'system' %}
+{{ message['content'] }}
+    {%- else %}
+        {%- if message['role'] == 'user' %}
+{{'### Instruction:\n' + message['content'] + '\n'}}
+        {%- else %}
+{{'### Response:\n' + message['content'] + '\n<|EOT|>\n'}}
+        {%- endif %}
+    {%- endif %}
+{%- endfor %}
+{% if add_generation_prompt %}
+{{'### Response:'}}
+{% endif %}
+204
+You are a helpful assistant### Instruction:
+Hello
+### Response:
+Hi there
+<|EOT|>
+### Instruction:
+Who are you
+### Response:
+   I am an assistant   
+<|EOT|>
+### Instruction:
+Another question
+### Response:
+
+0
+
+0
+
+0
+
+1
+1
+1
+0
+204
+You are a helpful assistant### Instruction:
+Hello
+### Response:
+Hi there
+<|EOT|>
+### Instruction:
+Who are you
+### Response:
+   I am an assistant   
+<|EOT|>
+### Instruction:
+Another question
+### Response:
+
+190
+You are a helpful assistant### Instruction:
+Hello
+### Response:
+Hi there
+<|EOT|>
+### Instruction:
+Who are you
+### Response:
+   I am an assistant   
+<|EOT|>
+### Instruction:
+Another question
+
+23
+eachadea/vicuna-13b-1.1
+361
+{%- for message in messages %}{%- if message['role'] == 'system' -%}{{- '' + message['content'] + '
+
+' -}}{%- else -%}{%- if message['role'] == 'user' -%}{{-'USER: ' + message['content'] + '
+'-}}{%- else -%}{{-'ASSISTANT: ' + message['content'] + '</s>
+' -}}{%- endif -%}{%- endif -%}{%- endfor -%}{%- if add_generation_prompt -%}{{-'ASSISTANT:'-}}{%- endif -%}
+155
+You are a helpful assistant
+
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
+0
+
+0
+
+0
+
+1
+1
+1
+0
+155
+You are a helpful assistant
+
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
+145
+You are a helpful assistant
+
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+
+11
+Orca-Vicuna
+367
+{%- for message in messages %}{%- if message['role'] == 'system' -%}{{-'SYSTEM: ' + message['content'] + '
+' -}}{%- else -%}{%- if message['role'] == 'user' -%}{{-'USER: ' + message['content'] + '
+'-}}{%- else -%}{{-'ASSISTANT: ' + message['content'] + '</s>
+' -}}{%- endif -%}{%- endif -%}{%- endfor -%}{%- if add_generation_prompt -%}{{-'ASSISTANT:'-}}{%- endif -%}
+162
+SYSTEM: You are a helpful assistant
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
+0
+
+0
+
+0
+
+1
+1
+1
+0
+162
+SYSTEM: You are a helpful assistant
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
+152
+SYSTEM: You are a helpful assistant
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+
+31
+CohereForAI/c4ai-command-r-plus
+1204
+{{ bos_token }}{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content'] %}{% elif false == true %}{% set loop_messages = messages %}{% set system_message = 'You are Command-R, a brilliant, sophisticated, AI-assistant trained to assist human users by providing thorough responses. You are trained by Cohere.' %}{% else %}{% set loop_messages = messages %}{% set system_message = false %}{% endif %}{% if system_message != false %}{{ '<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>' + system_message + '<|END_OF_TURN_TOKEN|>' }}{% endif %}{% for message in loop_messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% set content = message['content'] %}{% if message['role'] == 'user' %}{{ '<|START_OF_TURN_TOKEN|><|USER_TOKEN|>' + content.strip() + '<|END_OF_TURN_TOKEN|>' }}{% elif message['role'] == 'assistant' %}{{ '<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>'  + content.strip() + '<|END_OF_TURN_TOKEN|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>' }}{% endif %}
+480
+<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>
+0
+
+0
+
+0
+
+1
+1
+1
+0
+480
+<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>
+440
+<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|>
+7
+Llama-3
+348
+{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>
+
+'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{{ '<|start_header_id|>assistant<|end_header_id|>
+
+' }}
+455
+<|start_header_id|>system<|end_header_id|>
+
+You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Hi there<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Who are you<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+I am an assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Another question<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+
+0
+
+0
+
+0
+
+1
+1
+1
+0
+455
+<|start_header_id|>system<|end_header_id|>
+
+You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Hi there<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Who are you<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+I am an assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Another question<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+
+408
+<|start_header_id|>system<|end_header_id|>
+
+You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Hi there<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Who are you<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+I am an assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Another question<|eot_id|>
+10
+Phi-3-mini
+269
+{{ bos_token }}{% for message in messages %}{% if (message['role'] == 'user') %}{{'<|user|>' + '
+' + message['content'] + '<|end|>' + '
+' + '<|assistant|>' + '
+'}}{% elif (message['role'] == 'assistant') %}{{message['content'] + '<|end|>' + '
+'}}{% endif %}{% endfor %}
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+200
+<|user|>
+You are a helpful assistant
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+0
+
+0
+
+1
+1
+1
+0
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+204
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+
+11
+Phi-3-small
+218
+{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '
+' + message['content'] + '<|end|>
+' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>
+' }}{% else %}{{ eos_token }}{% endif %}
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+0
+
+0
+
+0
+
+1
+1
+1
+0
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+204
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+
+12
+Phi-3-medium
+254
+{% for message in messages %}{% if (message['role'] == 'user') %}{{'<|user|>' + '
+' + message['content'] + '<|end|>' + '
+' + '<|assistant|>' + '
+'}}{% elif (message['role'] == 'assistant') %}{{message['content'] + '<|end|>' + '
+'}}{% endif %}{% endfor %}
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+200
+<|user|>
+You are a helpful assistant
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+0
+
+0
+
+1
+1
+1
+0
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+204
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+
+12
+Phi-3-vision
+220
+{% for message in messages %}{{'<|' + message['role'] + '|>' + '
+' + message['content'] + '<|end|>
+' }}{% endfor %}{% if add_generation_prompt and messages[-1]['role'] != 'assistant' %}{{- '<|assistant|>
+' -}}{% endif %}
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+0
+
+0
+
+0
+
+1
+1
+1
+0
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
+204
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+
+8
+ChatGLM3
+247
+{% for message in messages %}{% if loop.first %}[gMASK]sop<|{{ message['role'] }}|>
+ {{ message['content'] }}{% else %}<|{{ message['role'] }}|>
+ {{ message['content'] }}{% endif %}{% endfor %}{% if add_generation_prompt %}<|assistant|>{% endif %}
+185
+[gMASK]sop<|system|>
+ You are a helpful assistant<|user|>
+ Hello<|assistant|>
+ Hi there<|user|>
+ Who are you<|assistant|>
+    I am an assistant   <|user|>
+ Another question<|assistant|>
+185
+[gMASK]sop<|system|>
+ You are a helpful assistant<|user|>
+ Hello<|assistant|>
+ Hi there<|user|>
+ Who are you<|assistant|>
+    I am an assistant   <|user|>
+ Another question<|assistant|>
+0
+
+0
+
+1
+1
+1
+0
+185
+[gMASK]sop<|system|>
+ You are a helpful assistant<|user|>
+ Hello<|assistant|>
+ Hi there<|user|>
+ Who are you<|assistant|>
+    I am an assistant   <|user|>
+ Another question<|assistant|>
+172
+[gMASK]sop<|system|>
+ You are a helpful assistant<|user|>
+ Hello<|assistant|>
+ Hi there<|user|>
+ Who are you<|assistant|>
+    I am an assistant   <|user|>
+ Another question
+8
+ChatGLM4
+669
+[gMASK]<sop>{% for item in messages %}{% if item['tools'] is defined %}<|system|>
+你是一个名为 ChatGLM 的人工智能助手。你是基于智谱AI训练的语言模型 GLM-4 模型开发的，你的任务是针对用户的问题和要求提供适当的答复和支持。
+
+# 可用工具{% set tools = item['tools'] %}{% for tool in tools %}{% if tool['type'] == 'function' %}
+
+## {{ tool['function']['name'] }}
+
+{{ tool['function'] | tojson(indent=4) }}
+......{% endif %}{% endfor %}{% endif %}{% if item['content'] %}<|{{ item['role'] }}|>{{ item['metadata'] }}
+{{ item['content'] }}{% endif %}{% endfor %}{% if add_generation_prompt %}<|assistant|>
+{% endif %}
+182
+[gMASK]<sop><|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+
+0
+
+0
+
+0
+
+1
+1
+1
+0
+182
+[gMASK]<sop><|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+
+168
+[gMASK]<sop><|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question
+7
+GLMEdge
+263
+{% for item in messages %}{% if item['role'] == 'system' %}<|system|>
+{{ item['content'] }}{% elif item['role'] == 'user' %}<|user|>
+{{ item['content'] }}{% elif item['role'] == 'assistant' %}<|assistant|>
+{{ item['content'] }}{% endif %}{% endfor %}<|assistant|>
+169
+<|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+169
+<|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+0
+
+0
+
+1
+1
+1
+0
+169
+<|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+156
+<|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question
+33
+MiniCPM-3B-OpenHermes-2.5-v2-GGUF
+178
+{% for message in messages %}{% if message['role'] == 'user' %}{{'<用户>' + message['content'].strip() + '<AI>'}}{% else %}{{message['content'].strip()}}{% endif %}{% endfor %}
+120
+You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>
+0
+
+0
+
+0
+
+1
+1
+1
+0
+120
+You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>
+120
+You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>
+11
+DeepSeek-V2
+459
+{% if not add_generation_prompt is defined %}{% set add_generation_prompt = false %}{% endif %}{{ bos_token }}{% for message in messages %}{% if message['role'] == 'user' %}{{ 'User: ' + message['content'] + '
+
+' }}{% elif message['role'] == 'assistant' %}{{ 'Assistant: ' + message['content'] + eos_token }}{% elif message['role'] == 'system' %}{{ message['content'] + '
+
+' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}
+202
+You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there<｜end▁of▁sentence｜>User: Who are you
+
+Assistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question
+
+Assistant:
+0
+
+0
+
+27
+<｜end▁of▁sentence｜>
+1
+1
+1
+0
+202
+You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there<｜end▁of▁sentence｜>User: Who are you
+
+Assistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question
+
+Assistant:
+192
+You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there<｜end▁of▁sentence｜>User: Who are you
+
+Assistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question
+
+
+35
+ibm-granite/granite-3.0-8b-instruct
+1185
+{%- if tools %}
+    {{- '<|start_of_role|>available_tools<|end_of_role|>
+' }}
+    {%- for tool in tools %}
+    {{- tool | tojson(indent=4) }}
+    {%- if not loop.last %}
+        {{- '
+
+' }}
+    {%- endif %}
+    {%- endfor %}
+    {{- '<|end_of_text|>
+' }}
+{%- endif %}
+{%- for message in messages %}
+    {%- if message['role'] == 'system' %}
+    {{- '<|start_of_role|>system<|end_of_role|>' + message['content'] + '<|end_of_text|>
+' }}
+    {%- elif message['role'] == 'user' %}
+    {{- '<|start_of_role|>user<|end_of_role|>' + message['content'] + '<|end_of_text|>
+' }}
+    {%- elif message['role'] == 'assistant' %}
+    {{- '<|start_of_role|>assistant<|end_of_role|>'  + message['content'] + '<|end_of_text|>
+' }}
+    {%- elif message['role'] == 'assistant_tool_call' %}
+    {{- '<|start_of_role|>assistant<|end_of_role|><|tool_call|>' + message['content'] + '<|end_of_text|>
+' }}
+    {%- elif message['role'] == 'tool_response' %}
+    {{- '<|start_of_role|>tool_response<|end_of_role|>' + message['content'] + '<|end_of_text|>
+' }}
+    {%- endif %}
+    {%- if loop.last and add_generation_prompt %}
+    {{- '<|start_of_role|>assistant<|end_of_role|>' }}
+    {%- endif %}
+{%- endfor %}
+455
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+455
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+0
+
+0
+
+1
+1
+1
+0
+455
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+414
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+
+81
+mistralai/Mistral-7B-Instruct-v0.2 (mistralai 'v1' template with a system prompt)
+1058
+{%- if messages[0]['role'] == 'system' %}
+    {%- set system_message = messages[0]['content'] %}
+    {%- set loop_messages = messages[1:] %}
+{%- else %}
+    {%- set loop_messages = messages %}
+{%- endif %}
+
+{{- bos_token }}
+{%- for message in loop_messages %}
+    {%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}
+        {{- raise_exception('After the optional system message, conversation roles must alternate user/assistant/user/assistant/...') }}
+    {%- endif %}
+    {%- if message['role'] == 'user' %}
+        {%- if loop.first and system_message is defined %}
+            {{- ' [INST] ' + system_message + '\n\n' + message['content'] + ' [/INST]' }}
+        {%- else %}
+            {{- ' [INST] ' + message['content'] + ' [/INST]' }}
+        {%- endif %}
+    {%- elif message['role'] == 'assistant' %}
+        {{- ' ' + message['content'] + eos_token}}
+    {%- else %}
+        {{- raise_exception('Only user and assistant roles are supported, with the exception of an initial optional system message!') }}
+    {%- endif %}
+{%- endfor %}
+
+150
+ [INST] You are a helpful assistant
+
+Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s> [INST] Another question [/INST]
+150
+ [INST] You are a helpful assistant
+
+Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s> [INST] Another question [/INST]
+0
+
+4
+</s>
+1
+1
+1
+0
+150
+ [INST] You are a helpful assistant
+
+Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s> [INST] Another question [/INST]
+150
+ [INST] You are a helpful assistant
+
+Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s> [INST] Another question [/INST]
+94
+Mistral-Large-Instruct-2407 (mistralai 'v3' template; modified to have system prompt at start)
+3959
+{%- if messages[0]["role"] == "system" %}
+    {%- set system_message = messages[0]["content"] %}
+    {%- set loop_messages = messages[1:] %}
+{%- else %}
+    {%- set loop_messages = messages %}
+{%- endif %}
+{%- if not tools is defined %}
+    {%- set tools = none %}
+{%- endif %}
+{%- set user_messages = loop_messages | selectattr("role", "equalto", "user") | list %}
+
+{#- This block checks for alternating user/assistant messages, skipping tool calling messages #}
+{%- set ns = namespace() %}
+{%- set ns.index = 0 %}
+{%- for message in loop_messages %}
+    {%- if not (message.role == "tool" or message.role == "tool_results" or (message.tool_calls is defined and message.tool_calls is not none)) %}
+        {%- if (message["role"] == "user") != (ns.index % 2 == 0) %}
+            {{- raise_exception("After the optional system message, conversation roles must alternate user/assistant/user/assistant/...") }}
+        {%- endif %}
+        {%- set ns.index = ns.index + 1 %}
+    {%- endif %}
+{%- endfor %}
+
+{{- bos_token }}
+{%- for message in loop_messages %}
+    {%- if message["role"] == "user" %}
+        {%- if tools is not none and (message == user_messages[-1]) %}
+            {{- "[AVAILABLE_TOOLS] [" }}
+            {%- for tool in tools %}
+                {%- set tool = tool.function %}
+                {{- '{"type": "function", "function": {' }}
+                {%- for key, val in tool.items() if key != "return" %}
+                    {%- if val is string %}
+                        {{- '"' + key + '": "' + val + '"' }}
+                    {%- else %}
+                        {{- '"' + key + '": ' + val|tojson }}
+                    {%- endif %}
+                    {%- if not loop.last %}
+                        {{- ", " }}
+                    {%- endif %}
+                {%- endfor %}
+                {{- "}}" }}
+                {%- if not loop.last %}
+                    {{- ", " }}
+                {%- else %}
+                    {{- "]" }}
+                {%- endif %}
+            {%- endfor %}
+            {{- "[/AVAILABLE_TOOLS]" }}
+            {%- endif %}
+        {%- if loop.last and system_message is defined %}
+            {{- "[INST] " + system_message + "\n\n" + message["content"] + "[/INST]" }}
+        {%- else %}
+            {{- "[INST] " + message["content"] + "[/INST]" }}
+        {%- endif %}
+    {%- elif message.tool_calls is defined and message.tool_calls is not none %}
+        {{- "[TOOL_CALLS] [" }}
+        {%- for tool_call in message.tool_calls %}
+            {%- set out = tool_call.function|tojson %}
+            {{- out[:-1] }}
+            {%- if not tool_call.id is defined or tool_call.id|length != 9 %}
+                {{- raise_exception("Tool call IDs should be alphanumeric strings with length 9!") }}
+            {%- endif %}
+            {{- ', "id": "' + tool_call.id + '"}' }}
+            {%- if not loop.last %}
+                {{- ", " }}
+            {%- else %}
+                {{- "]" + eos_token }}
+            {%- endif %}
+        {%- endfor %}
+    {%- elif message["role"] == "assistant" %}
+        {{- " " + message["content"]|trim + eos_token}}
+    {%- elif message["role"] == "tool_results" or message["role"] == "tool" %}
+        {%- if message.content is defined and message.content.content is defined %}
+            {%- set content = message.content.content %}
+        {%- else %}
+            {%- set content = message.content %}
+        {%- endif %}
+        {{- '[TOOL_RESULTS] {"content": ' + content|string + ", " }}
+        {%- if not message.tool_call_id is defined or message.tool_call_id|length != 9 %}
+            {{- raise_exception("Tool call IDs should be alphanumeric strings with length 9!") }}
+        {%- endif %}
+        {{- '"call_id": "' + message.tool_call_id + '"}[/TOOL_RESULTS]' }}
+    {%- else %}
+        {{- raise_exception("Only user and assistant roles are supported, with the exception of an initial optional system message!") }}
+    {%- endif %}
+{%- endfor %}
+
+138
+[INST] You are a helpful assistant
+
+Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] Another question[/INST]
+138
+[INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] You are a helpful assistant
+
+Another question[/INST]
+0
+
+4
+</s>
+1
+1
+1
+0
+138
+[INST] You are a helpful assistant
+
+Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] Another question[/INST]
+138
+[INST] You are a helpful assistant
+
+Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] Another question[/INST]
+100
+Mistral-Nemo-Instruct-2407 (mistralai 'v3-tekken' template; modified to have system prompt at start)
+3945
+{%- if messages[0]["role"] == "system" %}
+    {%- set system_message = messages[0]["content"] %}
+    {%- set loop_messages = messages[1:] %}
+{%- else %}
+    {%- set loop_messages = messages %}
+{%- endif %}
+{%- if not tools is defined %}
+    {%- set tools = none %}
+{%- endif %}
+{%- set user_messages = loop_messages | selectattr("role", "equalto", "user") | list %}
+
+{#- This block checks for alternating user/assistant messages, skipping tool calling messages #}
+{%- set ns = namespace() %}
+{%- set ns.index = 0 %}
+{%- for message in loop_messages %}
+    {%- if not (message.role == "tool" or message.role == "tool_results" or (message.tool_calls is defined and message.tool_calls is not none)) %}
+        {%- if (message["role"] == "user") != (ns.index % 2 == 0) %}
+            {{- raise_exception("After the optional system message, conversation roles must alternate user/assistant/user/assistant/...") }}
+        {%- endif %}
+        {%- set ns.index = ns.index + 1 %}
+    {%- endif %}
+{%- endfor %}
+
+{{- bos_token }}
+{%- for message in loop_messages %}
+    {%- if message["role"] == "user" %}
+        {%- if tools is not none and (message == user_messages[-1]) %}
+            {{- "[AVAILABLE_TOOLS][" }}
+            {%- for tool in tools %}
+                {%- set tool = tool.function %}
+                {{- '{"type": "function", "function": {' }}
+                {%- for key, val in tool.items() if key != "return" %}
+                    {%- if val is string %}
+                        {{- '"' + key + '": "' + val + '"' }}
+                    {%- else %}
+                        {{- '"' + key + '": ' + val|tojson }}
+                    {%- endif %}
+                    {%- if not loop.last %}
+                        {{- ", " }}
+                    {%- endif %}
+                {%- endfor %}
+                {{- "}}" }}
+                {%- if not loop.last %}
+                    {{- ", " }}
+                {%- else %}
+                    {{- "]" }}
+                {%- endif %}
+            {%- endfor %}
+            {{- "[/AVAILABLE_TOOLS]" }}
+            {%- endif %}
+        {%- if loop.last and system_message is defined %}
+            {{- "[INST]" + system_message + "\n\n" + message["content"] + "[/INST]" }}
+        {%- else %}
+            {{- "[INST]" + message["content"] + "[/INST]" }}
+        {%- endif %}
+    {%- elif (message.tool_calls is defined and message.tool_calls is not none) %}
+        {{- "[TOOL_CALLS][" }}
+        {%- for tool_call in message.tool_calls %}
+            {%- set out = tool_call.function|tojson %}
+            {{- out[:-1] }}
+            {%- if not tool_call.id is defined or tool_call.id|length != 9 %}
+                {{- raise_exception("Tool call IDs should be alphanumeric strings with length 9!") }}
+            {%- endif %}
+            {{- ', "id": "' + tool_call.id + '"}' }}
+            {%- if not loop.last %}
+                {{- ", " }}
+            {%- else %}
+                {{- "]" + eos_token }}
+            {%- endif %}
+        {%- endfor %}
+    {%- elif message["role"] == "assistant" %}
+        {{- message["content"] + eos_token}}
+    {%- elif message["role"] == "tool_results" or message["role"] == "tool" %}
+        {%- if message.content is defined and message.content.content is defined %}
+            {%- set content = message.content.content %}
+        {%- else %}
+            {%- set content = message.content %}
+        {%- endif %}
+        {{- '[TOOL_RESULTS]{"content": ' + content|string + ", " }}
+        {%- if not message.tool_call_id is defined or message.tool_call_id|length != 9 %}
+            {{- raise_exception("Tool call IDs should be alphanumeric strings with length 9!") }}
+        {%- endif %}
+        {{- '"call_id": "' + message.tool_call_id + '"}[/TOOL_RESULTS]' }}
+    {%- else %}
+        {{- raise_exception("Only user and assistant roles are supported, with the exception of an initial optional system message!") }}
+    {%- endif %}
+{%- endfor %}
+
+139
+[INST]You are a helpful assistant
+
+Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+139
+[INST]Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]You are a helpful assistant
+
+Another question[/INST]
+0
+
+4
+</s>
+1
+1
+1
+0
+139
+[INST]You are a helpful assistant
+
+Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+139
+[INST]You are a helpful assistant
+
+Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+63
+mistralai/Mistral-Large-Instruct-2411 (mistralai 'v7' template)
+423
+{{ bos_token }}{% for message in messages %}{% if message['role'] == 'user' %}{{ '[INST] ' + message['content'] + '[/INST]' }}{% elif message['role'] == 'system' %}{{ '[SYSTEM_PROMPT] ' + message['content'] + '[/SYSTEM_PROMPT]' }}{% elif message['role'] == 'assistant' %}{{ ' ' + message['content'] + eos_token }}{% else %}{{ raise_exception('Only user, system and assistant roles are supported!') }}{% endif %}{% endfor %}
+174
+[SYSTEM_PROMPT] You are a helpful assistant[/SYSTEM_PROMPT][INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST]    I am an assistant   </s>[INST] Another question[/INST]
+0
+
+0
+
+4
+</s>
+1
+1
+1
+0
+174
+[SYSTEM_PROMPT] You are a helpful assistant[/SYSTEM_PROMPT][INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST]    I am an assistant   </s>[INST] Another question[/INST]
+174
+[SYSTEM_PROMPT] You are a helpful assistant[/SYSTEM_PROMPT][INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST]    I am an assistant   </s>[INST] Another question[/INST]
+33
+ai-sage/GigaChat-20B-A3B-instruct
+1260
+{% if messages[0]['role'] == 'system' -%}
+    {%- set loop_messages = messages[1:] -%}
+    {%- set system_message = bos_token + messages[0]['content'] + additional_special_tokens[1] -%}
+{%- else -%}
+    {%- set loop_messages = messages -%}
+    {%- set system_message = bos_token + '' -%}
+{%- endif -%}
+{%- for message in loop_messages %}
+    {% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}
+        {{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}
+    {% endif %}
+    
+    {%- if loop.index0 == 0 -%}
+        {{ system_message -}}
+    {%- endif -%}
+    {%- if message['role'] == 'user' -%}
+        {{ message['role'] + additional_special_tokens[0] + message['content'] + additional_special_tokens[1] -}}
+        {{ 'available functions' + additional_special_tokens[0] + additional_special_tokens[2] + additional_special_tokens[3]  + additional_special_tokens[1] -}}
+    {%- endif -%}
+    {%- if message['role'] == 'assistant' -%}
+        {{ message['role'] + additional_special_tokens[0] + message['content'] + additional_special_tokens[1] -}}
+    {%- endif -%}
+    {%- if loop.last and add_generation_prompt -%}
+        {{ 'assistant' + additional_special_tokens[0] -}}
+    {%- endif -%}
+{%- endfor %}
+438
+<s>You are a helpful assistant<|message_sep|>user<|role_sep|>Hello<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>Hi there<|message_sep|>user<|role_sep|>Who are you<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>   I am an assistant   <|message_sep|>user<|role_sep|>Another question<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>
+0
+
+0
+
+0
+
+1
+0
+1
+0
+438
+<s>You are a helpful assistant<|message_sep|>user<|role_sep|>Hello<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>Hi there<|message_sep|>user<|role_sep|>Who are you<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>   I am an assistant   <|message_sep|>user<|role_sep|>Another question<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>
+417
+<s>You are a helpful assistant<|message_sep|>user<|role_sep|>Hello<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>Hi there<|message_sep|>user<|role_sep|>Who are you<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>   I am an assistant   <|message_sep|>user<|role_sep|>Another question<|message_sep|>available functions<|role_sep|>[]<|message_sep|>
+30
+Infinigence/Megrez-3B-Instruct
+425
+{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|role_start|>system<|role_end|>你是Megrez-3B-Instruct，将针对用户的问题给出详细的、积极的回答。<|turn_end|>' }}{% endif %}{{ '<|role_start|>' + message['role'] + '<|role_end|>' + message['content'] + '<|turn_end|>' }}{% endfor %}{% if add_generation_prompt %}{{ '<|role_start|>assistant<|role_end|>' }}{% endif %}
+389
+<|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|><|role_start|>assistant<|role_end|>
+0
+
+0
+
+0
+
+1
+1
+1
+0
+389
+<|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|><|role_start|>assistant<|role_end|>
+354
+<|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|>
+5
+phi-4
+377
+{% for message in messages %}{% if (message['role'] == 'system') %}{{'<|im_start|>system<|im_sep|>' + message['content'] + '<|im_end|>'}}{% elif (message['role'] == 'user') %}{{'<|im_start|>user<|im_sep|>' + message['content'] + '<|im_end|><|im_start|>assistant<|im_sep|>'}}{% elif (message['role'] == 'assistant') %}{{message['content'] + '<|im_end|>'}}{% endif %}{% endfor %}
+349
+<|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|><|im_start|>assistant<|im_sep|>
+0
+
+0
+
+0
+
+1
+1
+1
+0
+349
+<|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|><|im_start|>assistant<|im_sep|>
+318
+<|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|>
+35
+yandex/YandexGPT-5-Lite-8B-instruct
+1986
+<s>{%- set names = {'assistant': ' Ассистент:', 'user': ' Пользователь:'} %}
+{%- set tools_prefix = 'Тебе доступны следующие функции:' %}
+{%- macro __render_tool(tool) %}
+    {%- set name = tool.function.name %}
+    {%- set description = tool.function.description|default('') %}
+    {%- set parameters = tool.function.parameters|tojson %}
+    {{- '\n' }}function {{ '{' }}'name':'{{ name }}',
+    {%- if tool.function.description %}'description':'{{ description }}',{% endif %}
+'parameters':{{ parameters }}
+    {{- '}' }}
+{%- endmacro %}
+{%- macro __render_tools(tools) %}
+    {{- tools_prefix }}
+    {%- for tool in tools %}
+        {{- __render_tool(tool) }}
+    {%- endfor %}
+    {{- '\n\n' }}
+{%- endmacro %}
+{%- macro __render_tool_message(message) %}
+    {{- '\n\nРезультат вызова' }} {{ message.name }}: {{ message.content }} {{ '\n\n' }}
+{%- endmacro %}
+{%- if tools -%}
+    {{- __render_tools(tools) }}
+{%- endif -%}
+{%- macro __render_user_message(message) %}
+{{ names.user }} {{ message.content + '\n\n' }}
+{%- endmacro %}
+{%- macro __render_assistant_message(message) %}
+    {{- names.assistant }}
+    {%- set call = message['function_call'] %}
+    {%- if call %}
+        {{- '\n[TOOL_CALL_START]' }}{{ call.name }}{{ '\n' }}{{ call.arguments|tojson }}
+    {%- else %}
+        {{- ' ' + message.content + '\n\n' }}
+    {%- endif %}
+{%- endmacro %}
+{%- if not add_generation_prompt is defined %}
+{%- set add_generation_prompt = false %}
+{%- endif %}
+{%- for message in messages %}
+    {%- if message['role'] == 'user' %}
+        {{- __render_user_message(message) }}
+    {%- endif %}
+    {%- if message.role == 'assistant' and not loop.last %}
+        {{- __render_assistant_message(message) }}
+    {%- endif %}
+    {%- if message.role == 'tool' %}
+        {{- __render_tool_message(message) }}
+    {%- endif %}
+    {%- if loop.last %}
+        {{- ' Ассистент:[SEP]' }}
+    {%- endif %}
+{%- endfor %}
+
+221
+ Пользователь: Hello
+
+ Ассистент: Hi there
+
+ Пользователь: Who are you
+
+ Ассистент:    I am an assistant   
+
+ Пользователь: Another question
+
+ Ассистент:[SEP]
+252
+<s> Пользователь: You are a helpful assistant
+Hello
+
+ Ассистент: Hi there
+
+ Пользователь: Who are you
+
+ Ассистент:    I am an assistant   
+
+ Пользователь: Another question
+
+ Ассистент:[SEP]
+3
+<s>
+0
+
+1
+1
+1
+0
+221
+ Пользователь: Hello
+
+ Ассистент: Hi there
+
+ Пользователь: Who are you
+
+ Ассистент:    I am an assistant   
+
+ Пользователь: Another question
+
+ Ассистент:[SEP]
+196
+ Пользователь: Hello
+
+ Ассистент: Hi there
+
+ Пользователь: Who are you
+
+ Ассистент:    I am an assistant   
+
+ Пользователь: Another question
+
+
+21
+inclusionAI/Ling-lite
+293
+{% for message in messages %}{% set role = message['role'] | lower %}{% if role == 'user' %}{% set role = 'HUMAN' %}{% endif %}{% set role = role | upper %}{{ '<role>' + role + '</role>' + message['content'] }}{% endfor %}{% if add_generation_prompt %}{{ '<role>ASSISTANT</role>' }}{% endif %}
+229
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question<role>ASSISTANT</role>
+0
+
+0
+
+0
+
+1
+1
+1
+0
+229
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question<role>ASSISTANT</role>
+207
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question
+36
+ByteDance-Seed/Seed-OSS-36B-Instruct
+562
+{# <seed:bos> #}{%- for message in messages %}{%- if message.role in ["user", "system"] %}{{ bos_token + message.role + "\n" + message.content + eos_token }}{%- elif message.role == "assistant" %}{{ bos_token + message.role }}{%- if message.content is defined and message.content is string and message.content|trim|length > 0 %}{{ "\n" + message.content|trim + eos_token }}{%- endif %}{%- else %}{{ bos_token + message.role + "\n" + message.content + eos_token }}{%- endif %}{%- endfor %}{%- if add_generation_prompt %}{{ bos_token + "assistant\n" }}{%- endif %}
+266
+<seed:bos>system
+You are a helpful assistant<seed:eos><seed:bos>user
+Hello<seed:eos><seed:bos>assistant
+Hi there<seed:eos><seed:bos>user
+Who are you<seed:eos><seed:bos>assistant
+I am an assistant<seed:eos><seed:bos>user
+Another question<seed:eos><seed:bos>assistant
+
+266
+<seed:bos>system
+You are a helpful assistant<seed:eos><seed:bos>user
+Hello<seed:eos><seed:bos>assistant
+Hi there<seed:eos><seed:bos>user
+Who are you<seed:eos><seed:bos>assistant
+I am an assistant<seed:eos><seed:bos>user
+Another question<seed:eos><seed:bos>assistant
+
+10
+<seed:bos>
+10
+<seed:eos>
+1
+1
+1
+0
+266
+<seed:bos>system
+You are a helpful assistant<seed:eos><seed:bos>user
+Hello<seed:eos><seed:bos>assistant
+Hi there<seed:eos><seed:bos>user
+Who are you<seed:eos><seed:bos>assistant
+I am an assistant<seed:eos><seed:bos>user
+Another question<seed:eos><seed:bos>assistant
+
+246
+<seed:bos>system
+You are a helpful assistant<seed:eos><seed:bos>user
+Hello<seed:eos><seed:bos>assistant
+Hi there<seed:eos><seed:bos>user
+Who are you<seed:eos><seed:bos>assistant
+I am an assistant<seed:eos><seed:bos>user
+Another question<seed:eos>
+35
+ibm-granite/granite-3.x (tool call)
+477
+{%- for message in messages %}
+    {%- if message['role'] == 'assistant_tool_call' %}
+    {{- '<|start_of_role|>assistant<|end_of_role|><|tool_call|>' + message['content'] + '<|end_of_text|>\n' }}
+    {%- else %}
+    {{- '<|start_of_role|>' + message['role'] + '<|end_of_role|>' + message['content'] + '<|end_of_text|>\n' }}
+    {%- endif %}
+    {%- if loop.last and add_generation_prompt %}
+    {{- '<|start_of_role|>assistant<|end_of_role|>' }}
+    {%- endif %}
+{%- endfor %}
+746
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant_tool_call<|end_of_role|><|tool_call|>[{"name": "get_weather", "arguments": {"location": "NYC"}}]<|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+736
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|>[{"name": "get_weather", "arguments": {"location": "NYC"}}]<|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+0
+
+0
+
+1
+1
+1
+3
+4
+user
+20
+What is the weather?
+19
+assistant_tool_call
+59
+[{"name": "get_weather", "arguments": {"location": "NYC"}}]
+13
+tool_response
+19
+{"temperature": 72}
+746
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant_tool_call<|end_of_role|><|tool_call|>[{"name": "get_weather", "arguments": {"location": "NYC"}}]<|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+705
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant_tool_call<|end_of_role|><|tool_call|>[{"name": "get_weather", "arguments": {"location": "NYC"}}]<|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+
+35
+ibm-granite/granite-4.0 (tool call)
+529
+{%- for message in messages %}
+    {%- if message['role'] == 'assistant_tool_call' %}
+    {{- '<|start_of_role|>assistant<|end_of_role|><|tool_call|>' + message['content'] + '<|end_of_text|>\n' }}
+    {%- else %}
+    {{- '<|start_of_role|>' + message['role'] + '<|end_of_role|>' + message['content'] + '<|end_of_text|>\n' }}
+    {%- endif %}
+    {%- if loop.last and add_generation_prompt %}
+    {{- '<|start_of_role|>assistant<|end_of_role|>' }}
+    {%- endif %}
+{%- endfor %}
+{# <tool_call> <tools> g4_default_system_message #}
+759
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+0
+
+0
+
+0
+
+1
+1
+1
+3
+4
+user
+20
+What is the weather?
+19
+assistant_tool_call
+82
+<tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call>
+13
+tool_response
+19
+{"temperature": 72}
+759
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+718
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+
+35
+ibm-granite/granite-4.1 (tool call)
+503
+{%- for message in messages %}
+    {%- if message['role'] == 'assistant_tool_call' %}
+    {{- '<|start_of_role|>assistant<|end_of_role|><|tool_call|>' + message['content'] + '<|end_of_text|>\n' }}
+    {%- else %}
+    {{- '<|start_of_role|>' + message['role'] + '<|end_of_role|>' + message['content'] + '<|end_of_text|>\n' }}
+    {%- endif %}
+    {%- if loop.last and add_generation_prompt %}
+    {{- '<|start_of_role|>assistant<|end_of_role|>' }}
+    {%- endif %}
+{%- endfor %}
+{# <tool_call> <tools> #}
+759
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+0
+
+0
+
+0
+
+1
+1
+1
+3
+4
+user
+20
+What is the weather?
+19
+assistant_tool_call
+82
+<tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call>
+13
+tool_response
+19
+{"temperature": 72}
+759
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
+718
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+

@@ -14,3 +14,4 @@ extern "ggml_backend_cpu_set_n_threads" fn backend_cpu_set_n_threads(b: Backend,
 // the rest in plain CPU memory. bufs gets the buffers, ending with p == 0.
 extern "lg_alloc_weights" fn alloc_weights(ctx: Ctx, matmul: const Tensor[:], bufs: Buffer[:]) -> bool;
 extern "lg_default_threads" fn default_threads() -> i32;
+extern "lg_set_quiet" fn set_quiet(q: i32);

@@ -19,7 +19,8 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | other architectures | not yet | |
 | sampling: penalties, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | sampling: DRY, mirostat, adaptive-p, infill | not yet | |
-| grammars, chat templates, `common/`, server | not yet | |
+| built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
+| Jinja chat templates, grammars, `common/`, server | not yet | |
 
 `tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
 and greedy sampling it writes byte for byte the text llama.cpp's
@@ -51,6 +52,17 @@ vocabulary that is as much work as the model. Run time is within 10% of
 llama-perplexity's (4.9 s against 5.4 s for gemma-3-270m, 4 chunks).
 Both tools default to llama.cpp's thread count (half the logical CPUs
 above 4); `-t` sets it.
+
+`tests/chat_template` applies every built-in template, and the template of
+every case in llama.cpp's `test-chat-template.cpp`, to its conversation,
+and compares with what libllama writes (180 checks). The cases and
+libllama's answers are in `tests/data/chat_cases.txt`;
+`scripts/gen-chat-cases.sh` regenerates it from a llama.cpp build.
+`tools/simple_chat` is examples/simple-chat with a `-s` seed: with the seed
+fixed in llama.cpp's too, three-turn chats in English and Spanish give the
+same bytes on all three models. Like simple-chat it runs 4 threads
+(libllama's default, not common's): ggml's flash attention splits a long
+KV cache by thread, so the thread count changes the last bits.
 
 `LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
 llama.cpp's eval callback.

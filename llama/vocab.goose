@@ -478,7 +478,7 @@ fn load(ctx: gguf::Ctx) {
     set_attributes_by_name(ctx);
 }
 
-fn log(msg: const u8[:]) { write_stderr(msg); write_stderr("\n"); }
+fn log(msg: const u8[:]) { if !llama::quiet { write_stderr(msg); write_stderr("\n"); } }
 
 fn load_tokens(ctx: gguf::Ctx) {
     let token_idx = gguf::find_key(ctx, "tokenizer.ggml.tokens");

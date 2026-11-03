@@ -11,6 +11,22 @@
 // weights in the buffer types llama.cpp picks
 //
 
+// Quiet: no log messages from here or from ggml, errors only (what
+// llama_log_set does with a callback that drops the rest).
+static int lg_quiet = 0;
+
+static void lg_log_errors(enum ggml_log_level level, const char * text, void * user_data) {
+    (void) user_data;
+    if (level >= GGML_LOG_LEVEL_ERROR) {
+        fputs(text, stderr);
+    }
+}
+
+void lg_set_quiet(int q) {
+    lg_quiet = q;
+    ggml_log_set(q ? lg_log_errors : NULL, NULL);
+}
+
 // Whether a weight in buft can be read by mul_mat (llama.cpp's weight_buft_supported).
 static bool lg_mul_mat_supported(struct ggml_tensor * w, ggml_backend_buffer_type_t buft, ggml_backend_dev_t dev) {
     struct ggml_init_params p = { ggml_tensor_overhead() * 8, NULL, true };
@@ -92,7 +108,7 @@ bool lg_alloc_weights(struct ggml_context * ctx, lg_tensors matmul, lg_buffers o
             return false;
         }
         ggml_backend_buffer_set_usage(buf, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-        fprintf(stderr, "load_tensors: %10s model buffer size = %8.2f MiB\n", ggml_backend_buft_name(bufts[b]), size[b] / 1024.0 / 1024.0);
+        if (!lg_quiet) fprintf(stderr, "load_tensors: %10s model buffer size = %8.2f MiB\n", ggml_backend_buft_name(bufts[b]), size[b] / 1024.0 / 1024.0);
         bufs[nb++] = buf;
         talloc[b] = ggml_tallocr_new(buf);
     }

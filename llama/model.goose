@@ -418,6 +418,7 @@ fn load(m: Model&, path: const u8[:]) {
     }
 
     m.backend = ggml::backend_cpu_init();
+    ggml::set_quiet(if llama::quiet { 1 } else { 0 });
     guard ggml::alloc_weights(m.ctx, matmul_weights(m), m.bufs) else { abort("failed to allocate the model's weights"); }
     guard gguf::load_tensor_data(m.meta, m.ctx, path) else { abort(str("failed to read the tensors of ", path)); }
     print_info(m);
@@ -443,5 +444,5 @@ fn print_info(m: Model&) {
     format(out, "print_info: freq_base_train       = ", hp.rope_freq_base_train, "\n");
     format(out, "print_info: freq_scale_train      = ", hp.rope_freq_scale_train, "\n");
     format(out, "print_info: n_ctx_orig_yarn       = ", hp.n_ctx_orig_yarn, "\n");
-    write_stderr(out);
+    if !llama::quiet { write_stderr(out); }
 }

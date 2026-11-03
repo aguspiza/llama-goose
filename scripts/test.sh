@@ -7,6 +7,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 models=${LLAMA_CPP_DIR:-$root/../llama.cpp}/models
 failed=0
+cd "$root"          # tests read tests/data
 
 run() {
     if "$@" > /dev/null 2>&1; then :; else failed=$((failed + 1)); echo "FAILED: ${*#$root/}"; fi
