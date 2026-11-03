@@ -17,7 +17,9 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | WPM, UGM, RWKV, PLaMo tokenizers | load, do not tokenize yet | |
 | model loading, KV cache, decode | ported for gemma3, llama, lfm2 | `tools/simple` |
 | other architectures | not yet | |
-| sampling, grammars, chat templates, `common/`, server | not yet | |
+| sampling: penalties, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), greedy, dist; the model's recommended settings | ported | `tools/completion` |
+| sampling: DRY, mirostat, adaptive-p, infill | not yet | |
+| grammars, chat templates, `common/`, server | not yet | |
 
 `tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
 and greedy sampling it writes byte for byte the text llama.cpp's
@@ -34,6 +36,12 @@ go to the CPU's repack buffers, as llama.cpp places them. And ggml's base
 is compiled without `-march=native`, as CMake compiles it, while its CPU
 backend is compiled with it: with FMA, gcc fuses the multiply-adds of the
 reference quantizers and their results differ in the last bits.
+`tools/completion` is a subset of llama.cpp's `llama-completion`. With a
+fixed seed it writes the same text as `llama-completion` (eight runs over
+the three architectures, with penalties, typical, XTC, dynamic temperature,
+top-n-sigma, and the sampling settings a GGUF recommends): the RNG is
+`std::mt19937` and the uniform draws follow libstdc++.
+
 `LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
 llama.cpp's eval callback.
 
@@ -118,7 +126,9 @@ It did not work as is:
   mtmd's internal headers. Each needed a `SKIP_UNITY_BUILD_INCLUSION` line,
   and new clashes will appear as upstream adds files.
 - The resulting test programs failed to start (`0xc0000139`, a function
-  missing from a DLL). The cause was not investigated.
+  missing from a DLL). Found later: Git's MinGW was first on PATH, with an
+  older `libstdc++-6.dll`; the normal build has the same problem there. So
+  this one was not unity's fault.
 
 It needs patches to the CMake files and constant care on every upstream
 merge, so it was dropped. Precompiled headers were ruled out too, because

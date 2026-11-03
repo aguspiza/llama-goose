@@ -386,13 +386,14 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         ctx: gctx,
         gf: ggml::new_graph_custom(gctx, MAX_NODES, false),
         n_tokens: n_tokens,
-        n_kv: c.n_ctx,
+        // llama.cpp's get_n_kv: the cells in use, padded to 256
+        n_kv: min(c.n_ctx, max(256, pad_to(c.n_past + n_tokens, 256))),
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             pos: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, 1),
             kv_idxs: ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens),
-            mask: ggml::new_tensor_2d(gctx, ggml::TYPE_F16, c.n_ctx, n_tokens),
+            mask: ggml::NONE,
             mask_swa: ggml::NONE,
             s_copy: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, 1),
         },
@@ -404,7 +405,8 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         b.tracing = env("LLAMA_GOOSE_TRACE", flag) && flag == "1";
     }
     let has_swa = m.hp.swa_type != model::SWA_NONE;
-    b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, c.n_ctx, n_tokens) } else { b.inp.mask };
+    b.inp.mask = ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens);
+    b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens) } else { b.inp.mask };
     ggml::set_input(b.inp.tokens);
     ggml::set_input(b.inp.pos);
     ggml::set_input(b.inp.out_ids);
@@ -432,10 +434,10 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     ggml::backend_set_i64(b.inp.kv_idxs, idxs);
     if any_recurrent(m) { ggml::backend_set_i32(b.inp.s_copy, [0]); }
     var mask: f32[>..] = [];
-    fill_mask(mask, c.n_ctx, n_tokens, pos0, pos0 + n_tokens, 0);
+    fill_mask(mask, b.n_kv, n_tokens, pos0, pos0 + n_tokens, 0);
     ggml::backend_set_f16(b.inp.mask, mask);
     if has_swa {
-        fill_mask(mask, c.n_ctx, n_tokens, pos0, pos0 + n_tokens, m.hp.n_swa);
+        fill_mask(mask, b.n_kv, n_tokens, pos0, pos0 + n_tokens, m.hp.n_swa);
         ggml::backend_set_f16(b.inp.mask_swa, mask);
     }
 
