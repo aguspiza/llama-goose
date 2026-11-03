@@ -55,7 +55,7 @@ let SETUP_EFFORT = 2;      // thinking on, reasoning effort caps_effort
 // the context, and the messages and tools as the template got them.
 struct Probe { ok: bool, ctx: Ctx, messages: i64, tools: i64 }
 
-var caps_out: u8[>..] = [];
+var caps_out: u8[>..<] = [];
 var caps_effort = 1;
 
 // Renders p with the messages and tools (JSON) as caps_get does, with

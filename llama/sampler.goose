@@ -535,6 +535,17 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
     }
 }
 
+// llama_sampler_reset of the chain: the penalties forget what they saw,
+// and the samplers that draw start their generators again from their seeds
+// (a new random one for the default seed).
+fn reset(ch: Chain&) {
+    ch.prev.clear();
+    ch.counts.clear();
+    for &s in ch.samplers {
+        if s.kind == KIND_DIST || s.kind == KIND_XTC { mt_seed(s.rng, rng_seed(s.seed)); }
+    }
+}
+
 // The penalties' window: llama_sampler_penalties_accept.
 fn accept(ch: Chain&, token: i32) {
     for s in ch.samplers {

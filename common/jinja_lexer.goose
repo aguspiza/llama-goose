@@ -36,7 +36,7 @@ let T_COMMENT = 25;      // {# ... #}
 // A token: its type, its value (atext[s..s + n]) and where it starts.
 struct Tok { t: u8, s: i64, n: i64, pos: i64 }
 
-var toks: Tok[>..] = [];
+var toks: Tok[>..<] = [];
 // The normalized sources of the templates parsed so far.
 var asrc: u8[>..] = [];
 // The text of tokens and of the syntax tree: names, literals, operators.

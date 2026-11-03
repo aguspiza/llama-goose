@@ -66,10 +66,10 @@ struct Val {
 
 struct Part { off: i64, len: i64, input: bool }
 
-var vals: Val[>..] = [];
-var text: u8[>..] = [];
-var parts: Part[>..] = [];
-var items: i64[>..] = [];
+var vals: Val[>..<] = [];
+var text: u8[>..<] = [];
+var parts: Part[>..<] = [];
+var items: i64[>..<] = [];
 
 // The arguments of the calls in progress, each call's a range of it.
 var argstack: i64[>..<] = [];
@@ -94,7 +94,7 @@ fn reset() {
 // errors are told apart, as its tests skip them.
 struct Fail { not_implemented: bool }
 
-var err: u8[>..] = [];
+var err: u8[>..<] = [];
 
 // The statement being executed, which an error message names.
 var cur_node = -1;
@@ -136,7 +136,7 @@ fn fail_plain(msg: const u8[:]) {
 }
 
 // "line L, column C" of pos in source.
-fn line_col(out: u8[>..]&, source: const u8[:], pos: i64) {
+fn line_col(out, source: const u8[:], pos: i64) {
     var line = 1;
     var col = 1;
     var i = 0;
@@ -148,7 +148,7 @@ fn line_col(out: u8[>..]&, source: const u8[:], pos: i64) {
 }
 
 // The source around pos with a caret under it (utils.h peak_source).
-fn peak_source(out: u8[>..]&, source: const u8[:], pos: i64) {
+fn peak_source(out, source: const u8[:], pos: i64) {
     if source.len == 0 { out.append("(no source available)"); return; }
     let start = if pos >= 40 { pos - 40 } else { 0 };
     let end = min(pos + 40, source.len);
@@ -808,7 +808,7 @@ fn parse_json_string(s: const u8[:], pos: i64&, mark: bool) -> i64 {
                     p += 6;
                 }
             }
-            push_utf8(text, cp);
+            text_utf8(cp);
         }
         else { fail_plain("[json.exception.parse_error] invalid escape"); }
     }
@@ -816,6 +816,25 @@ fn parse_json_string(s: const u8[:], pos: i64&, mark: bool) -> i64 {
     let len = text.len - off;
     parts.push(Part { off: off, len: len, input: mark });
     return new_val(Val { kind: K_STRING, i: len, a: parts.len - 1, n: 1, flat: off, .. });
+}
+
+// The UTF-8 of code point cp, onto text.
+fn text_utf8(cp: i64) {
+    if cp < 0x80 {
+        text.push(cp as! u8);
+    } else if cp < 0x800 {
+        text.push((0xC0 | (cp >> 6)) as! u8);
+        text.push((0x80 | (cp & 0x3F)) as! u8);
+    } else if cp < 0x10000 {
+        text.push((0xE0 | (cp >> 12)) as! u8);
+        text.push((0x80 | ((cp >> 6) & 0x3F)) as! u8);
+        text.push((0x80 | (cp & 0x3F)) as! u8);
+    } else {
+        text.push((0xF0 | (cp >> 18)) as! u8);
+        text.push((0x80 | ((cp >> 12) & 0x3F)) as! u8);
+        text.push((0x80 | ((cp >> 6) & 0x3F)) as! u8);
+        text.push((0x80 | (cp & 0x3F)) as! u8);
+    }
 }
 
 fn hex4(s: const u8[:], at: i64) -> i64 {

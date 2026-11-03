@@ -146,8 +146,8 @@ struct Inputs {
 // The prompt: its text, and where it came from the user's input (the parts
 // whose special tokens must not be parsed), as (end offset, is_input).
 struct PromptPart { end: i64, input: bool }
-var prompt: u8[>..] = [];
-var prompt_parts: PromptPart[>..] = [];
+var prompt: u8[>..<] = [];
+var prompt_parts: PromptPart[>..<] = [];
 
 // "%b %d %Y" and the like, of the local time now.
 fn local_time(fmt: const u8[:]) -> u8[>..] {

@@ -1,3 +1,4 @@
-// The C behind llama.cpp's common/ in Goose: libc's number and time formatting.
-c_sources = ["jinja_shim.c"];
+// The C behind llama.cpp's common/ in Goose: libc's number and time
+// formatting, and whether a stream is a terminal.
+c_sources = ["shim.c"];
 c_flags_cc = ["-O2"];

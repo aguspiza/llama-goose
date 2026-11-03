@@ -1,14 +1,27 @@
-// The C behind jinja.goose: the libc formatting, parsing and time functions
-// llama.cpp's Jinja engine calls, so that numbers and dates come out the same.
+// The C behind common/: the libc formatting, parsing and time functions
+// llama.cpp's Jinja engine calls, so that numbers and dates come out the
+// same, and whether a stream is a terminal (for the console's colors).
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#include <io.h>
+#define lg_isatty _isatty
+#else
+#include <unistd.h>
+#define lg_isatty isatty
+#endif
 
 typedef struct { char * data; int64_t len; } lg_buf;            // a u8[:]
 typedef struct { const char * data; int64_t len; } lg_text;     // a const u8[:]
+
+// Whether file descriptor fd (1 stdout, 2 stderr) is a terminal.
+int64_t common_is_tty(int64_t fd) {
+    return lg_isatty((int) fd) ? 1 : 0;
+}
 
 // s with a terminating NUL, in buf (cut at its size).
 static const char * lg_cstr(lg_text s, char * buf, size_t size) {

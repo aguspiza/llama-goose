@@ -21,8 +21,9 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | sampling: DRY, mirostat, adaptive-p, infill | not yet | |
 | built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
 | Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
-| Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported, except the specialized handlers that rewrite messages (Ministral 3, GPT-OSS, DeepSeek V3.2+, K2 Horizon, LLM-jp, TranslateGemma, old Gemma 4); LFM2's is ported | `tests/chat_template` |
-| tool call and reasoning parsers (autoparser, PEG), grammars, the rest of `common/`, server | not yet | |
+| Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported, except the specialized handlers that rewrite messages (Ministral 3, GPT-OSS, DeepSeek V3.2+, K2 Horizon, LLM-jp, TranslateGemma, old Gemma 4); LFM2's is ported | `tests/chat_template`, `tools/completion --jinja` |
+| `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
+| tool call and reasoning parsers (autoparser, PEG), grammars, the rest of `common/`, server (and so `llama-cli`, which runs it) | not yet | |
 
 `tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
 and greedy sampling it writes byte for byte the text llama.cpp's
@@ -39,11 +40,17 @@ go to the CPU's repack buffers, as llama.cpp places them. And ggml's base
 is compiled without `-march=native`, as CMake compiles it, while its CPU
 backend is compiled with it: with FMA, gcc fuses the multiply-adds of the
 reference quantizers and their results differ in the last bits.
-`tools/completion` is a subset of llama.cpp's `llama-completion`. With a
-fixed seed it writes the same text as `llama-completion` (eight runs over
-the three architectures, with penalties, typical, XTC, dynamic temperature,
+`tools/completion` is llama.cpp's `llama-completion`. With a fixed seed it
+writes the same text as `llama-completion` (eight runs over the three
+architectures, with penalties, typical, XTC, dynamic temperature,
 top-n-sigma, and the sampling settings a GGUF recommends): the RNG is
-`std::mt19937` and the uniform draws follow libstdc++.
+`std::mt19937` and the uniform draws follow libstdc++. In conversation mode
+it reads the user's turns from stdin; with the built-in templates (the
+default, as in `llama-completion`) and with `--jinja`, three-turn chats on
+the three models, in English and Spanish, with and without colors, give
+the same bytes as `llama-completion` fed the same lines.
+`scripts/compare-completion.sh` runs both and compares (llama.cpp writes
+stdout in Windows text mode, `\r\n`, which it reads as `\n`).
 
 `tools/perplexity` is llama-perplexity's default mode (one sequence per
 batch). Over the first chunks of llama.cpp's README at `-c 512`, with
@@ -71,7 +78,7 @@ input, and errors are `exception::throw`s with llama.cpp's messages.
 and compares with what llama.cpp's engine makes of it (output, error, or
 not implemented); `scripts/gen-jinja-cases.sh` regenerates
 `tests/data/jinja_cases.txt`. Numbers and dates go through libc
-(`common/jinja_shim.c`: `snprintf`, `strtod`, `strftime`), as in llama.cpp.
+(`common/shim.c`: `snprintf`, `strtod`, `strftime`), as in llama.cpp.
 `tools/simple_chat` is examples/simple-chat with a `-s` seed: with the seed
 fixed in llama.cpp's too, three-turn chats in English and Spanish give the
 same bytes on all three models. Like simple-chat it runs 4 threads
