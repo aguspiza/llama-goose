@@ -23,6 +23,38 @@ int64_t common_is_tty(int64_t fd) {
     return lg_isatty((int) fd) ? 1 : 0;
 }
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
+// The program's arguments in UTF-8, each ended by a NUL, into out: how many
+// bytes that takes (when more than out.len, nothing is written). llama.cpp's
+// programs get them so from their manifest's UTF-8 code page; elsewhere
+// argv is UTF-8 already, and this gives -1.
+int64_t common_args_utf8(lg_buf out) {
+#ifdef _WIN32
+    int n = 0;
+    LPWSTR * w = CommandLineToArgvW(GetCommandLineW(), &n);
+    if (!w) return -1;
+    int64_t len = 0;
+    for (int i = 0; i < n; i++) {
+        len += WideCharToMultiByte(CP_UTF8, 0, w[i], -1, NULL, 0, NULL, NULL);
+    }
+    if (len <= out.len) {
+        int64_t at = 0;
+        for (int i = 0; i < n; i++) {
+            at += WideCharToMultiByte(CP_UTF8, 0, w[i], -1, out.data + at, (int) (out.len - at), NULL, NULL);
+        }
+    }
+    LocalFree(w);
+    return len;
+#else
+    (void) out;
+    return -1;
+#endif
+}
+
 // s with a terminating NUL, in buf (cut at its size).
 static const char * lg_cstr(lg_text s, char * buf, size_t size) {
     size_t n = (size_t) s.len < size - 1 ? (size_t) s.len : size - 1;

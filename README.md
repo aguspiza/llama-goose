@@ -18,7 +18,8 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | model loading, KV cache, decode | ported for gemma3, llama, lfm2 | `tools/simple`, `tools/perplexity` |
 | other architectures | not yet | |
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
-| sampling: adaptive-p, infill, grammars | not yet | |
+| GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
+| sampling: adaptive-p, infill; lazy grammars (tool calls); JSON schema to grammar | not yet | |
 | built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
 | Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
 | Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported, except the specialized handlers that rewrite messages (Ministral 3, GPT-OSS, DeepSeek V3.2+, K2 Horizon, LLM-jp, TranslateGemma, old Gemma 4); LFM2's is ported | `tests/chat_template`, `tools/completion --jinja` |
@@ -69,6 +70,19 @@ case's Jinja template through `common/chat.goose` and compares with what
 libcommon's `common_chat_templates_apply` writes (35 checks). The cases and
 llama.cpp's answers are in `tests/data/chat_cases.txt`;
 `scripts/gen-chat-cases.sh` regenerates it from a llama.cpp build.
+
+`llama/grammar.goose` is llama.cpp's GBNF grammars: the same parse (rule
+ids and elements, compared by `tests/grammar` with what llama.cpp's parser
+makes of each test grammar), the same pushdown stacks, and the same
+rejection of the candidate tokens, code point by code point. With the
+grammars of llama.cpp's `grammars/` (JSON, lists, arithmetic, chess, C,
+Japanese) and a conversation with a grammar, `tools/completion --grammar`
+writes the same text as `llama-completion` on the three models.
+`scripts/gen-grammar-cases.sh` regenerates `tests/data/grammar_cases.txt`.
+
+Goose programs get their arguments in the Windows code page, where
+llama.cpp's get UTF-8 from their manifest; `console::utf8_args` reads the
+command line as UTF-8 (a Japanese prompt failed before it).
 
 `common/jinja*.goose` is llama.cpp's Jinja engine, the one its chat
 templates run on. Its values are indices into arenas (llama.cpp shares

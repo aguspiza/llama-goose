@@ -1,7 +1,7 @@
-// Sampling: the chain llama.cpp's common_sampler builds by default. A given
-// seed draws the same tokens as llama.cpp: the RNG is std::mt19937 and the
-// uniform draws follow libstdc++'s generate_canonical.
-// Not ported yet: DRY, mirostat, adaptive-p, infill, grammars.
+// Sampling: the chain llama.cpp's common_sampler builds, and its grammar.
+// A given seed draws the same tokens as llama.cpp: the RNG is std::mt19937
+// and the uniform draws follow libstdc++'s generate_canonical.
+// Not ported yet: adaptive-p, infill, lazy grammars.
 // Sorting is stable, by logit; std::partial_sort leaves tokens with exactly
 // equal logits in an order of its own, so only those may come out in
 // another order.
@@ -12,6 +12,7 @@ import ggml.gguf;
 import math;
 import os;
 import .vocab;
+import .grammar;
 namespace sampler;
 
 let DEFAULT_SEED: u32 = 0xFFFFFFFF;
@@ -283,6 +284,14 @@ struct Chain {
     prev: i32[..4096],           // the last penalty_last_n accepted tokens, oldest first
     counts: Count[..4096],
     dry_last: i32[..4096],       // the last dry_penalty_last_n accepted tokens, oldest first
+    has_grammar: bool = false,   // the tokens are checked against the grammar (llama/grammar.goose)
+}
+
+// Constrains the chain's tokens to a GBNF grammar, whose start symbol is
+// root: false, and grammar::err, if it does not parse.
+fn set_grammar(ch: Chain&, text: const u8[:], root: const u8[:]) -> bool {
+    ch.has_grammar = grammar::init(text, root, true);
+    return ch.has_grammar;
 }
 
 // DRY's sequence breakers, processed as llama.cpp's multimap: a token that
@@ -856,15 +865,37 @@ fn accept(ch: Chain&, token: i32) {
     }
 }
 
-// llama_sampler_sample: a token from the logits, then accepted. cands is
-// scratch for the candidates.
-fn sample(ch: Chain&, cands: Cand[>..]&, logits: const f32[:]) -> i32 {
+// The chain run over all the logits: the token it selects.
+fn run_chain(ch: Chain&, cands: Cand[>..]&, logits: const f32[:], with_grammar: bool) -> i32 {
     cands.clear();
     for l, i in logits { cands.push(Cand { id: i as i32, logit: l, p: 0.0 }); }
+    if with_grammar {
+        // the grammar first: what it cannot take is -inf
+        var ids: i32[>..] = [];
+        for c in cands { ids.push(c.id); }
+        var rejected: bool[>..] = [];
+        grammar::reject_tokens(ids, rejected);
+        for r, i in rejected { if r { cands[i].logit = NEG_INF; } }
+    }
     var a = Cands { start: 0, size: cands.len, selected: -1, sorted: false };
     for &s in ch.samplers { apply(ch, cands, s, a); }
     assert(a.selected >= 0 && a.selected < a.size);
-    let token = cands[a.start + a.selected].id;
+    return cands[a.start + a.selected].id;
+}
+
+// common_sampler_sample and common_sampler_accept: a token from the logits,
+// then accepted. With a grammar, the chain's token is checked against it,
+// and if the grammar cannot take it, the chain runs again on what the
+// grammar allows (rejection sampling). cands is scratch for the candidates.
+fn sample(ch: Chain&, cands: Cand[>..]&, logits: const f32[:]) -> i32 {
+    var token = run_chain(ch, cands, logits, false);
+    if ch.has_grammar {
+        var rejected: bool[>..] = [];
+        grammar::reject_tokens([token], rejected);
+        if rejected[0] { token = run_chain(ch, cands, logits, true); }
+        grammar::accept_impl(token);
+    }
     accept(ch, token);
     return token;
 }
+

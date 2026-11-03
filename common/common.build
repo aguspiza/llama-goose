@@ -2,3 +2,4 @@
 // formatting, and whether a stream is a terminal.
 c_sources = ["shim.c"];
 c_flags_cc = ["-O2"];
+c_libs_windows = ["shell32"];

@@ -10,6 +10,8 @@ import llama from "../llama";
 import llama.vocab;
 import llama.model;
 import llama.context;
+import common from "../common";
+import common.console;
 
 fn usage() {
     print("example usage:\n\n    simple -m model.gguf [-n n_predict] [prompt]\n");
@@ -25,7 +27,7 @@ fn argmax(xs: const f32[:]) -> i32 {
 fn piece(out: u8[>..]&, t: i32) { vocab::token_to_piece(t, out, 0, true); }
 
 fn main() {
-    let args = args();
+    let args = console::utf8_args();     // the prompt in UTF-8, on Windows too
     var model_path: u8[>..] = [];
     var n_predict = 32;
     var prompt: u8[>..] = [];

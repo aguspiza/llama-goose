@@ -21,6 +21,7 @@ import llama.model;
 import llama.context;
 import llama.sampler;
 import llama.chat;
+import llama.grammar;
 import common from "../common";
 import common.jinja;
 import common.chat;
@@ -119,7 +120,7 @@ var chat_text: u8[>..] = [];
 var chat_msgs: common_chat::Msg[>..] = [];
 
 fn main() {
-    let args = args();
+    let args = console::utf8_args();
     var model_path: u8[>..] = [];
     var prompt: u8[>..] = [];
     var system_prompt: u8[>..] = [];
@@ -148,6 +149,7 @@ fn main() {
     var sp = sampler::Params { .. };
     var breakers_given = false;
     var dry_breakers: u8[>..] = [];     // the --dry-sequence-breaker ones, each ended by a NUL
+    var grammar_text: u8[>..] = [];
 
     var i = 1;
     fn value() -> const u8[:] {
@@ -215,6 +217,12 @@ fn main() {
         else if a == "--top-nsigma" { sp.top_n_sigma = flt_value(); }
         else if a == "--dynatemp-range" { sp.dynatemp_range = flt_value(); }
         else if a == "--dynatemp-exp" { sp.dynatemp_exponent = flt_value(); }
+        else if a == "--grammar" { grammar_text.clear(); grammar_text.append(value()); }
+        else if a == "--grammar-file" {
+            let path = value();
+            grammar_text.clear();
+            if !read_file(path, grammar_text) { fail(str("failed to open file '", path, "'")); }
+        }
         else if a == "--mirostat" { sp.mirostat = int_value(); sp.user_set |= sampler::USER_MIROSTAT; }
         else if a == "--mirostat-lr" { sp.mirostat_eta = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_ETA; }
         else if a == "--mirostat-ent" { sp.mirostat_tau = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_TAU; }
@@ -258,6 +266,10 @@ fn main() {
     sampler::apply_model_defaults(sp, m.meta);
     var ch = sampler::Chain { .. };
     sampler::init(ch, sp);
+    if grammar_text.len > 0 && !sampler::set_grammar(ch, grammar_text, "root") {
+        write_stderr(str("parse: error parsing grammar: ", grammar::err, "\n\n", grammar_text, "\n"));
+        fail("failed to parse grammar");
+    }
 
     // the chat templates: the model's, or the one given
     var tmpl: u8[>..] = [];
