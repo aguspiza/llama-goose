@@ -58,6 +58,23 @@ fn process_escapes(s: u8[>..]&) {
     s.append(out);
 }
 
+// process_escapes on each string of a list, each ended by a NUL.
+fn process_list_escapes(list: u8[>..]&) {
+    var out: u8[>..] = [];
+    var start = 0;
+    for c, k in list {
+        if c != 0 { continue; }
+        var one: u8[>..] = [];
+        one.append(list[start..k]);
+        process_escapes(one);
+        out.append(one);
+        out.push(0);
+        start = k + 1;
+    }
+    list.clear();
+    list.append(out);
+}
+
 fn hex(c: u8) -> i64 {
     if c >= '0' && c <= '9' { return c - '0'; }
     if c >= 'a' && c <= 'f' { return c - 'a' + 10; }
@@ -129,6 +146,8 @@ fn main() {
     var verbose_prompt = false;
     var use_color = console::tty_can_use_colors();
     var sp = sampler::Params { .. };
+    var breakers_given = false;
+    var dry_breakers: u8[>..] = [];     // the --dry-sequence-breaker ones, each ended by a NUL
 
     var i = 1;
     fn value() -> const u8[:] {
@@ -196,6 +215,23 @@ fn main() {
         else if a == "--top-nsigma" { sp.top_n_sigma = flt_value(); }
         else if a == "--dynatemp-range" { sp.dynatemp_range = flt_value(); }
         else if a == "--dynatemp-exp" { sp.dynatemp_exponent = flt_value(); }
+        else if a == "--mirostat" { sp.mirostat = int_value(); sp.user_set |= sampler::USER_MIROSTAT; }
+        else if a == "--mirostat-lr" { sp.mirostat_eta = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_ETA; }
+        else if a == "--mirostat-ent" { sp.mirostat_tau = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_TAU; }
+        else if a == "--dry-multiplier" { sp.dry_multiplier = flt_value(); }
+        else if a == "--dry-base" { let v = flt_value(); if v >= 1.0 { sp.dry_base = v; } }
+        else if a == "--dry-allowed-length" { sp.dry_allowed_length = int_value(); }
+        else if a == "--dry-penalty-last-n" {
+            let v = int_value();
+            if v < 0 { fail(str("invalid dry-penalty-last-n = ", v)); }
+            sp.dry_penalty_last_n = v;
+        }
+        else if a == "--dry-sequence-breaker" {
+            // the first one replaces the defaults; "none" leaves none
+            if !breakers_given { sp.dry_breakers.clear(); breakers_given = true; }
+            let v = value();
+            if v == "none" { dry_breakers.clear(); } else { dry_breakers.append(v); dry_breakers.push(0); }
+        }
         else { fail(str("unknown argument: ", a)); }
         i += 1;
     }
@@ -204,19 +240,12 @@ fn main() {
         process_escapes(prompt);
         process_escapes(input_prefix);
         process_escapes(input_suffix);
-        var esc: u8[>..] = [];
-        var start = 0;
-        for c, k in antiprompt_text {
-            if c != 0 { continue; }
-            var one: u8[>..] = [];
-            one.append(antiprompt_text[start..k]);
-            process_escapes(one);
-            esc.append(one);
-            esc.push(0);
-            start = k + 1;
-        }
-        antiprompt_text.clear();
-        antiprompt_text.append(esc);
+        process_list_escapes(antiprompt_text);
+        process_list_escapes(dry_breakers);
+    }
+    if breakers_given {
+        if dry_breakers.len > sp.dry_breakers.cap { fail("the DRY sequence breakers are too long"); }
+        sp.dry_breakers.append(dry_breakers);
     }
     console::init(use_color);
 

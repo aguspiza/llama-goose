@@ -147,9 +147,12 @@ let KIND_DIST = 10;
 let KIND_DRY = 11;
 let KIND_INFILL = 12;
 let KIND_ADAPTIVE_P = 13;
+let KIND_MIROSTAT = 14;
+let KIND_MIROSTAT_V2 = 15;
 
-// One sampler of the chain, with its parameters (a, b, c by kind) and RNG.
-struct Sampler { kind: i64, a: f32, b: f32, c: f32, k: i64, min_keep: i64, rng: Mt19937, seed: u32 }
+// One sampler of the chain, with its parameters (a, b, c, k, n by kind), its
+// RNG and mirostat's running target mu.
+struct Sampler { kind: i64, a: f32, b: f32, c: f32, k: i64, min_keep: i64, rng: Mt19937, seed: u32, n: i64, mu: f32 }
 
 // The parameters common_params_sampling gives, with its defaults.
 struct Params {
@@ -170,6 +173,11 @@ struct Params {
     penalty_freq: f32 = 0.0,
     penalty_present: f32 = 0.0,
     dry_multiplier: f32 = 0.0,
+    dry_base: f32 = 1.75,
+    dry_allowed_length: i64 = 2,
+    dry_penalty_last_n: i64 = 64,
+    // the sequence breakers, each ended by a NUL: newline, colon, quote, star
+    dry_breakers: u8[..256] = [10, 0, 58, 0, 34, 0, 42, 0],
     mirostat: i64 = 0,
     mirostat_tau: f32 = 5.0,
     mirostat_eta: f32 = 0.10,
@@ -274,7 +282,92 @@ struct Chain {
     samplers: Sampler[..16],
     prev: i32[..4096],           // the last penalty_last_n accepted tokens, oldest first
     counts: Count[..4096],
+    dry_last: i32[..4096],       // the last dry_penalty_last_n accepted tokens, oldest first
 }
+
+// DRY's sequence breakers, processed as llama.cpp's multimap: a token that
+// starts one, and the tokens (dry_tails[start..start + len]) that must
+// follow it for the breaker to be complete; sorted by token. There is one
+// chain per program, so they live here.
+struct DryHead { token: i32, start: i64, len: i64 }
+var dry_heads: DryHead[>..] = [];
+var dry_tails: i32[>..] = [];
+
+// The DRY breakers' head tokens and tails (llama_sampler_init_dry's
+// get_overlapping_token_sequences): every token whose text holds a breaker
+// starts one with no tail; a token whose text ends with the start of a
+// breaker starts one whose tail is the rest of the breaker, tokenized (at
+// most 20 tokens).
+fn dry_process_breakers(breakers: const u8[:]) {
+    dry_heads.clear();
+    dry_tails.clear();
+    let n_vocab = vocab::n_tokens();
+    // the text of each token, once
+    var words: u8[>..] = [];
+    var ends: i64[>..] = [];
+    for t in n_vocab {
+        vocab::detokenize([t as i32], false, true, words);
+        ends.push(words.len);
+    }
+    var seen: u8[>..] = [];
+    var heads: DryHead[>..] = [];
+    var start = 0;
+    var n_breakers = 0;
+    for c, i in breakers {
+        guard c == 0 else { continue; }
+        let brk = breakers[start..min(i, start + 40)];
+        start = i + 1;
+        guard brk.len > 0 else { continue; }
+        // each distinct breaker once, at most 128 of them
+        var dup = false;
+        each_split(seen, 0) { if it == brk { dup = true; } };
+        guard !dup else { continue; }
+        seen.append(brk);
+        seen.push(0);
+        n_breakers += 1;
+        guard n_breakers <= 128 else { break; }
+        // the tails, by how much of the breaker the token's end matched
+        var tail_start: i64[41] = [-1; 41];
+        var tail_len: i64[41] = [0; 41];
+        var w0 = 0;
+        for t in n_vocab {
+            let word = words[w0..ends[t]];
+            w0 = ends[t];
+            if find(word, brk) >= 0 {
+                heads.push(DryHead { token: t as i32, start: 0, len: 0 });
+                continue;
+            }
+            for pos in word.len {
+                guard word[pos] == brk[0] else { continue; }
+                var m = 1;
+                var ok = true;
+                while m < brk.len && m + pos < word.len {
+                    if word[pos + m] != brk[m] { ok = false; break; }
+                    m += 1;
+                }
+                guard ok else { continue; }
+                if tail_start[m] < 0 {
+                    var ids: i32[>..] = [];
+                    vocab::tokenize(brk[m..], false, false, ids);
+                    tail_start[m] = dry_tails.len;
+                    tail_len[m] = min(ids.len, 20);
+                    dry_tails.append(ids[..tail_len[m]]);
+                }
+                // not twice the same tail for a token
+                var have = false;
+                for h in heads {
+                    if h.token == t as i32 && h.len == tail_len[m] && dry_tails[h.start..h.start + h.len] == dry_tails[tail_start[m]..tail_start[m] + tail_len[m]] { have = true; break; }
+                }
+                if !have { heads.push(DryHead { token: t as i32, start: tail_start[m], len: tail_len[m] }); }
+            }
+        }
+    }
+    stable_sort(heads) { a, b => a.token < b.token };
+    dry_heads.append(heads);
+}
+
+// The first entry of dry_heads for token, or dry_heads.len.
+fn dry_first(token: i32) -> i64 { lower_bound(dry_heads) { it.token < token } }
 
 fn count_of(ch: Chain&, id: i32) -> i32 {
     let i = lower_bound(ch.counts) { it.id < id };
@@ -314,15 +407,33 @@ fn init(ch: Chain&, p: Params) {
     ch.counts.clear();
     // the model's suppressed tokens, as a logit bias of -inf
     if vocab::suppress_tokens.len > 0 { ch.samplers.push(new_sampler(KIND_LOGIT_BIAS)); }
-    guard p.mirostat == 0 else { abort("mirostat sampling: not ported yet"); }
+    ch.dry_last.clear();
     guard p.penalty_last_n <= 4096 else { abort("penalty_last_n above 4096: not supported"); }
+    if p.mirostat == 1 || p.mirostat == 2 {
+        // the temperature, then mirostat, which draws the token
+        var t = new_sampler(KIND_TEMP_EXT);
+        t.a = p.temp;
+        ch.samplers.push(t);
+        var m = seeded(if p.mirostat == 1 { KIND_MIROSTAT } else { KIND_MIROSTAT_V2 }, p.seed);
+        m.a = p.mirostat_tau;
+        m.b = p.mirostat_eta;
+        m.mu = 2.0 * p.mirostat_tau;
+        m.k = 100;
+        m.n = vocab::n_tokens();
+        ch.samplers.push(m);
+        return;
+    }
+    guard p.mirostat == 0 else { abort("unknown mirostat version"); }
     for kind in p.order {
         var s = new_sampler(kind);
         match kind {
             KIND_DRY => {
-                // a DRY sampler with multiplier 0 does nothing
-                guard p.dry_multiplier == 0.0 else { abort("DRY sampling: not ported yet"); }
-                continue;
+                // a DRY sampler that cannot penalize anything is left out
+                let last_n = max(p.dry_penalty_last_n, 0);
+                guard p.dry_multiplier != 0.0 && p.dry_base >= 1.0 && last_n != 0 else { continue; }
+                guard last_n <= 4096 else { abort("dry_penalty_last_n above 4096: not supported"); }
+                s.a = p.dry_multiplier; s.b = p.dry_base; s.k = p.dry_allowed_length; s.n = last_n;
+                dry_process_breakers(p.dry_breakers);
             },
             KIND_PENALTIES => {
                 s.k = if p.penalty_last_n < 0 { 0 } else { p.penalty_last_n };
@@ -497,6 +608,45 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
                 temp_impl(view(c, a), temp);
             }
         },
+        KIND_DRY => { dry_apply(ch, c, s, a); },
+        KIND_MIROSTAT => {
+            softmax_impl(c, a, true);
+            // the exponent of the Zipf law the top m tokens follow
+            let xs = view(c, a);
+            var sum_ti_bi: f32 = 0.0;
+            var sum_ti_sq: f32 = 0.0;
+            var i = 0;
+            while i < s.k - 1 && i < a.size - 1 {
+                let t_i = logf(((i + 2) as f32) / ((i + 1) as f32));
+                let b_i = logf(xs[i].p / xs[i + 1].p);
+                sum_ti_bi += t_i * b_i;
+                sum_ti_sq += t_i * t_i;
+                i += 1;
+            }
+            let s_hat = sum_ti_bi / sum_ti_sq;
+            // k from s_hat and the target surprise
+            let epsilon_hat = s_hat - 1.0;
+            let n_vocab: f32 = s.n;
+            let two: f32 = 2.0;
+            let kf: f32 = pow((epsilon_hat * pow(two, s.mu)) / (1.0 - pow(n_vocab, -epsilon_hat)), 1.0 / s_hat);
+            // int(k), as x86 converts: what is out of range becomes INT_MIN
+            let ki: i64 = if kf != kf || kf >= 2147483648.0 || kf < -2147483648.0 { -2147483648 } else { kf as! i32 };
+            let kk = min(max(ki, 1), a.size);
+            if !a.sorted { sort_desc(view(c, a)); a.sorted = true; }
+            a.size = kk;
+            softmax_impl(c, a, true);
+            mirostat_draw(c, s, a);
+        },
+        KIND_MIROSTAT_V2 => {
+            softmax_impl(c, a, true);
+            // the tokens whose surprise is above mu go
+            let xs = view(c, a);
+            var n = 0;
+            while n < xs.len && !(-log2(xs[n].p) > s.mu) { n += 1; }
+            a.size = max(n, 1);
+            softmax_impl(c, a, true);
+            mirostat_draw(c, s, a);
+        },
         KIND_GREEDY => {
             let xs = view(c, a);
             a.selected = 0;
@@ -535,21 +685,166 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
     }
 }
 
-// llama_sampler_reset of the chain: the penalties forget what they saw,
-// and the samplers that draw start their generators again from their seeds
-// (a new random one for the default seed).
+// Mirostat's draw (llama_sample_dist: std::discrete_distribution over the
+// probabilities), and its update of mu from the surprise of the token drawn.
+fn mirostat_draw(c: Cand[>..]&, s: Sampler&, a: Cands&) {
+    let xs = view(c, a);
+    a.selected = discrete(xs, s.rng);
+    let observed: f32 = -log2(xs[a.selected].p);
+    let e = observed - s.a;
+    s.mu = s.mu - s.b * e;
+}
+
+// std::discrete_distribution<int>(p...)(rng), as libstdc++ has it: the
+// weights normalized in double, and the first cumulative sum not below a
+// uniform draw (the last one being 1); with fewer than two weights, 0 and
+// no draw.
+fn discrete(xs: const Cand[:], rng: Mt19937&) -> i64 {
+    guard xs.len >= 2 else { return 0; }
+    var sum: f64 = 0.0;
+    for x in xs { sum += x.p; }
+    let u = uniform_f64(rng);
+    var cum: f64 = 0.0;
+    for x, i in xs {
+        cum += x.p / sum;
+        let cp = if i == xs.len - 1 { 1.0 } else { cum };
+        if cp >= u { return i; }
+    }
+    return xs.len - 1;
+}
+
+// DRY ("don't repeat yourself"): a token that would extend a sequence
+// repeated from earlier in the window, by more than dry_allowed_length
+// tokens, is penalized by multiplier * base^(extra length); the sequence
+// breakers end what counts as one sequence. llama_sampler_dry_apply.
+fn dry_apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
+    let n_last = ch.dry_last.len;
+    let last_n_repeat = min(n_last, s.n);
+    guard last_n_repeat > s.k else { return; }
+    // the i-th token from the end
+    fn rat(i: i64) -> i32 { ch.dry_last[n_last - 1 - i] }
+
+    // 1: the last breaker limits how long a repeat can be
+    var rep_limit = last_n_repeat;
+    for i in last_n_repeat {
+        let token = rat(i);
+        var h = dry_first(token);
+        guard h < dry_heads.len && dry_heads[h].token == token else { continue; }
+        var longest = -1;
+        while h < dry_heads.len && dry_heads[h].token == token {
+            let e = dry_heads[h];
+            h += 1;
+            guard e.len > longest && e.len <= i else { continue; }
+            var ok = true;
+            for off in e.len {
+                if dry_tails[e.start + off] != rat(i - off - 1) { ok = false; break; }
+            }
+            if ok { longest = e.len; }
+        }
+        if longest >= 0 {
+            rep_limit = i - longest;
+            break;
+        }
+    }
+    guard rep_limit >= s.k else { return; }
+
+    // 2: for each position, how long a suffix of the window repeats there
+    // (the Z-algorithm, backwards)
+    var repeat_count: i64[>..] = [];
+    for i in last_n_repeat { repeat_count.push(0); }
+    let last = last_n_repeat - 1;
+    var rt = 0;
+    var lt = 0;
+    for k in 1..last_n_repeat {
+        if k > rt {
+            var n = 0;
+            while n + k < last_n_repeat && rat(n) == rat(n + k) { n += 1; }
+            repeat_count[last - k] = min(n, rep_limit);
+            if n > 0 { lt = k; rt = k + n - 1; }
+        } else {
+            let p = k - lt;
+            let right_part_len = rt - k + 1;
+            if repeat_count[last - p] < right_part_len {
+                repeat_count[last - k] = min(repeat_count[last - p], rep_limit);
+            } else {
+                var i = rt + 1;
+                while i < last_n_repeat && rat(i) == rat(i - k) { i += 1; }
+                repeat_count[last - k] = min(i - k, rep_limit);
+                lt = k;
+                rt = i - 1;
+            }
+        }
+    }
+
+    // 3: the longest repeat each next token would extend
+    var max_repeat: Count[>..] = [];       // by token
+    for i in last_n_repeat - 1 {
+        let len = repeat_count[i];
+        guard len >= s.k else { continue; }
+        let token = rat(last_n_repeat - 2 - i);
+        let j = lower_bound(max_repeat) { it.id < token };
+        if j < max_repeat.len && max_repeat[j].id == token {
+            if max_repeat[j].n < len { max_repeat[j].n = len as i32; }
+        } else {
+            max_repeat.push(Count { id: token, n: len as i32 });
+            var q = max_repeat.len - 1;
+            while q > j { max_repeat[q] = max_repeat[q - 1]; q -= 1; }
+            max_repeat[j] = Count { id: token, n: len as i32 };
+        }
+    }
+
+    // 4: the penalties, the exponent clamped so that base^exp stays a float
+    let float_max_log: f32 = 88.7228391;
+    var max_exponent = 0;
+    if s.b > 1.000001 { max_exponent = (float_max_log / logf(s.b)) as! i32; }
+    for &x in view(c, a) {
+        let j = lower_bound(max_repeat) { it.id < x.id };
+        guard j < max_repeat.len && max_repeat[j].id == x.id else { continue; }
+        // a token that is a whole breaker is not penalized
+        var h = dry_first(x.id);
+        var single = false;
+        while h < dry_heads.len && dry_heads[h].token == x.id {
+            if dry_heads[h].len == 0 { single = true; break; }
+            h += 1;
+        }
+        guard !single else { continue; }
+        var repeat_exp: i64 = max_repeat[j].n - s.k;
+        if max_exponent > 0 && repeat_exp > max_exponent { repeat_exp = max_exponent; }
+        // std::pow(float, int) is a double
+        let penalty = (s.a * pow(s.b as f64, repeat_exp as f64)) as f32;
+        x.logit -= penalty;
+    }
+    a.sorted = false;
+}
+
+// llama_sampler_reset of the chain: the penalties and DRY forget what they
+// saw, and the samplers that draw start their generators again from their
+// seeds (a new random one for the default seed).
 fn reset(ch: Chain&) {
     ch.prev.clear();
     ch.counts.clear();
+    ch.dry_last.clear();
     for &s in ch.samplers {
-        if s.kind == KIND_DIST || s.kind == KIND_XTC { mt_seed(s.rng, rng_seed(s.seed)); }
+        if s.kind == KIND_DIST || s.kind == KIND_XTC || s.kind == KIND_MIROSTAT || s.kind == KIND_MIROSTAT_V2 {
+            mt_seed(s.rng, rng_seed(s.seed));
+        }
+        if s.kind == KIND_MIROSTAT || s.kind == KIND_MIROSTAT_V2 { s.mu = 2.0 * s.a; }
     }
 }
 
-// The penalties' window: llama_sampler_penalties_accept.
+// The windows of the penalties and DRY: their accept.
 fn accept(ch: Chain&, token: i32) {
     for s in ch.samplers {
+        if s.kind == KIND_DRY {
+            if ch.dry_last.len >= s.n {
+                for i in 0..ch.dry_last.len - 1 { ch.dry_last[i] = ch.dry_last[i + 1]; }
+                ch.dry_last.pop();
+            }
+            ch.dry_last.push(token);
+            continue;
+        }
         guard s.kind == KIND_PENALTIES && s.k > 0 else { continue; }
+
         count_add(ch, token, 1);
         if ch.prev.len >= s.k {
             let old = ch.prev[0];

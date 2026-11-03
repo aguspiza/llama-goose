@@ -17,8 +17,8 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | WPM, UGM, RWKV, PLaMo tokenizers | load, do not tokenize yet | |
 | model loading, KV cache, decode | ported for gemma3, llama, lfm2 | `tools/simple`, `tools/perplexity` |
 | other architectures | not yet | |
-| sampling: penalties, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), greedy, dist; the model's recommended settings | ported | `tools/completion` |
-| sampling: DRY, mirostat, adaptive-p, infill | not yet | |
+| sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
+| sampling: adaptive-p, infill, grammars | not yet | |
 | built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
 | Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
 | Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported, except the specialized handlers that rewrite messages (Ministral 3, GPT-OSS, DeepSeek V3.2+, K2 Horizon, LLM-jp, TranslateGemma, old Gemma 4); LFM2's is ported | `tests/chat_template`, `tools/completion --jinja` |
