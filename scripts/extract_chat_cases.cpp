@@ -1,8 +1,12 @@
 // Writes llama.cpp's chat template test cases, and what libllama's
-// llama_chat_apply_template makes of them, to a data file:
-// a sequence of fields, each "<byte length>\n<bytes>\n".
+// llama_chat_apply_template and libcommon's Jinja path
+// (common_chat_templates_apply, as test-chat-template's format_using_common
+// calls it) make of them, to a data file: a sequence of fields, each
+// "<byte length>\n<bytes>\n".
 #include "llama.h"
+#include "chat.h"
 #include <cstdio>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -22,6 +26,26 @@ static std::string apply(const char * tmpl, const std::vector<llama_chat_message
     std::vector<char> buf(n + 1);
     llama_chat_apply_template(tmpl, conv.data(), conv.size(), add_ass, buf.data(), buf.size());
     return std::string(buf.data(), n);
+}
+
+// format_using_common: the Jinja rendering, or "<ERROR>" and the message.
+static std::string apply_jinja(const std::string & tmpl, const std::string & bos, const std::string & eos,
+                               const std::vector<llama_chat_message> & conv) {
+    try {
+        auto tmpls = common_chat_templates_init(nullptr, tmpl, bos, eos);
+        common_chat_templates_inputs inputs;
+        inputs.use_jinja = true;
+        for (const auto & m : conv) {
+            common_chat_msg msg;
+            msg.role = m.role;
+            msg.content = m.content;
+            inputs.messages.push_back(msg);
+        }
+        inputs.add_generation_prompt = true;
+        return common_chat_templates_apply(tmpls.get(), inputs).prompt.str();
+    } catch (const std::exception & e) {
+        return std::string("<ERROR>") + e.what();
+    }
 }
 
 int main(int argc, char ** argv) {
@@ -55,6 +79,7 @@ int main(int argc, char ** argv) {
         for (auto & m : tc.extra_conversation) { field(m.role); field(m.content); }
         field(apply(tc.template_str.c_str(), conv, true));
         field(apply(tc.template_str.c_str(), conv, false));
+        field(tc.supported_with_jinja ? apply_jinja(tc.template_str, tc.bos_token, tc.eos_token, conv) : "");
     }
     fclose(out);
     return 0;

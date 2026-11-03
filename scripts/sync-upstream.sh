@@ -108,7 +108,8 @@ fi
 git -C "$llama" archive "$new" src/unicode-data.cpp src/llama-vocab.h src/llama-vocab.cpp | tar -x -C "$tmp"
 python -I "$root/scripts/gen-unicode-data.py" "$tmp/src/unicode-data.cpp" "$root/llama/unicode_data.goose"
 python -I "$root/scripts/gen-vocab-pre.py" "$tmp/src" "$root/llama/vocab_pre.goose"
-# chat_template's cases come from a libllama build: scripts/gen-chat-cases.sh
+# chat_template's and jinja's cases come from a llama.cpp build:
+# scripts/gen-chat-cases.sh and scripts/gen-jinja-cases.sh
 
 echo "$new" > "$root/UPSTREAM"
 echo "ggml copied at ggml $version; UPSTREAM is now ${new:0:9}. Next: scripts/test.sh"

@@ -1,0 +1,3 @@
+// llama.cpp's common/ in Goose. The package's modules are imported one by
+// one: import common.jinja; ...
+namespace common;

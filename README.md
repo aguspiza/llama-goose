@@ -20,7 +20,9 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | sampling: penalties, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | sampling: DRY, mirostat, adaptive-p, infill | not yet | |
 | built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
-| Jinja chat templates, grammars, `common/`, server | not yet | |
+| Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
+| Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported, except the specialized handlers that rewrite messages (Ministral 3, GPT-OSS, DeepSeek V3.2+, K2 Horizon, LLM-jp, TranslateGemma, old Gemma 4); LFM2's is ported | `tests/chat_template` |
+| tool call and reasoning parsers (autoparser, PEG), grammars, the rest of `common/`, server | not yet | |
 
 `tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
 and greedy sampling it writes byte for byte the text llama.cpp's
@@ -55,9 +57,21 @@ above 4); `-t` sets it.
 
 `tests/chat_template` applies every built-in template, and the template of
 every case in llama.cpp's `test-chat-template.cpp`, to its conversation,
-and compares with what libllama writes (180 checks). The cases and
-libllama's answers are in `tests/data/chat_cases.txt`;
+and compares with what libllama writes (180 checks); it also renders each
+case's Jinja template through `common/chat.goose` and compares with what
+libcommon's `common_chat_templates_apply` writes (35 checks). The cases and
+llama.cpp's answers are in `tests/data/chat_cases.txt`;
 `scripts/gen-chat-cases.sh` regenerates it from a llama.cpp build.
+
+`common/jinja*.goose` is llama.cpp's Jinja engine, the one its chat
+templates run on. Its values are indices into arenas (llama.cpp shares
+them through `shared_ptr`), strings keep which parts came from the user's
+input, and errors are `exception::throw`s with llama.cpp's messages.
+`tests/jinja` renders every template case of llama.cpp's `test-jinja.cpp`
+and compares with what llama.cpp's engine makes of it (output, error, or
+not implemented); `scripts/gen-jinja-cases.sh` regenerates
+`tests/data/jinja_cases.txt`. Numbers and dates go through libc
+(`common/jinja_shim.c`: `snprintf`, `strtod`, `strftime`), as in llama.cpp.
 `tools/simple_chat` is examples/simple-chat with a `-s` seed: with the seed
 fixed in llama.cpp's too, three-turn chats in English and Spanish give the
 same bytes on all three models. Like simple-chat it runs 4 threads

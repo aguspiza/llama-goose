@@ -1,12 +1,15 @@
-// llama.cpp's test-chat-template, its built-in templates part: applies each
-// built-in template and each test case's template to the test conversation
-// and compares with what libllama wrote (tests/data/chat_cases.txt, made by
-// scripts/extract_chat_cases.cpp).
+// llama.cpp's test-chat-template: applies each built-in template and each
+// test case's template to the test conversation, and renders the test
+// cases' Jinja templates as libcommon does, and compares with what llama.cpp
+// wrote (tests/data/chat_cases.txt, made by scripts/extract_chat_cases.cpp).
 //   chat_template [tests/data/chat_cases.txt]
 import std;
 import os;
 import llama from "../llama";
 import llama.chat;
+import common from "../common";
+import common.jinja;
+import common.chat;
 
 var data: u8[>..] = [];
 var at = 0;
@@ -14,7 +17,7 @@ var at = 0;
 // The next field: "<byte length>\n<bytes>\n".
 fn field() -> const u8[:] {
     var n = 0;
-    while data[at] != '\n' { n = n * 10 + (data[at] - '0') as i64; at += 1; }
+    while data[at] != '\n' { n = n * 10 + (data[at] - '0'); at += 1; }
     at += 1;
     let s = data[at..at + n];
     at += n + 1;
@@ -50,6 +53,27 @@ fn main() {
         }
     }
 
+    // The Jinja path, as test-chat-template's format_using_common.
+    fn check_jinja(name: const u8[:], tmpl: const u8[:], bos: const u8[:], eos: const u8[:], msgs: const chat::Message[:], expected: const u8[:]) {
+        var got: u8[>..] = [];
+        var ts, ok = common_chat::init(tmpl, "", bos, eos, false, false);
+        var cm: common_chat::Msg[>..] = [];
+        for m in msgs { cm.push(common_chat::Msg { role: m.role, content: m.content }); }
+        if ok && common_chat::apply(ts, cm, common_chat::Inputs { .. }) {
+            got.append(common_chat::prompt);
+        } else {
+            got.append("<ERROR>");
+            got.append(jinja::err);
+        }
+        checked += 1;
+        if got != expected {
+            failed += 1;
+            print("FAIL ", name, " (jinja)");
+            print("  expected: ", expected);
+            print("  got:      ", got);
+        }
+    }
+
     let n_names = count();
     if n_names != chat::NAMES.len { print("FAIL: ", n_names, " built-in templates, Goose has ", chat::NAMES.len); failed += 1; }
     for i in n_names {
@@ -62,12 +86,17 @@ fn main() {
     for i in count() {
         let name = field();
         let tmpl = field();
-        field(); field(); field(); field(); field();    // jinja's expectations, bos, eos, supported_with_jinja
+        field(); field();     // test-chat-template's expectations
+        let bos = field();
+        let eos = field();
+        let jinja_ok = field() == "1";
         var msgs: chat::Message[>..] = [];
         msgs.append(conv);
         for k in count() { msgs.push(chat::Message { role: field(), content: field() }); }
         check(name, tmpl, msgs, true, field());
         check(name, tmpl, msgs, false, field());
+        let expected_jinja = field();
+        if jinja_ok { check_jinja(name, tmpl, bos, eos, msgs, expected_jinja); }
     }
     if chat::apply("INVALID TEMPLATE", conv, true, out) { print("FAIL: INVALID TEMPLATE was recognized"); failed += 1; }
 

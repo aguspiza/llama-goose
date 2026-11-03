@@ -1,0 +1,5640 @@
+1
+T
+37
+trim_blocks removes newline after tag
+32
+{% if true %}
+hello
+{% endif %}
+
+2
+{}
+6
+hello
+
+2
+ok
+6
+hello
+
+1
+T
+40
+lstrip_blocks removes leading whitespace
+44
+    {% if true %}
+    hello
+    {% endif %}
+
+2
+{}
+10
+    hello
+
+2
+ok
+10
+    hello
+
+1
+T
+25
+for loop with trim_blocks
+42
+{% for i in items %}
+{{ i }}
+{% endfor %}
+
+17
+{"items":[1,2,3]}
+6
+1
+2
+3
+
+2
+ok
+6
+1
+2
+3
+
+1
+T
+19
+explicit strip both
+44
+  {%- if true -%}  
+hello
+  {%- endif -%}  
+
+2
+{}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+29
+expression whitespace control
+20
+  {{- 'hello' -}}  
+
+2
+{}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+23
+inline block no newline
+27
+{% if true %}yes{% endif %}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+7
+if true
+27
+{% if cond %}yes{% endif %}
+13
+{"cond":true}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+8
+if false
+27
+{% if cond %}yes{% endif %}
+14
+{"cond":false}
+0
+
+2
+ok
+0
+
+1
+T
+7
+if else
+39
+{% if cond %}yes{% else %}no{% endif %}
+14
+{"cond":false}
+2
+no
+2
+ok
+2
+no
+1
+T
+12
+if elif else
+46
+{% if a %}A{% elif b %}B{% else %}C{% endif %}
+20
+{"a":false,"b":true}
+1
+B
+2
+ok
+1
+B
+1
+T
+9
+nested if
+54
+{% if outer %}{% if inner %}both{% endif %}{% endif %}
+27
+{"outer":true,"inner":true}
+4
+both
+2
+ok
+4
+both
+1
+T
+20
+comparison operators
+28
+{% if x > 5 %}big{% endif %}
+8
+{"x":10}
+3
+big
+2
+ok
+3
+big
+1
+T
+17
+object comparison
+102
+{% if {0: 1, none: 2, 1.0: 3, '0': 4, true: 5} == {false: 1, none: 2, 1: 5, '0': 4} %}equal{% endif %}
+2
+{}
+5
+equal
+2
+ok
+5
+equal
+1
+T
+16
+array comparison
+59
+{% if [0, 1.0, false] == [false, 1, 0.0] %}equal{% endif %}
+2
+{}
+5
+equal
+2
+ok
+5
+equal
+1
+T
+11
+logical and
+31
+{% if a and b %}both{% endif %}
+19
+{"a":true,"b":true}
+4
+both
+2
+ok
+4
+both
+1
+T
+10
+logical or
+32
+{% if a or b %}either{% endif %}
+20
+{"a":false,"b":true}
+6
+either
+2
+ok
+6
+either
+1
+T
+11
+logical not
+32
+{% if not a %}negated{% endif %}
+11
+{"a":false}
+7
+negated
+2
+ok
+7
+negated
+1
+T
+30
+in operator (element in array)
+37
+{% if 'x' in items %}found{% endif %}
+19
+{"items":["x","y"]}
+5
+found
+2
+ok
+5
+found
+1
+T
+23
+in operator (substring)
+39
+{% if 'bc' in 'abcd' %}found{% endif %}
+2
+{}
+5
+found
+2
+ok
+5
+found
+1
+T
+24
+in operator (object key)
+37
+{% if 'key' in obj %}found{% endif %}
+27
+{"obj":{"key":1,"other":2}}
+5
+found
+2
+ok
+5
+found
+1
+T
+10
+is defined
+47
+{% if x is defined %}yes{% else %}no{% endif %}
+7
+{"x":1}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+14
+is not defined
+51
+{% if y is not defined %}yes{% else %}no{% endif %}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+18
+is undefined falsy
+30
+{{ 'yes' if not y else 'no' }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+28
+is undefined attribute falsy
+32
+{{ 'yes' if not y.x else 'no' }}
+10
+{"y":true}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+22
+is undefined key falsy
+35
+{{ 'yes' if not y['x'] else 'no' }}
+12
+{"y":[null]}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+20
+is empty array falsy
+30
+{{ 'yes' if not y else 'no' }}
+8
+{"y":[]}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+21
+is empty object falsy
+30
+{{ 'yes' if not y else 'no' }}
+8
+{"y":{}}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+21
+is empty string falsy
+30
+{{ 'yes' if not y else 'no' }}
+8
+{"y":""}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+10
+is 0 falsy
+30
+{{ 'yes' if not y else 'no' }}
+7
+{"y":0}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+12
+is 0.0 falsy
+30
+{{ 'yes' if not y else 'no' }}
+9
+{"y":0.0}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+25
+is non-empty array truthy
+26
+{{ 'yes' if y else 'no' }}
+10
+{"y":[""]}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+26
+is non-empty object truthy
+26
+{{ 'yes' if y else 'no' }}
+17
+{"y":["x",false]}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+26
+is non-empty string truthy
+26
+{{ 'yes' if y else 'no' }}
+9
+{"y":"0"}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+11
+is 1 truthy
+26
+{{ 'yes' if y else 'no' }}
+7
+{"y":1}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+13
+is 1.0 truthy
+26
+{{ 'yes' if y else 'no' }}
+9
+{"y":1.0}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+10
+simple for
+39
+{% for i in items %}{{ i }}{% endfor %}
+17
+{"items":[1,2,3]}
+3
+123
+2
+ok
+3
+123
+1
+T
+10
+loop.index
+48
+{% for i in items %}{{ loop.index }}{% endfor %}
+23
+{"items":["a","b","c"]}
+3
+123
+2
+ok
+3
+123
+1
+T
+11
+loop.index0
+49
+{% for i in items %}{{ loop.index0 }}{% endfor %}
+23
+{"items":["a","b","c"]}
+3
+012
+2
+ok
+3
+012
+1
+T
+24
+loop.first and loop.last
+100
+{% for i in items %}{% if loop.first %}[{% endif %}{{ i }}{% if loop.last %}]{% endif %}{% endfor %}
+17
+{"items":[1,2,3]}
+5
+[123]
+2
+ok
+5
+[123]
+1
+T
+11
+loop.length
+49
+{% for i in items %}{{ loop.length }}{% endfor %}
+19
+{"items":["a","b"]}
+2
+22
+2
+ok
+2
+22
+1
+T
+19
+for over dict items
+58
+{% for k, v in data.items() %}{{ k }}={{ v }} {% endfor %}
+22
+{"data":{"x":1,"y":2}}
+8
+x=1 y=2 
+2
+ok
+8
+x=1 y=2 
+1
+T
+14
+for else empty
+54
+{% for i in items %}{{ i }}{% else %}empty{% endfor %}
+12
+{"items":[]}
+5
+empty
+2
+ok
+5
+empty
+1
+T
+19
+for undefined empty
+54
+{% for i in items %}{{ i }}{% else %}empty{% endfor %}
+2
+{}
+5
+empty
+2
+ok
+5
+empty
+1
+T
+10
+nested for
+70
+{% for i in a %}{% for j in b %}{{ i }}{{ j }}{% endfor %}{% endfor %}
+25
+{"a":[1,2],"b":["x","y"]}
+8
+1x1y2x2y
+2
+ok
+8
+1x1y2x2y
+1
+T
+50
+loop assignments do not persist between iterations
+93
+{% for i in [1, 2] %}{% if i == 1 %}{% set x = 7 %}{% endif %}{{ x is defined }};{% endfor %}
+2
+{}
+11
+True;False;
+2
+ok
+11
+True;False;
+1
+T
+39
+loop assignments shadow outer variables
+104
+{% set x = 9 %}{% for i in [1, 2] %}{% if i == 1 %}{% set x = 7 %}{% endif %}{{ x }};{% endfor %}{{ x }}
+2
+{}
+5
+7;9;9
+2
+ok
+5
+7;9;9
+1
+T
+57
+nested loop assignments do not persist between iterations
+126
+{% for i in [1, 2] %}{% for j in [1, 2] %}{% if j == 1 %}{% set x = i %}{% endif %}{{ x is defined }};{% endfor %}{% endfor %}
+2
+{}
+22
+True;False;True;False;
+2
+ok
+22
+True;False;True;False;
+1
+T
+34
+reasoning is local to each message
+348
+{% for m in messages %}{% if m.reasoning_content is string %}{% set reasoning_content = m.reasoning_content %}{% elif '</think>' in m.content %}{% set reasoning_content = m.content.split('</think>')[0].split('<think>')[-1] %}{% endif %}[{{ reasoning_content is defined }}:{{ reasoning_content if reasoning_content is defined else '' }}]{% endfor %}
+282
+{"messages":[{"reasoning_content":"first","content":"answer"},{"content":"answer"},{"reasoning_content":null,"content":"answer"},{"reasoning_content":1,"content":"answer"},{"reasoning_content":"","content":"answer"},{"content":"<think>embedded</think>answer"},{"content":"answer"}]}
+66
+[True:first][False:][False:][False:][True:][True:embedded][False:]
+2
+ok
+66
+[True:first][False:][False:][False:][True:][True:embedded][False:]
+1
+T
+14
+for with range
+42
+{% for i in range(3) %}{{ i }}{% endfor %}
+2
+{}
+3
+012
+2
+ok
+3
+012
+1
+T
+15
+simple variable
+7
+{{ x }}
+8
+{"x":42}
+2
+42
+2
+ok
+2
+42
+1
+T
+14
+none in object
+32
+{{ x in {'low': 1, 'high': 2} }}
+10
+{"x":null}
+5
+False
+2
+ok
+5
+False
+1
+T
+18
+none not in object
+36
+{{ x not in {'low': 1, 'high': 2} }}
+10
+{"x":null}
+4
+True
+2
+ok
+4
+True
+1
+T
+13
+none in array
+23
+{{ x in [1, none, 3] }}
+10
+{"x":null}
+4
+True
+2
+ok
+4
+True
+1
+T
+12
+dot notation
+15
+{{ user.name }}
+23
+{"user":{"name":"Bob"}}
+3
+Bob
+2
+ok
+3
+Bob
+1
+T
+31
+dot notation (integer property)
+20
+{{ {10: 'Bob'}.10 }}
+2
+{}
+3
+Bob
+2
+ok
+3
+Bob
+1
+T
+26
+dot notation (array index)
+13
+{{ user.10 }}
+54
+{"user":["a","b","c","d","e","f","g","h","i","j","k"]}
+1
+k
+2
+ok
+1
+k
+1
+T
+33
+negative float (not dot notation)
+10
+{{ -1.0 }}
+2
+{}
+4
+-1.0
+2
+ok
+4
+-1.0
+1
+T
+16
+bracket notation
+18
+{{ user['name'] }}
+23
+{"user":{"name":"Bob"}}
+3
+Bob
+2
+ok
+3
+Bob
+1
+T
+43
+empty computed member defaults to undefined
+29
+{{ a[]|default('fallback') }}
+20
+{"a":{"name":"Bob"}}
+8
+fallback
+2
+ok
+8
+fallback
+1
+T
+34
+empty computed member is undefined
+22
+{{ a[] is undefined }}
+20
+{"a":{"name":"Bob"}}
+4
+True
+2
+ok
+4
+True
+1
+T
+38
+undefined computed member is undefined
+31
+{{ a[undefined] is undefined }}
+20
+{"a":{"name":"Bob"}}
+4
+True
+2
+ok
+4
+True
+1
+T
+12
+array access
+14
+{{ items[1] }}
+23
+{"items":["a","b","c"]}
+1
+b
+2
+ok
+1
+b
+1
+T
+21
+array negative access
+15
+{{ items[-1] }}
+23
+{"items":["a","b","c"]}
+1
+c
+2
+ok
+1
+c
+1
+T
+17
+array bool access
+17
+{{ items[true] }}
+23
+{"items":["a","b","c"]}
+1
+b
+2
+ok
+1
+b
+1
+T
+22
+array non-index access
+29
+{{ items[1.0] is undefined }}
+23
+{"items":["a","b","c"]}
+4
+True
+2
+ok
+4
+True
+1
+T
+11
+array slice
+24
+{{ items[1:-1]|string }}
+23
+{"items":["a","b","c"]}
+5
+['b']
+2
+ok
+5
+['b']
+1
+T
+29
+array slice negative variable
+23
+{{ items[:-n]|string }}
+29
+{"items":["a","b","c"],"n":1}
+10
+['a', 'b']
+2
+ok
+10
+['a', 'b']
+1
+T
+36
+array slice negative variable indent
+29
+{{ indent[:-indent_factor] }}
+35
+{"indent":"    ","indent_factor":2}
+2
+  
+2
+ok
+2
+  
+1
+T
+20
+unary minus variable
+8
+{{ -n }}
+7
+{"n":3}
+2
+-3
+2
+ok
+2
+-3
+1
+T
+19
+unary plus variable
+8
+{{ +n }}
+8
+{"n":-3}
+2
+-3
+2
+ok
+2
+-3
+1
+T
+16
+unary plus float
+8
+{{ +x }}
+10
+{"x":-1.5}
+4
+-1.5
+2
+ok
+4
+-1.5
+1
+T
+27
+unary minus then abs filter
+12
+{{ -n|abs }}
+8
+{"n":-3}
+1
+3
+2
+ok
+1
+3
+1
+T
+28
+unary minus then number test
+18
+{{ -n is number }}
+7
+{"n":3}
+4
+True
+2
+ok
+4
+True
+1
+T
+16
+array slice step
+23
+{{ items[::2]|string }}
+23
+{"items":["a","b","c"]}
+10
+['a', 'c']
+2
+ok
+10
+['a', 'c']
+1
+T
+11
+tuple slice
+34
+{{ ('a', 'b', 'c')[::-1]|string }}
+2
+{}
+15
+('c', 'b', 'a')
+2
+ok
+15
+('c', 'b', 'a')
+1
+T
+26
+string slice negative step
+20
+{{ 'abcdef'[::-2] }}
+2
+{}
+3
+fdb
+2
+ok
+3
+fdb
+1
+T
+36
+string slice negative start and step
+23
+{{ 'abcdef'[-1:1:-1] }}
+2
+{}
+4
+fedc
+2
+ok
+4
+fedc
+1
+T
+42
+string slice negative start, stop and step
+24
+{{ 'abcdef'[-1:-5:-1] }}
+2
+{}
+4
+fedc
+2
+ok
+4
+fedc
+1
+T
+10
+arithmetic
+17
+{{ (a + b) * c }}
+19
+{"a":2,"b":3,"c":4}
+2
+20
+2
+ok
+2
+20
+1
+T
+15
+string concat ~
+29
+{{ 'hello' ~ ' ' ~ 'world' }}
+2
+{}
+11
+hello world
+2
+ok
+11
+hello world
+1
+T
+17
+string repetition
+14
+{{ 'ab' * 3 }}
+2
+{}
+6
+ababab
+2
+ok
+6
+ababab
+1
+T
+26
+reversed string repetition
+14
+{{ 3 * 'ab' }}
+2
+{}
+6
+ababab
+2
+ok
+6
+ababab
+1
+T
+7
+ternary
+29
+{{ 'yes' if cond else 'no' }}
+13
+{"cond":true}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+18
+nested parentheses
+67
+{{ ((((((((((((((((((((((((((((((1)))))))))))))))))))))))))))))) }}
+2
+{}
+1
+1
+2
+ok
+1
+1
+1
+E
+29
+too deeply nested parentheses
+2007
+{{ ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) }}
+0
+
+44
+template is nested more than 128 levels deep
+5
+error
+198
+parser: Parser Error: template is nested more than 128 levels deep
+...((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((...
+                                           ^
+1
+T
+10
+simple set
+22
+{% set x = 5 %}{{ x }}
+2
+{}
+1
+5
+2
+ok
+1
+5
+1
+T
+19
+set with expression
+26
+{% set x = a + b %}{{ x }}
+15
+{"a":10,"b":20}
+2
+30
+2
+ok
+2
+30
+1
+T
+8
+set list
+45
+{% set items = [1, 2, 3] %}{{ items|length }}
+2
+{}
+1
+3
+2
+ok
+1
+3
+1
+T
+8
+set dict
+31
+{% set d = {'a': 1} %}{{ d.a }}
+2
+{}
+1
+1
+2
+ok
+1
+1
+1
+T
+29
+set dict with mixed type keys
+140
+{% set d = {0: 1, none: 2, 1.0: 3, '0': 4, (0, 0): 5, false: 6, 1: 7} %}{{ d[(0, 0)] + d[0] + d[none] + d['0'] + d[false] + d[1.0] + d[1] }}
+2
+{}
+2
+37
+2
+ok
+2
+37
+1
+T
+31
+print dict with mixed type keys
+79
+{% set d = {0: 1, none: 2, 1.0: 3, '0': 4, (0, 0): 5, true: 6} %}{{ d|string }}
+2
+{}
+42
+{0: 1, None: 2, 1.0: 6, '0': 4, (0, 0): 5}
+2
+ok
+42
+{0: 1, None: 2, 1.0: 6, '0': 4, (0, 0): 5}
+1
+T
+28
+print array with mixed types
+61
+{% set d = [0, none, 1.0, '0', true, (0, 0)] %}{{ d|string }}
+2
+{}
+33
+[0, None, 1.0, '0', True, (0, 0)]
+2
+ok
+33
+[0, None, 1.0, '0', True, (0, 0)]
+1
+T
+45
+object member assignment with mixed key types
+63
+{% set d = namespace() %}{% set d.a = 123 %}{{ d['a'] == 123 }}
+2
+{}
+4
+True
+2
+ok
+4
+True
+1
+T
+15
+tuple unpacking
+59
+{% set t = (1, 2, 3) %}{% set a, b, c = t %}{{ a + b + c }}
+2
+{}
+1
+6
+2
+ok
+1
+6
+1
+E
+40
+upper rejects unknown keyword on 'hello'
+37
+{{ 'hello'|upper(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+208
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|upper(attribute='name') }}...
+             ^
+Error: Function 'upper' got an unexpected keyword argument 'attribute'
+1
+E
+50
+upper rejects extra positional argument on 'hello'
+28
+{{ 'hello'|upper('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|upper('extra') }}...
+             ^
+Error: Function 'upper' expected between 1 and 1 arguments, got 2
+1
+E
+40
+upper rejects unknown keyword on missing
+37
+{{ missing|upper(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+208
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|upper(attribute='name') }}...
+             ^
+Error: Function 'upper' got an unexpected keyword argument 'attribute'
+1
+E
+50
+upper rejects extra positional argument on missing
+28
+{{ missing|upper('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|upper('extra') }}...
+             ^
+Error: Function 'upper' expected between 1 and 1 arguments, got 2
+1
+E
+40
+lower rejects unknown keyword on 'hello'
+37
+{{ 'hello'|lower(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+208
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|lower(attribute='name') }}...
+             ^
+Error: Function 'lower' got an unexpected keyword argument 'attribute'
+1
+E
+50
+lower rejects extra positional argument on 'hello'
+28
+{{ 'hello'|lower('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|lower('extra') }}...
+             ^
+Error: Function 'lower' expected between 1 and 1 arguments, got 2
+1
+E
+40
+lower rejects unknown keyword on missing
+37
+{{ missing|lower(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+208
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|lower(attribute='name') }}...
+             ^
+Error: Function 'lower' got an unexpected keyword argument 'attribute'
+1
+E
+50
+lower rejects extra positional argument on missing
+28
+{{ missing|lower('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|lower('extra') }}...
+             ^
+Error: Function 'lower' expected between 1 and 1 arguments, got 2
+1
+E
+40
+title rejects unknown keyword on 'hello'
+37
+{{ 'hello'|title(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+208
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|title(attribute='name') }}...
+             ^
+Error: Function 'title' got an unexpected keyword argument 'attribute'
+1
+E
+50
+title rejects extra positional argument on 'hello'
+28
+{{ 'hello'|title('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|title('extra') }}...
+             ^
+Error: Function 'title' expected between 1 and 1 arguments, got 2
+1
+E
+40
+title rejects unknown keyword on missing
+37
+{{ missing|title(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+208
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|title(attribute='name') }}...
+             ^
+Error: Function 'title' got an unexpected keyword argument 'attribute'
+1
+E
+50
+title rejects extra positional argument on missing
+28
+{{ missing|title('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|title('extra') }}...
+             ^
+Error: Function 'title' expected between 1 and 1 arguments, got 2
+1
+E
+45
+capitalize rejects unknown keyword on 'hello'
+42
+{{ 'hello'|capitalize(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+218
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|capitalize(attribute='name') }}...
+             ^
+Error: Function 'capitalize' got an unexpected keyword argument 'attribute'
+1
+E
+55
+capitalize rejects extra positional argument on 'hello'
+33
+{{ 'hello'|capitalize('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+204
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|capitalize('extra') }}...
+             ^
+Error: Function 'capitalize' expected between 1 and 1 arguments, got 2
+1
+E
+45
+capitalize rejects unknown keyword on missing
+42
+{{ missing|capitalize(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+218
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|capitalize(attribute='name') }}...
+             ^
+Error: Function 'capitalize' got an unexpected keyword argument 'attribute'
+1
+E
+55
+capitalize rejects extra positional argument on missing
+33
+{{ missing|capitalize('extra') }}
+0
+
+41
+expected between 1 and 1 arguments, got 2
+5
+error
+204
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|capitalize('extra') }}...
+             ^
+Error: Function 'capitalize' expected between 1 and 1 arguments, got 2
+1
+E
+37
+string method rejects unknown keyword
+37
+{{ 'hello'.upper(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+212
+
+------------
+While executing CallExpression at line 1, column 17 in source:
+...{{ 'hello'.upper(attribute='name') }}...
+                   ^
+Error: Function 'upper' got an unexpected keyword argument 'attribute'
+1
+T
+5
+upper
+19
+{{ 'hello'|upper }}
+2
+{}
+5
+HELLO
+2
+ok
+5
+HELLO
+1
+T
+5
+lower
+19
+{{ 'HELLO'|lower }}
+2
+{}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+11
+upper array
+17
+{{ items|upper }}
+27
+{"items":["hello","world"]}
+18
+['HELLO', 'WORLD']
+2
+ok
+18
+['HELLO', 'WORLD']
+1
+T
+10
+upper dict
+17
+{{ items|upper }}
+27
+{"items":{"hello":"world"}}
+18
+{'HELLO': 'WORLD'}
+2
+ok
+18
+{'HELLO': 'WORLD'}
+1
+T
+10
+capitalize
+30
+{{ 'heLlo World'|capitalize }}
+2
+{}
+11
+Hello world
+2
+ok
+11
+Hello world
+1
+T
+5
+title
+25
+{{ 'hello world'|title }}
+2
+{}
+11
+Hello World
+2
+ok
+11
+Hello World
+1
+T
+4
+trim
+28
+{{ '  
+	hello	
+  '|trim }}
+2
+{}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+10
+trim chars
+30
+{{ 'xyxhelloxyx'|trim('xy') }}
+2
+{}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+18
+trim chars keyword
+67
+{{ 'xyxhelloxyx'|trim(chars='xy') }}|{{ missing|trim(chars='xy') }}
+2
+{}
+6
+hello|
+2
+ok
+6
+hello|
+1
+E
+39
+trim rejects unknown keyword on 'hello'
+36
+{{ 'hello'|trim(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+207
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|trim(attribute='name') }}...
+             ^
+Error: Function 'strip' got an unexpected keyword argument 'attribute'
+1
+E
+49
+trim rejects extra positional argument on 'hello'
+28
+{{ 'hello'|trim('x', 'y') }}
+0
+
+41
+expected between 1 and 2 arguments, got 3
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ 'hello'|trim('x', 'y') }}...
+             ^
+Error: Function 'strip' expected between 1 and 2 arguments, got 3
+1
+E
+39
+trim rejects unknown keyword on missing
+36
+{{ missing|trim(attribute='name') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+207
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|trim(attribute='name') }}...
+             ^
+Error: Function 'strip' got an unexpected keyword argument 'attribute'
+1
+E
+49
+trim rejects extra positional argument on missing
+28
+{{ missing|trim('x', 'y') }}
+0
+
+41
+expected between 1 and 2 arguments, got 3
+5
+error
+194
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|trim('x', 'y') }}...
+             ^
+Error: Function 'strip' expected between 1 and 2 arguments, got 3
+1
+T
+13
+length string
+20
+{{ 'hello'|length }}
+2
+{}
+1
+5
+2
+ok
+1
+5
+1
+T
+7
+replace
+45
+{{ 'hello world'|replace('world', 'jinja') }}
+2
+{}
+11
+hello jinja
+2
+ok
+11
+hello jinja
+1
+T
+25
+length (count alias) list
+17
+{{ items|count }}
+17
+{"items":[1,2,3]}
+1
+3
+2
+ok
+1
+3
+1
+T
+5
+first
+17
+{{ items|first }}
+20
+{"items":[10,20,30]}
+2
+10
+2
+ok
+2
+10
+1
+T
+4
+last
+16
+{{ items|last }}
+20
+{"items":[10,20,30]}
+2
+30
+2
+ok
+2
+30
+1
+T
+7
+reverse
+47
+{% for i in items|reverse %}{{ i }}{% endfor %}
+17
+{"items":[1,2,3]}
+3
+321
+2
+ok
+3
+321
+1
+T
+6
+unique
+28
+{{ items|unique|join(',') }}
+21
+{"items":[3,1,3,2,1]}
+5
+3,1,2
+2
+ok
+5
+3,1,2
+1
+T
+21
+unique case sensitive
+49
+{{ items|unique(case_sensitive=true)|join(',') }}
+31
+{"items":["a","A","b","B","a"]}
+7
+a,A,b,B
+2
+ok
+7
+a,A,b,B
+1
+T
+32
+unique case sensitive positional
+36
+{{ items|unique(true)|list|length }}
+23
+{"items":["a","A","a"]}
+1
+2
+2
+ok
+1
+2
+1
+T
+21
+unique with attribute
+54
+{{ items|unique(attribute='id')|join(attribute='v') }}
+62
+{"items":[{"id":"x","v":1},{"id":"y","v":2},{"id":"x","v":3}]}
+2
+12
+2
+ok
+2
+12
+1
+T
+36
+unique with attribute case sensitive
+75
+{{ items|unique(case_sensitive=true, attribute='id')|join(attribute='v') }}
+62
+{"items":[{"id":"x","v":1},{"id":"X","v":2},{"id":"x","v":3}]}
+2
+12
+2
+ok
+2
+12
+1
+T
+18
+unique mixed types
+30
+{{ items|unique|list|length }}
+27
+{"items":[1,1.0,2,"a","a"]}
+1
+3
+2
+ok
+1
+3
+1
+T
+12
+unique empty
+30
+{{ items|unique|list|length }}
+12
+{"items":[]}
+1
+0
+2
+ok
+1
+0
+1
+T
+24
+unique length comparison
+71
+{{ (items|unique(case_sensitive=true)|list|length) != (items|length) }}
+38
+{"items":["call_1","call_2","call_1"]}
+4
+True
+2
+ok
+4
+True
+1
+T
+4
+sort
+44
+{% for i in items|sort %}{{ i }}{% endfor %}
+17
+{"items":[3,1,2]}
+3
+123
+2
+ok
+3
+123
+1
+T
+12
+sort reverse
+50
+{% for i in items|sort(true) %}{{ i }}{% endfor %}
+17
+{"items":[3,1,2]}
+3
+321
+2
+ok
+3
+321
+1
+T
+19
+sort with attribute
+56
+{{ items|sort(attribute='name')|join(attribute='age') }}
+74
+{"items":[{"name":"c","age":3},{"name":"a","age":1},{"name":"b","age":2}]}
+3
+123
+2
+ok
+3
+123
+1
+T
+27
+sort with numeric attribute
+47
+{{ items|sort(attribute=0)|join(attribute=1) }}
+35
+{"items":[[3,"z"],[1,"x"],[2,"y"]]}
+3
+xyz
+2
+ok
+3
+xyz
+1
+T
+32
+sort with numeric-like attribute
+50
+{{ items|sort(attribute='01')|join(attribute=1) }}
+35
+{"items":[[1,"z"],[2,"x"],[3,"y"]]}
+3
+xyz
+2
+ok
+3
+xyz
+1
+T
+4
+join
+22
+{{ items|join(', ') }}
+23
+{"items":["a","b","c"]}
+7
+a, b, c
+2
+ok
+7
+a, b, c
+1
+T
+22
+join default separator
+16
+{{ items|join }}
+23
+{"items":["x","y","z"]}
+3
+xyz
+2
+ok
+3
+xyz
+1
+T
+3
+abs
+12
+{{ -5|abs }}
+2
+{}
+1
+5
+2
+ok
+1
+5
+1
+T
+15
+int from string
+14
+{{ '42'|int }}
+2
+{}
+2
+42
+2
+ok
+2
+42
+1
+T
+28
+int from string with default
+15
+{{ ''|int(1) }}
+2
+{}
+1
+1
+2
+ok
+1
+1
+1
+T
+25
+int from string with base
+22
+{{ '11'|int(base=2) }}
+2
+{}
+1
+3
+2
+ok
+1
+3
+1
+T
+17
+float from string
+18
+{{ '3.14'|float }}
+2
+{}
+4
+3.14
+2
+ok
+4
+3.14
+1
+T
+18
+default with value
+27
+{{ x|default('fallback') }}
+14
+{"x":"actual"}
+6
+actual
+2
+ok
+6
+actual
+1
+T
+21
+default without value
+27
+{{ y|default('fallback') }}
+2
+{}
+8
+fallback
+2
+ok
+8
+fallback
+1
+T
+34
+default (d alias) with falsy value
+28
+{{ ''|d('fallback', true) }}
+2
+{}
+8
+fallback
+2
+ok
+8
+fallback
+1
+T
+24
+tojson ensure_ascii=true
+36
+{{ data|tojson(ensure_ascii=true) }}
+14
+{"data":"✓"}
+8
+"\u2713"
+2
+ok
+8
+"\u2713"
+1
+T
+38
+tojson ensure_ascii=true nested object
+36
+{{ data|tojson(ensure_ascii=true) }}
+56
+{"data":{"text":"✓","items":["é",{"snowman":"☃"}]}}
+62
+{"text": "\u2713", "items": ["\u00e9", {"snowman": "\u2603"}]}
+2
+ok
+62
+{"text": "\u2713", "items": ["\u00e9", {"snowman": "\u2603"}]}
+1
+T
+33
+tojson ensure_ascii=true indent=2
+46
+{{ data|tojson(ensure_ascii=true, indent=2) }}
+48
+{"data":{"text":"✓","nested":{"accent":"é"}}}
+64
+{
+  "text": "\u2713",
+  "nested": {
+    "accent": "\u00e9"
+  }
+}
+2
+ok
+64
+{
+  "text": "\u2713",
+  "nested": {
+    "accent": "\u00e9"
+  }
+}
+1
+T
+51
+tojson ensure_ascii=true preserves existing escapes
+36
+{{ data|tojson(ensure_ascii=true) }}
+39
+{"data":{"emoji":"😀","line":"a\nb"}}
+41
+{"emoji": "\ud83d\ude00", "line": "a\nb"}
+2
+ok
+41
+{"emoji": "\ud83d\ude00", "line": "a\nb"}
+1
+T
+21
+tojson sort_keys=true
+33
+{{ data|tojson(sort_keys=true) }}
+22
+{"data":{"b":2,"a":1}}
+16
+{"a": 1, "b": 2}
+4
+skip
+53
+NotImplemented: tojson sort_keys=true not implemented
+1
+T
+6
+tojson
+17
+{{ data|tojson }}
+26
+{"data":{"a":1,"b":[1,2]}}
+21
+{"a": 1, "b": [1, 2]}
+2
+ok
+21
+{"a": 1, "b": [1, 2]}
+1
+T
+15
+tojson indent=4
+27
+{{ data|tojson(indent=4) }}
+26
+{"data":{"a":1,"b":[1,2]}}
+53
+{
+    "a": 1,
+    "b": [
+        1,
+        2
+    ]
+}
+2
+ok
+53
+{
+    "a": 1,
+    "b": [
+        1,
+        2
+    ]
+}
+1
+T
+27
+tojson separators=(',',':')
+39
+{{ data|tojson(separators=(',',':')) }}
+26
+{"data":{"a":1,"b":[1,2]}}
+17
+{"a":1,"b":[1,2]}
+2
+ok
+17
+{"a":1,"b":[1,2]}
+1
+T
+37
+tojson separators=(',',': ') indent=2
+50
+{{ data|tojson(separators=(',',': '), indent=2) }}
+26
+{"data":{"a":1,"b":[1,2]}}
+39
+{
+  "a": 1,
+  "b": [
+    1,
+    2
+  ]
+}
+2
+ok
+39
+{
+  "a": 1,
+  "b": [
+    1,
+    2
+  ]
+}
+1
+T
+6
+indent
+20
+{{ data|indent(2) }}
+19
+{"data":"foo\nbar"}
+9
+foo
+  bar
+2
+ok
+9
+foo
+  bar
+1
+T
+17
+indent first only
+37
+{{ data|indent(width=3,first=true) }}
+19
+{"data":"foo\nbar"}
+13
+   foo
+   bar
+2
+ok
+13
+   foo
+   bar
+1
+T
+33
+indent blank lines and first line
+48
+{{ data|indent(width=5,blank=true,first=true) }}
+21
+{"data":"foo\n\nbar"}
+23
+     foo
+     
+     bar
+2
+ok
+23
+     foo
+     
+     bar
+1
+T
+25
+indent with default width
+19
+{{ data|indent() }}
+19
+{"data":"foo\nbar"}
+11
+foo
+    bar
+2
+ok
+11
+foo
+    bar
+1
+T
+22
+indent with no newline
+17
+{{ data|indent }}
+14
+{"data":"foo"}
+3
+foo
+2
+ok
+3
+foo
+1
+T
+28
+indent with trailing newline
+29
+{{ data|indent(blank=true) }}
+16
+{"data":"foo\n"}
+8
+foo
+    
+2
+ok
+8
+foo
+    
+1
+T
+18
+indent with string
+31
+{{ data|indent(width='>>>>') }}
+19
+{"data":"foo\nbar"}
+11
+foo
+>>>>bar
+2
+ok
+11
+foo
+>>>>bar
+1
+T
+15
+chained filters
+28
+{{ '  HELLO  '|trim|lower }}
+2
+{}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+33
+int filter on integer is identity
+15
+{{ value|int }}
+11
+{"value":7}
+1
+7
+2
+ok
+1
+7
+1
+T
+14
+none to string
+14
+{{ x|string }}
+10
+{"x":null}
+4
+None
+2
+ok
+4
+None
+1
+E
+37
+tojson of a list that contains itself
+63
+{% set arr = [] %}{% set _ = arr.append(arr) %}{{ arr|tojson }}
+0
+
+41
+value is nested more than 128 levels deep
+5
+error
+229
+
+------------
+While executing FilterExpression at line 1, column 54 in source:
+...[] %}{% set _ = arr.append(arr) %}{{ arr|tojson }}...
+                                           ^
+Error: value is nested more than 128 levels deep
+1
+T
+7
+integer
+8
+{{ 42 }}
+2
+{}
+2
+42
+2
+ok
+2
+42
+1
+T
+5
+float
+10
+{{ 3.14 }}
+2
+{}
+4
+3.14
+2
+ok
+4
+3.14
+1
+T
+6
+string
+13
+{{ 'hello' }}
+2
+{}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+12
+boolean true
+10
+{{ true }}
+2
+{}
+4
+True
+2
+ok
+4
+True
+1
+T
+13
+boolean false
+11
+{{ false }}
+2
+{}
+5
+False
+2
+ok
+5
+False
+1
+T
+4
+none
+33
+{% if x is none %}null{% endif %}
+10
+{"x":null}
+4
+null
+2
+ok
+4
+null
+1
+T
+12
+list literal
+43
+{% for i in [1, 2, 3] %}{{ i }}{% endfor %}
+2
+{}
+3
+123
+2
+ok
+3
+123
+1
+T
+12
+dict literal
+31
+{% set d = {'a': 1} %}{{ d.a }}
+2
+{}
+1
+1
+2
+ok
+1
+1
+1
+T
+11
+integer|abs
+15
+{{ -42 | abs }}
+2
+{}
+2
+42
+2
+ok
+2
+42
+1
+T
+13
+integer|float
+16
+{{ 42 | float }}
+2
+{}
+4
+42.0
+2
+ok
+4
+42.0
+1
+T
+14
+integer|tojson
+17
+{{ 42 | tojson }}
+2
+{}
+2
+42
+2
+ok
+2
+42
+1
+T
+9
+float|abs
+17
+{{ -3.14 | abs }}
+2
+{}
+4
+3.14
+2
+ok
+4
+3.14
+1
+T
+9
+float|int
+16
+{{ 3.14 | int }}
+2
+{}
+1
+3
+2
+ok
+1
+3
+1
+T
+12
+float|tojson
+19
+{{ 3.14 | tojson }}
+2
+{}
+4
+3.14
+2
+ok
+4
+3.14
+1
+T
+13
+tojson floats
+17
+{{ data|tojson }}
+97
+{"data":[0.1,1.0,100.0,8.3,123456789.0,48.858844,0.30000000000000004,-0.0,5.960464477539063e-08]}
+96
+[0.1, 1.0, 100.0, 8.3, 123456789.0, 48.858844, 0.30000000000000004, -0.0, 5.960464477539063e-08]
+2
+ok
+96
+[0.1, 1.0, 100.0, 8.3, 123456789.0, 48.858844, 0.30000000000000004, -0.0, 5.960464477539063e-08]
+1
+T
+23
+tojson floats, exponent
+17
+{{ data|tojson }}
+89
+{"data":[1e+15,1e+16,0.0001,1e-05,15000000000.0,-2.5e-07,5e-324,1.7976931348623157e+308]}
+100
+[1000000000000000.0, 1e+16, 0.0001, 1e-05, 15000000000.0, -2.5e-07, 5e-324, 1.7976931348623157e+308]
+2
+ok
+100
+[1000000000000000.0, 1e+16, 0.0001, 1e-05, 15000000000.0, -2.5e-07, 5e-324, 1.7976931348623157e+308]
+1
+T
+35
+tojson floats, nested with indent=2
+27
+{{ data|tojson(indent=2) }}
+56
+{"data":{"total":20.0,"items":[{"price":9.99,"qty":2}]}}
+85
+{
+  "total": 20.0,
+  "items": [
+    {
+      "price": 9.99,
+      "qty": 2
+    }
+  ]
+}
+2
+ok
+85
+{
+  "total": 20.0,
+  "items": [
+    {
+      "price": 9.99,
+      "qty": 2
+    }
+  ]
+}
+1
+T
+12
+float|string
+51
+{{ a|string }} {{ b|string }} {{ (b * 10)|string }}
+20
+{"a":1.0,"b":1e+308}
+14
+1.0 1e+308 inf
+2
+ok
+14
+1.0 1e+308 inf
+1
+T
+11
+nan and inf
+127
+{{ [p|float, n|float, q|float]|tojson }} {{ {p|float: 1}|tojson }} {{ p|float|string }} {{ n|float|string }} {{ q|float|safe }}
+32
+{"p":"inf","n":"-inf","q":"nan"}
+55
+[Infinity, -Infinity, NaN] {"Infinity": 1} inf -inf nan
+2
+ok
+55
+[Infinity, -Infinity, NaN] {"Infinity": 1} inf -inf nan
+1
+T
+13
+string|tojson
+22
+{{ 'hello' | tojson }}
+2
+{}
+7
+"hello"
+2
+ok
+7
+"hello"
+1
+T
+11
+boolean|int
+16
+{{ true | int }}
+2
+{}
+1
+1
+2
+ok
+1
+1
+1
+T
+13
+boolean|float
+18
+{{ true | float }}
+2
+{}
+3
+1.0
+2
+ok
+3
+1.0
+1
+T
+14
+boolean|tojson
+19
+{{ true | tojson }}
+2
+{}
+4
+true
+2
+ok
+4
+true
+1
+T
+31
+remove NUL from message content
+43
+{{ message.content | replace("\x00", "") }}
+46
+{"message":{"content":"\u0000a\u0000b\u0000"}}
+2
+ab
+2
+ok
+2
+ab
+1
+T
+35
+non-ASCII hex escape produces UTF-8
+12
+{{ '\xE9' }}
+2
+{}
+2
+é
+2
+ok
+2
+é
+1
+T
+30
+consume exactly two hex digits
+13
+{{ '\x414' }}
+2
+{}
+2
+A4
+2
+ok
+2
+A4
+1
+T
+34
+escaped backslashes remain literal
+13
+{{ '\\xE9' }}
+2
+{}
+4
+\xE9
+2
+ok
+4
+\xE9
+1
+L
+0
+
+10
+{{ '\x' }}
+0
+
+0
+
+5
+error
+61
+lexer: invalid hexadecimal escape
+...{{ '\x' }}...
+         ^
+1
+L
+0
+
+11
+{{ '\x0' }}
+0
+
+0
+
+5
+error
+62
+lexer: invalid hexadecimal escape
+...{{ '\x0' }}...
+         ^
+1
+L
+0
+
+12
+{{ '\xG1' }}
+0
+
+0
+
+5
+error
+63
+lexer: invalid hexadecimal escape
+...{{ '\xG1' }}...
+         ^
+1
+L
+0
+
+12
+{{ '\x1G' }}
+0
+
+0
+
+5
+error
+63
+lexer: invalid hexadecimal escape
+...{{ '\x1G' }}...
+         ^
+1
+L
+0
+
+6
+{{ '\x
+0
+
+0
+
+5
+error
+60
+lexer: incomplete hexadecimal escape
+...{{ '\x...
+         ^
+1
+L
+0
+
+7
+{{ '\x0
+0
+
+0
+
+5
+error
+61
+lexer: incomplete hexadecimal escape
+...{{ '\x0...
+         ^
+1
+T
+14
+inline comment
+24
+before{# comment #}after
+2
+{}
+11
+beforeafter
+2
+ok
+11
+beforeafter
+1
+T
+20
+comment ignores code
+45
+{% set x = 1 %}{# {% set x = 999 %} #}{{ x }}
+2
+{}
+1
+1
+2
+ok
+1
+1
+1
+T
+12
+simple macro
+73
+{% macro greet(name) %}Hello {{ name }}{% endmacro %}{{ greet('World') }}
+2
+{}
+11
+Hello World
+2
+ok
+11
+Hello World
+1
+T
+17
+macro default arg
+71
+{% macro greet(name='Guest') %}Hi {{ name }}{% endmacro %}{{ greet() }}
+2
+{}
+8
+Hi Guest
+2
+ok
+8
+Hi Guest
+1
+T
+18
+macro kwargs input
+111
+{% macro my_func(a, b=False) %}{% if b %}{{ a }}{% else %}nope{% endif %}{% endmacro %}{{ my_func(1, b=True) }}
+2
+{}
+1
+1
+2
+ok
+1
+1
+1
+T
+24
+macro with multiple args
+129
+{% macro add(a, b, c=0) %}{{ a + b + c }}{% endmacro %}{{ add(1, 2) }},{{ add(1, 2, 3) }},{{ add(1, b=10) }},{{ add(1, 2, c=5) }}
+2
+{}
+8
+3,6,11,8
+2
+ok
+8
+3,6,11,8
+1
+T
+35
+macro with kwarg out-of-order input
+192
+{% macro greet(first, last, greeting='Hello') %}{{ greeting }}, {{ first }} {{ last }}{% endmacro %}{{ greet(last='Smith', first='John') }},{{ greet(last='Doe', greeting='Hi', first='Jane') }}
+2
+{}
+30
+Hello, John Smith,Hi, Jane Doe
+2
+ok
+30
+Hello, John Smith,Hi, Jane Doe
+1
+T
+17
+macro with caller
+542
+{%- macro nest_dict(o, i, ff='') %}
+  {{- caller(ff) }}
+  {%- for k, v in o|items %}
+    {{- i + k + ': ' }}
+    {%- if v is mapping %}
+      {{- '{' }}
+      {% call(f) nest_dict(v, i + '    ') %}
+        {{- 'fail' if ff is undefined }}
+      {%- endcall %}
+      {{- i + '}' }}
+    {% else %}
+      {{- v|string }}
+    {% endif %}
+  {%- endfor %}
+{%- endmacro %}
+{%- call(f) nest_dict({'root1': 1, 'root2': {'nest1': 1, 'nest2': {'nest3': 2}}}, '    ', 'Dict') %}
+  {{- 'fail' if ff is defined }}
+  {{- f + ' {' }}
+{% endcall %}
+{{- '}' }}
+2
+{}
+105
+Dict {
+    root1: 1
+    root2: {
+        nest1: 1
+        nest2: {
+            nest3: 2
+        }
+    }
+}
+2
+ok
+105
+Dict {
+    root1: 1
+    root2: {
+        nest1: 1
+        nest2: {
+            nest3: 2
+        }
+    }
+}
+1
+T
+15
+macro recursion
+98
+{% macro f(n) %}{% if n < 100 %}{{ f(n + 1) }}{% else %}{{ n }}{% endif %}{% endmacro %}{{ f(0) }}
+2
+{}
+3
+100
+2
+ok
+3
+100
+1
+E
+23
+endless macro recursion
+54
+{% macro f(n) %}{{ f(n + 1) }}{% endmacro %}{{ f(0) }}
+0
+
+48
+macro calls are nested more than 128 levels deep
+5
+error
+218
+
+------------
+While executing CallExpression at line 1, column 21 in source:
+...{% macro f(n) %}{{ f(n + 1) }}{% endmacro %}{{ f(0) }}...
+                       ^
+Error: macro calls are nested more than 128 levels deep
+1
+T
+17
+namespace counter
+115
+{% set ns = namespace(count=0) %}{% for i in range(3) %}{% set ns.count = ns.count + 1 %}{% endfor %}{{ ns.count }}
+2
+{}
+1
+3
+2
+ok
+1
+3
+1
+T
+44
+namespace attribute named like a dict method
+158
+{% set ns = namespace(items=[]) %}{{ 'yes' if ns.items else 'no' }}{% set ns.items = ns.items + [1] %}{{ ns.items | length }}{{ 'yes' if ns.items else 'no' }}
+2
+{}
+6
+no1yes
+2
+ok
+6
+no1yes
+1
+T
+22
+dict keeps its methods
+81
+{% set d = dict(items=1) %}{% for k, v in d.items() %}{{ k }}={{ v }}{% endfor %}
+2
+{}
+7
+items=1
+2
+ok
+7
+items=1
+1
+T
+6
+is odd
+31
+{% if 3 is odd %}yes{% endif %}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+7
+is even
+32
+{% if 4 is even %}yes{% endif %}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+8
+is false
+25
+{{ 'yes' if x is false }}
+11
+{"x":false}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+7
+is true
+24
+{{ 'yes' if x is true }}
+10
+{"x":true}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+15
+string is false
+35
+{{ 'yes' if x is false else 'no' }}
+8
+{"x":""}
+2
+no
+2
+ok
+2
+no
+1
+T
+14
+is divisibleby
+34
+{{ 'yes' if x is divisibleby(2) }}
+7
+{"x":2}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+5
+is eq
+25
+{{ 'yes' if 3 is eq(3) }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+14
+is not equalto
+33
+{{ 'yes' if 3 is not equalto 4 }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+5
+is ge
+25
+{{ 'yes' if 3 is ge(3) }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+5
+is gt
+24
+{{ 'yes' if 3 is gt 2 }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+14
+is greaterthan
+34
+{{ 'yes' if 3 is greaterthan(2) }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+5
+is lt
+24
+{{ 'yes' if 2 is lt 3 }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+11
+is lessthan
+31
+{{ 'yes' if 2 is lessthan(3) }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+5
+is ne
+25
+{{ 'yes' if 2 is ne(3) }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+12
+is lt and gt
+38
+{{ 'yes' if x is lt 3 and x is gt 1 }}
+7
+{"x":2}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+8
+is lower
+35
+{{ 'yes' if 'lowercase' is lower }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+8
+is upper
+35
+{{ 'yes' if 'UPPERCASE' is upper }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+17
+is sameas boolean
+33
+{{ 'yes' if x is sameas(false) }}
+11
+{"x":false}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+17
+is sameas integer
+29
+{{ 'yes' if x is sameas(1) }}
+7
+{"x":1}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+16
+is sameas object
+29
+{{ 'yes' if x is sameas(x) }}
+17
+{"x":{"y":false}}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+20
+is sameas ref object
+75
+{% set y = x.y %}{{ 'yes' if x.y is sameas(y) and x.y is not sameas(x.z) }}
+31
+{"x":{"y":{"z":1},"z":{"z":1}}}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+19
+is sameas undefined
+39
+{{ 'yes' if x is sameas(x) else 'no' }}
+2
+{}
+2
+no
+2
+ok
+2
+no
+1
+T
+10
+is boolean
+27
+{{ 'yes' if x is boolean }}
+10
+{"x":true}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+11
+is callable
+35
+{{ 'yes' if ''.strip is callable }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+10
+is escaped
+36
+{{ 'yes' if 'foo'|safe is escaped }}
+2
+{}
+3
+yes
+4
+skip
+44
+NotImplemented: escaped test not implemented
+1
+T
+9
+is filter
+31
+{{ 'yes' if 'trim' is filter }}
+2
+{}
+3
+yes
+4
+skip
+43
+NotImplemented: filter test not implemented
+1
+T
+8
+is float
+25
+{{ 'yes' if x is float }}
+9
+{"x":1.1}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+10
+is integer
+27
+{{ 'yes' if x is integer }}
+7
+{"x":1}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+19
+is integer or float
+55
+{{ 'yes' if x.y is integer or x.y is float else 'no' }}
+15
+{"x":{"y":1.1}}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+11
+is sequence
+28
+{{ 'yes' if x is sequence }}
+13
+{"x":[1,2,3]}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+7
+is test
+33
+{{ 'yes' if 'sequence' is test }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+12
+is undefined
+29
+{{ 'yes' if x is undefined }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+7
+is none
+32
+{% if x is none %}yes{% endif %}
+10
+{"x":null}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+9
+is string
+34
+{% if x is string %}yes{% endif %}
+13
+{"x":"hello"}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+9
+is number
+34
+{% if x is number %}yes{% endif %}
+8
+{"x":42}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+11
+is iterable
+36
+{% if x is iterable %}yes{% endif %}
+13
+{"x":[1,2,3]}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+10
+is mapping
+35
+{% if x is mapping %}yes{% endif %}
+13
+{"x":{"a":1}}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+21
+undefined is sequence
+28
+{{ 'yes' if x is sequence }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+21
+undefined is iterable
+28
+{{ 'yes' if x is iterable }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+19
+is in (array, true)
+33
+{{ 'yes' if 2 is in([1, 2, 3]) }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+20
+is in (array, false)
+43
+{{ 'yes' if 5 is in([1, 2, 3]) else 'no' }}
+2
+{}
+2
+no
+2
+ok
+2
+no
+1
+T
+14
+is in (string)
+34
+{{ 'yes' if 'bc' is in('abcde') }}
+2
+{}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+19
+is in (object keys)
+29
+{{ 'yes' if 'a' is in(obj) }}
+21
+{"obj":{"a":1,"b":2}}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+19
+reject with in test
+45
+{{ items | reject('in', skip) | join(', ') }}
+44
+{"items":["a","b","c","d"],"skip":["b","d"]}
+4
+a, c
+2
+ok
+4
+a, c
+1
+T
+19
+select with in test
+45
+{{ items | select('in', keep) | join(', ') }}
+44
+{"items":["a","b","c","d"],"keep":["b","c"]}
+4
+b, c
+2
+ok
+4
+b, c
+1
+T
+14
+string.upper()
+15
+{{ s.upper() }}
+13
+{"s":"hello"}
+5
+HELLO
+2
+ok
+5
+HELLO
+1
+T
+14
+string.lower()
+15
+{{ s.lower() }}
+13
+{"s":"HELLO"}
+5
+hello
+2
+ok
+5
+hello
+1
+T
+14
+string.strip()
+17
+[{{ s.strip() }}]
+17
+{"s":"  hello  "}
+7
+[hello]
+2
+ok
+7
+[hello]
+1
+T
+15
+string.lstrip()
+18
+[{{ s.lstrip() }}]
+16
+{"s":"   hello"}
+7
+[hello]
+2
+ok
+7
+[hello]
+1
+T
+15
+string.rstrip()
+18
+[{{ s.rstrip() }}]
+16
+{"s":"hello   "}
+7
+[hello]
+2
+ok
+7
+[hello]
+1
+T
+14
+string.title()
+15
+{{ s.title() }}
+19
+{"s":"hello world"}
+11
+Hello World
+2
+ok
+11
+Hello World
+1
+T
+19
+string.capitalize()
+20
+{{ s.capitalize() }}
+19
+{"s":"heLlo World"}
+11
+Hello world
+2
+ok
+11
+Hello world
+1
+T
+24
+string.startswith() true
+42
+{% if s.startswith('hel') %}yes{% endif %}
+13
+{"s":"hello"}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+25
+string.startswith() false
+54
+{% if s.startswith('xyz') %}yes{% else %}no{% endif %}
+13
+{"s":"hello"}
+2
+no
+2
+ok
+2
+no
+1
+T
+22
+string.endswith() true
+39
+{% if s.endswith('lo') %}yes{% endif %}
+13
+{"s":"hello"}
+3
+yes
+2
+ok
+3
+yes
+1
+T
+23
+string.endswith() false
+52
+{% if s.endswith('xyz') %}yes{% else %}no{% endif %}
+13
+{"s":"hello"}
+2
+no
+2
+ok
+2
+no
+1
+T
+23
+string.split() with sep
+28
+{{ s.split(',')|join('-') }}
+13
+{"s":"a,b,c"}
+5
+a-b-c
+2
+ok
+5
+a-b-c
+1
+T
+28
+string.split() with maxsplit
+31
+{{ s.split(',', 1)|join('-') }}
+13
+{"s":"a,b,c"}
+5
+a-b,c
+2
+ok
+5
+a-b,c
+1
+T
+24
+string.rsplit() with sep
+29
+{{ s.rsplit(',')|join('-') }}
+13
+{"s":"a,b,c"}
+5
+a-b-c
+2
+ok
+5
+a-b-c
+1
+T
+29
+string.rsplit() with maxsplit
+32
+{{ s.rsplit(',', 1)|join('-') }}
+13
+{"s":"a,b,c"}
+5
+a,b-c
+2
+ok
+5
+a,b-c
+1
+T
+22
+string.replace() basic
+33
+{{ s.replace('world', 'jinja') }}
+19
+{"s":"hello world"}
+11
+hello jinja
+2
+ok
+11
+hello jinja
+1
+T
+22
+string.replace() empty
+24
+{{ s.replace('', '.') }}
+19
+{"s":"hello world"}
+23
+.h.e.l.l.o. .w.o.r.l.d.
+2
+ok
+23
+.h.e.l.l.o. .w.o.r.l.d.
+1
+T
+27
+string.replace() with count
+28
+{{ s.replace('a', 'X', 2) }}
+14
+{"s":"banana"}
+6
+bXnXna
+4
+skip
+66
+NotImplemented: String replace with count argument not implemented
+1
+T
+30
+string.format() auto numbering
+29
+{{ '<{}|{}>'.format(s, 42) }}
+13
+{"s":"hello"}
+10
+<hello|42>
+2
+ok
+10
+<hello|42>
+1
+T
+32
+string.format() manual numbering
+36
+{{ '{1}-{0}-{1}'.format('a', 'b') }}
+2
+{}
+5
+b-a-b
+4
+skip
+63
+NotImplemented: format() only supports simple '{}' placeholders
+1
+T
+28
+string.format() named fields
+49
+{{ '{name} is {age}'.format(name='Bob', age=7) }}
+2
+{}
+8
+Bob is 7
+4
+skip
+63
+NotImplemented: format() only supports simple '{}' placeholders
+1
+T
+30
+string.format() escaped braces
+35
+{{ '{{}} {} {{x}}'.format('mid') }}
+2
+{}
+10
+{} mid {x}
+4
+skip
+63
+NotImplemented: format() only supports simple '{}' placeholders
+1
+T
+25
+string.format() no fields
+22
+{{ 'plain'.format() }}
+2
+{}
+5
+plain
+2
+ok
+5
+plain
+1
+T
+20
+undefined|capitalize
+20
+{{ arr|capitalize }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+15
+undefined|title
+15
+{{ arr|title }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+18
+undefined|truncate
+21
+{{ arr|truncate(9) }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+15
+undefined|upper
+15
+{{ arr|upper }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+15
+undefined|lower
+15
+{{ arr|lower }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+17
+undefined|replace
+27
+{{ arr|replace('a', 'b') }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+14
+undefined|trim
+14
+{{ arr|trim }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+19
+undefined|wordcount
+19
+{{ arr|wordcount }}
+2
+{}
+1
+0
+2
+ok
+1
+0
+1
+T
+29
+array|selectattr by attribute
+72
+{% for item in items|selectattr('active') %}{{ item.name }} {% endfor %}
+93
+{"items":[{"name":"a","active":true},{"name":"b","active":false},{"name":"c","active":true}]}
+4
+a c 
+2
+ok
+4
+a c 
+1
+T
+30
+array|selectattr with operator
+85
+{% for item in items|selectattr('value', 'equalto', 5) %}{{ item.name }} {% endfor %}
+80
+{"items":[{"name":"a","value":3},{"name":"b","value":5},{"name":"c","value":5}]}
+4
+b c 
+2
+ok
+4
+b c 
+1
+T
+43
+array|selectattr numeric-like with operator
+73
+{% for item in items|selectattr('0', 'gt', 1) %}{{ item.1 }} {% endfor %}
+35
+{"items":[[3,"z"],[1,"x"],[2,"y"]]}
+4
+z y 
+2
+ok
+4
+z y 
+1
+T
+22
+array|select with test
+35
+{{ items|select('odd')|join(',') }}
+21
+{"items":[1,2,3,4,5]}
+5
+1,3,5
+2
+ok
+5
+1,3,5
+1
+T
+22
+array|reject with test
+35
+{{ items|reject('odd')|join(',') }}
+21
+{"items":[1,2,3,4,5]}
+3
+2,4
+2
+ok
+3
+2,4
+1
+T
+25
+array|select without test
+28
+{{ items|select|join(',') }}
+33
+{"items":[0,1,"","a",null,false]}
+3
+1,a
+2
+ok
+3
+1,a
+1
+T
+26
+array|selectattr with test
+75
+{% for p in items|selectattr('type', 'defined') %}{{ p.type }} {% endfor %}
+61
+{"items":[{"type":"string"},{"enum":[1]},{"type":"integer"}]}
+15
+string integer 
+2
+ok
+15
+string integer 
+1
+T
+26
+array|rejectattr with test
+53
+{{ items|rejectattr('type', 'defined')|list|length }}
+61
+{"items":[{"type":"string"},{"enum":[1]},{"type":"integer"}]}
+1
+1
+2
+ok
+1
+1
+1
+T
+44
+array|selectattr with attr named like a test
+70
+{% for p in items|selectattr('odd', 'even') %}{{ p.odd }} {% endfor %}
+41
+{"items":[{"odd":1},{"odd":2},{"odd":4}]}
+4
+2 4 
+2
+ok
+4
+2 4 
+1
+T
+12
+array|tojson
+16
+{{ arr|tojson }}
+15
+{"arr":[1,2,3]}
+9
+[1, 2, 3]
+2
+ok
+9
+[1, 2, 3]
+1
+T
+25
+array|tojson with strings
+16
+{{ arr|tojson }}
+21
+{"arr":["a","b","c"]}
+15
+["a", "b", "c"]
+2
+ok
+15
+["a", "b", "c"]
+1
+T
+19
+array|tojson nested
+16
+{{ arr|tojson }}
+21
+{"arr":[[1,2],[3,4]]}
+16
+[[1, 2], [3, 4]]
+2
+ok
+16
+[[1, 2], [3, 4]]
+1
+T
+10
+array|last
+14
+{{ arr|last }}
+18
+{"arr":[10,20,30]}
+2
+30
+2
+ok
+2
+30
+1
+T
+25
+array|last single element
+14
+{{ arr|last }}
+12
+{"arr":[42]}
+2
+42
+2
+ok
+2
+42
+1
+T
+25
+array|join with separator
+20
+{{ arr|join(', ') }}
+21
+{"arr":["a","b","c"]}
+7
+a, b, c
+2
+ok
+7
+a, b, c
+1
+T
+32
+array|join with custom separator
+21
+{{ arr|join(' | ') }}
+15
+{"arr":[1,2,3]}
+9
+1 | 2 | 3
+2
+ok
+9
+1 | 2 | 3
+1
+T
+28
+array|join default separator
+14
+{{ arr|join }}
+21
+{"arr":["x","y","z"]}
+3
+xyz
+2
+ok
+3
+xyz
+1
+T
+20
+array|join attribute
+31
+{{ arr|join(attribute='age') }}
+72
+{"arr":[{"name":"a","age":1},{"name":"b","age":2},{"name":"c","age":3}]}
+3
+123
+2
+ok
+3
+123
+1
+T
+28
+array|join numeric attribute
+28
+{{ arr|join(attribute=-1) }}
+21
+{"arr":[[1],[2],[3]]}
+3
+123
+2
+ok
+3
+123
+1
+T
+33
+array|join numeric-like attribute
+29
+{{ arr|join(attribute='0') }}
+21
+{"arr":[[1],[2],[3]]}
+3
+123
+2
+ok
+3
+123
+1
+T
+16
+array.pop() last
+35
+{{ arr.pop() }}-{{ arr|join(',') }}
+21
+{"arr":["a","b","c"]}
+5
+c-a,b
+2
+ok
+5
+c-a,b
+1
+T
+22
+array.pop() with index
+36
+{{ arr.pop(0) }}-{{ arr|join(',') }}
+21
+{"arr":["a","b","c"]}
+5
+a-b,c
+2
+ok
+5
+a-b,c
+1
+T
+14
+array.append()
+48
+{% set _ = arr.append('d') %}{{ arr|join(',') }}
+21
+{"arr":["a","b","c"]}
+7
+a,b,c,d
+2
+ok
+7
+a,b,c,d
+1
+T
+24
+array|map with attribute
+59
+{% for v in arr|map(attribute='age') %}{{ v }} {% endfor %}
+72
+{"arr":[{"name":"a","age":1},{"name":"b","age":2},{"name":"c","age":3}]}
+6
+1 2 3 
+2
+ok
+6
+1 2 3 
+1
+T
+32
+array|map with attribute default
+70
+{% for v in arr|map(attribute='age', default=3) %}{{ v }} {% endfor %}
+64
+{"arr":[{"name":"a","age":1},{"name":"b","age":2},{"name":"c"}]}
+6
+1 2 3 
+2
+ok
+6
+1 2 3 
+1
+T
+35
+array|map without attribute default
+59
+{% for v in arr|map(attribute='age') %}{{ v }} {% endfor %}
+64
+{"arr":[{"name":"a","age":1},{"name":"b","age":2},{"name":"c"}]}
+5
+1 2  
+2
+ok
+5
+1 2  
+1
+T
+32
+array|map with numeric attribute
+55
+{% for v in arr|map(attribute=0) %}{{ v }} {% endfor %}
+36
+{"arr":[[10,"x"],[20,"y"],[30,"z"]]}
+9
+10 20 30 
+2
+ok
+9
+10 20 30 
+1
+T
+37
+array|map with numeric-like attribute
+57
+{% for v in arr|map(attribute='1') %}{{ v }} {% endfor %}
+36
+{"arr":[[10,"x"],[20,"y"],[30,"z"]]}
+6
+x y z 
+2
+ok
+6
+x y z 
+1
+T
+33
+array|map with negative attribute
+56
+{% for v in arr|map(attribute=-1) %}{{ v }} {% endfor %}
+36
+{"arr":[[10,"x"],[20,"y"],[30,"z"]]}
+6
+x y z 
+2
+ok
+6
+x y z 
+1
+T
+21
+array|map with filter
+24
+{{ arr|map('int')|sum }}
+21
+{"arr":["1","2","3"]}
+1
+6
+4
+skip
+49
+NotImplemented: Array sum builtin not implemented
+1
+T
+9
+array|min
+44
+{{ [tool_calls_count, tool_sep_count]|min }}
+41
+{"tool_calls_count":2,"tool_sep_count":1}
+1
+1
+2
+ok
+1
+1
+1
+T
+9
+array|max
+44
+{{ [tool_calls_count, tool_sep_count]|max }}
+41
+{"tool_calls_count":2,"tool_sep_count":1}
+1
+2
+2
+ok
+1
+2
+1
+T
+19
+array|min attribute
+37
+{{ items|min(attribute='x')|tojson }}
+27
+{"items":[{"x":2},{"x":1}]}
+8
+{"x": 1}
+2
+ok
+8
+{"x": 1}
+1
+T
+19
+array|max attribute
+37
+{{ items|max(attribute='x')|tojson }}
+27
+{"items":[{"x":2},{"x":1}]}
+8
+{"x": 2}
+2
+ok
+8
+{"x": 2}
+1
+T
+38
+array|map with filter int materialized
+35
+{{ arr|map('int')|list|join(',') }}
+21
+{"arr":["1","2","3"]}
+5
+1,2,3
+2
+ok
+5
+1,2,3
+1
+T
+49
+array|map with filter upper for schema union type
+44
+{{ item_value|map('upper')|list|join(',') }}
+32
+{"item_value":["string","null"]}
+11
+STRING,NULL
+2
+ok
+11
+STRING,NULL
+1
+E
+46
+array|map rejects unsupported filter attribute
+66
+{{ [{'name': 'alice'}]|map('upper', attribute='name')|join(',') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+245
+
+------------
+While executing FilterExpression at line 1, column 23 in source:
+...{{ [{'name': 'alice'}]|map('upper', attribute='name')|join(','...
+                         ^
+Error: Function 'upper' got an unexpected keyword argument 'attribute'
+1
+E
+51
+array|map rejects unknown keyword on undefined item
+56
+{{ [missing]|map('lower', attribute='name')|join(',') }}
+0
+
+39
+unexpected keyword argument 'attribute'
+5
+error
+225
+
+------------
+While executing FilterExpression at line 1, column 13 in source:
+...{{ [missing]|map('lower', attribute='name')|join(','...
+               ^
+Error: Function 'lower' got an unexpected keyword argument 'attribute'
+1
+T
+37
+array|map attribute then filter upper
+54
+{{ arr|map(attribute='name')|map('upper')|join(',') }}
+41
+{"arr":[{"name":"alice"},{"name":"bob"}]}
+9
+ALICE,BOB
+2
+ok
+9
+ALICE,BOB
+1
+T
+31
+array|map with filter arguments
+44
+{{ arr|map('replace', 'a', 'o')|join(',') }}
+21
+{"arr":["cat","bat"]}
+7
+cot,bot
+2
+ok
+7
+cot,bot
+1
+T
+39
+array|map with filter keyword arguments
+54
+{{ arr|map('join', '-', attribute='name')|join(';') }}
+52
+{"arr":[[{"name":"a"},{"name":"b"}],[{"name":"c"}]]}
+5
+a-b;c
+2
+ok
+5
+a-b;c
+1
+T
+26
+array|map with count alias
+32
+{{ arr|map('count')|join(',') }}
+23
+{"arr":["cat","hello"]}
+3
+3,5
+2
+ok
+3
+3,5
+1
+T
+37
+array|map with join keyword arguments
+85
+{{ [[{'name': 'a'}, {'name': 'b'}]]|map('join', d='-', attribute='name')|join(';') }}
+2
+{}
+3
+a-b
+2
+ok
+3
+a-b
+1
+E
+42
+join rejects unknown keyword on ['a', 'b']
+34
+{{ ['a', 'b']|join(typo='name') }}
+0
+
+34
+unexpected keyword argument 'typo'
+5
+error
+202
+
+------------
+While executing FilterExpression at line 1, column 14 in source:
+...{{ ['a', 'b']|join(typo='name') }}...
+                ^
+Error: Function 'join' got an unexpected keyword argument 'typo'
+1
+E
+34
+join rejects unknown keyword on []
+26
+{{ []|join(typo='name') }}
+0
+
+34
+unexpected keyword argument 'typo'
+5
+error
+185
+
+------------
+While executing FilterExpression at line 1, column 6 in source:
+...{{ []|join(typo='name') }}...
+        ^
+Error: Function 'join' got an unexpected keyword argument 'typo'
+1
+E
+39
+join rejects unknown keyword on missing
+31
+{{ missing|join(typo='name') }}
+0
+
+34
+unexpected keyword argument 'typo'
+5
+error
+196
+
+------------
+While executing FilterExpression at line 1, column 11 in source:
+...{{ missing|join(typo='name') }}...
+             ^
+Error: Function 'join' got an unexpected keyword argument 'typo'
+1
+T
+42
+array|map with default alias and arguments
+46
+{{ arr|map('d', 'fallback', true)|join(',') }}
+20
+{"arr":["","value"]}
+14
+fallback,value
+2
+ok
+14
+fallback,value
+1
+T
+16
+undefined|select
+65
+{% for item in items|select('odd') %}{{ item.name }} {% endfor %}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+20
+undefined|selectattr
+72
+{% for item in items|selectattr('active') %}{{ item.name }} {% endfor %}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+16
+undefined|reject
+66
+{% for item in items|reject('even') %}{{ item.name }} {% endfor %}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+20
+undefined|rejectattr
+72
+{% for item in items|rejectattr('active') %}{{ item.name }} {% endfor %}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+14
+undefined|list
+21
+{{ arr|list|string }}
+2
+{}
+2
+[]
+2
+ok
+2
+[]
+1
+T
+16
+undefined|string
+16
+{{ arr|string }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+15
+undefined|first
+15
+{{ arr|first }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+14
+undefined|last
+14
+{{ arr|last }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+16
+undefined|length
+16
+{{ arr|length }}
+2
+{}
+1
+0
+2
+ok
+1
+0
+1
+T
+14
+undefined|join
+14
+{{ arr|join }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+37
+undefined|join with keyword arguments
+39
+{{ arr|join(d='-', attribute='name') }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+14
+undefined|sort
+21
+{{ arr|sort|string }}
+2
+{}
+2
+[]
+2
+ok
+2
+[]
+1
+T
+17
+undefined|reverse
+22
+{{ arr|reverse|join }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+13
+undefined|map
+59
+{% for v in arr|map(attribute='age') %}{{ v }} {% endfor %}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+13
+undefined|min
+13
+{{ arr|min }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+13
+undefined|max
+13
+{{ arr|max }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+16
+undefined|unique
+21
+{{ arr|unique|join }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+13
+undefined|sum
+13
+{{ arr|sum }}
+2
+{}
+1
+0
+2
+ok
+1
+0
+1
+T
+25
+object.get() existing key
+18
+{{ obj.get('a') }}
+21
+{"obj":{"a":1,"b":2}}
+1
+1
+2
+ok
+1
+1
+1
+T
+24
+object.get() missing key
+28
+[{{ obj.get('c') is none }}]
+15
+{"obj":{"a":1}}
+6
+[True]
+2
+ok
+6
+[True]
+1
+T
+37
+object.get() missing key with default
+29
+{{ obj.get('c', 'default') }}
+15
+{"obj":{"a":1}}
+7
+default
+2
+ok
+7
+default
+1
+T
+14
+object.items()
+57
+{% for k, v in obj.items() %}{{ k }}={{ v }} {% endfor %}
+21
+{"obj":{"x":1,"y":2}}
+8
+x=1 y=2 
+2
+ok
+8
+x=1 y=2 
+1
+T
+13
+object.keys()
+45
+{% for k in obj.keys() %}{{ k }} {% endfor %}
+21
+{"obj":{"a":1,"b":2}}
+4
+a b 
+2
+ok
+4
+a b 
+1
+T
+13
+object | list
+61
+{{ (obj | list) == ['b', 'a'] }} {{ obj | list | join(',') }}
+21
+{"obj":{"b":1,"a":2}}
+8
+True b,a
+2
+ok
+8
+True b,a
+1
+T
+15
+object.values()
+47
+{% for v in obj.values() %}{{ v }} {% endfor %}
+21
+{"obj":{"a":1,"b":2}}
+4
+1 2 
+2
+ok
+4
+1 2 
+1
+T
+25
+dictsort ascending by key
+58
+{% for k, v in obj|dictsort %}{{ k }}={{ v }} {% endfor %}
+27
+{"obj":{"z":2,"a":3,"m":1}}
+12
+a=3 m=1 z=2 
+2
+ok
+12
+a=3 m=1 z=2 
+1
+T
+26
+dictsort descending by key
+72
+{% for k, v in obj|dictsort(reverse=true) %}{{ k }}={{ v }} {% endfor %}
+27
+{"obj":{"a":1,"b":2,"c":3}}
+12
+c=3 b=2 a=1 
+2
+ok
+12
+c=3 b=2 a=1 
+1
+T
+17
+dictsort by value
+70
+{% for k, v in obj|dictsort(by='value') %}{{ k }}={{ v }} {% endfor %}
+27
+{"obj":{"a":3,"b":1,"c":2}}
+12
+b=1 c=2 a=3 
+2
+ok
+12
+b=1 c=2 a=3 
+1
+T
+23
+dictsort case sensitive
+79
+{% for k, v in obj|dictsort(case_sensitive=true) %}{{ k }}={{ v }} {% endfor %}
+39
+{"obj":{"a":1,"A":1,"b":2,"B":2,"c":3}}
+20
+A=1 B=2 a=1 b=2 c=3 
+2
+ok
+20
+A=1 B=2 a=1 b=2 c=3 
+1
+T
+13
+object|tojson
+16
+{{ obj|tojson }}
+34
+{"obj":{"name":"test","value":42}}
+29
+{"name": "test", "value": 42}
+2
+ok
+29
+{"name": "test", "value": 42}
+1
+T
+20
+nested object|tojson
+16
+{{ obj|tojson }}
+35
+{"obj":{"outer":{"inner":"value"}}}
+29
+{"outer": {"inner": "value"}}
+2
+ok
+29
+{"outer": {"inner": "value"}}
+1
+T
+22
+array in object|tojson
+16
+{{ obj|tojson }}
+25
+{"obj":{"items":[1,2,3]}}
+20
+{"items": [1, 2, 3]}
+2
+ok
+20
+{"items": [1, 2, 3]}
+1
+T
+31
+object attribute and key access
+65
+{{ obj.keys()|join(',') }} vs {{ obj['keys'] }} vs {{ obj.test }}
+44
+{"obj":{"keys":"value","test":"attr_value"}}
+32
+keys,test vs value vs attr_value
+2
+ok
+32
+keys,test vs value vs attr_value
+1
+T
+34
+env should not have object methods
+49
+{{ keys is undefined }} {{ obj.keys is defined }}
+17
+{"obj":{"a":"b"}}
+9
+True True
+2
+ok
+9
+True True
+1
+T
+24
+expression as object key
+50
+{% set d = {'ab': 123} %}{{ d['a' + 'b'] == 123 }}
+2
+{}
+4
+True
+2
+ok
+4
+True
+1
+T
+42
+numeric as object key (template: Seed-OSS)
+63
+{% set d = {1: 'a', 2: 'b'} %}{{ d[1] == 'a' and d[2] == 'b' }}
+2
+{}
+4
+True
+2
+ok
+4
+True
+1
+T
+15
+undefined|items
+20
+{{ arr|items|join }}
+2
+{}
+0
+
+2
+ok
+0
+
+1
+T
+14
+dict from dict
+58
+{% set o = dict({'a': 3, 'b': 1, 'c': 2}) %}{{ o|tojson }}
+2
+{}
+24
+{"a": 3, "b": 1, "c": 2}
+2
+ok
+24
+{"a": 3, "b": 1, "c": 2}
+1
+T
+16
+dict from kwargs
+47
+{% set o = dict(a=3, b=1, c=2) %}{{ o|tojson }}
+2
+{}
+24
+{"a": 3, "b": 1, "c": 2}
+2
+ok
+24
+{"a": 3, "b": 1, "c": 2}
+1
+T
+16
+dict from tuples
+54
+{% set o = dict((obj | items | list)) %}{{ o|tojson }}
+27
+{"obj":{"a":3,"b":1,"c":2}}
+24
+{"a": 3, "b": 1, "c": 2}
+2
+ok
+24
+{"a": 3, "b": 1, "c": 2}
+1
+T
+27
+dict from tuples and kwargs
+59
+{% set o = dict((obj | items | list), c=2) %}{{ o|tojson }}
+21
+{"obj":{"a":3,"b":1}}
+24
+{"a": 3, "b": 1, "c": 2}
+2
+ok
+24
+{"a": 3, "b": 1, "c": 2}

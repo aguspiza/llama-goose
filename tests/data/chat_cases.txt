@@ -954,6 +954,21 @@ Who are you<|im_end|>
 <|im_start|>user
 Another question<|im_end|>
 
+292
+<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+Who are you<|im_end|>
+<|im_start|>assistant
+   I am an assistant   <|im_end|>
+<|im_start|>user
+Another question<|im_end|>
+<|im_start|>assistant
+
 77
 mistralai/Mistral-7B-Instruct-v0.2 (NOTE: Old pre-v1 without a system prompt)
 470
@@ -971,6 +986,9 @@ Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[I
 1
 1
 0
+144
+[INST] You are a helpful assistant
+Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
 144
 [INST] You are a helpful assistant
 Hello [/INST]Hi there</s>[INST] Who are you [/INST]   I am an assistant   </s>[INST] Another question [/INST]
@@ -1025,6 +1043,12 @@ You are a helpful assistant
 <</SYS>>
 
 Hello [/INST]Hi there</s><s>[INST] Who are you [/INST]   I am an assistant   </s><s>[INST] Another question [/INST]
+172
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST] Hi there </s><s>[INST] Who are you [/INST]    I am an assistant    </s><s>[INST] Another question [/INST]
 30
 bofenghuang/vigogne-2-70b-chat
 1178
@@ -1061,6 +1085,12 @@ You are a helpful assistant
 <</SYS>>
 
 Hello [/INST]Hi there</s>[INST] Who are you [/INST]I am an assistant</s>[INST] Another question [/INST]
+160
+[INST] <<SYS>>
+You are a helpful assistant
+<</SYS>>
+
+Hello [/INST] Hi there </s>[INST] Who are you [/INST] I am an assistant </s>[INST] Another question [/INST]
 24
 mlabonne/AlphaMonarch-7B
 191
@@ -1132,6 +1162,21 @@ Who are you</s>
 <s>user
 Another question</s>
 
+193
+<s>system
+You are a helpful assistant</s>
+<s>user
+Hello</s>
+<s>assistant
+Hi there</s>
+<s>user
+Who are you</s>
+<s>assistant
+   I am an assistant   </s>
+<s>user
+Another question</s>
+<s>assistant
+
 18
 google/gemma-7b-it
 579
@@ -1202,6 +1247,20 @@ I am an assistant<end_of_turn>
 <start_of_turn>user
 Another question<end_of_turn>
 
+278
+<start_of_turn>user
+You are a helpful assistant
+Hello<end_of_turn>
+<start_of_turn>model
+Hi there<end_of_turn>
+<start_of_turn>user
+Who are you<end_of_turn>
+<start_of_turn>model
+I am an assistant<end_of_turn>
+<start_of_turn>user
+Another question<end_of_turn>
+<start_of_turn>model
+
 26
 OrionStarAI/Orion-14B-Chat
 276
@@ -1253,6 +1312,15 @@ Assistant: </s>Hi there</s>Human: Who are you
 Assistant: </s>   I am an assistant   </s>Human: Another question
 
 Assistant: </s>
+171
+Human: You are a helpful assistant
+Hello
+
+Assistant: </s>Hi there</s>Human: Who are you
+
+Assistant: </s>   I am an assistant   </s>Human: Another question
+
+Assistant: </s>
 26
 openchat/openchat-3.5-0106
 222
@@ -1273,6 +1341,8 @@ GPT4 Correct System: You are a helpful assistant<|end_of_turn|>GPT4 Correct User
 You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>GPT4 Correct Assistant:
 285
 You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>
+329
+GPT4 Correct System: You are a helpful assistant<|end_of_turn|>GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi there<|end_of_turn|>GPT4 Correct User: Who are you<|end_of_turn|>GPT4 Correct Assistant:    I am an assistant   <|end_of_turn|>GPT4 Correct User: Another question<|end_of_turn|>GPT4 Correct Assistant:
 39
 deepseek-ai/deepseek-coder-33b-instruct
 1041
@@ -1356,6 +1426,21 @@ Who are you
 ### Instruction:
 Another question
 
+204
+You are a helpful assistant### Instruction:
+Hello
+### Response:
+Hi there
+<|EOT|>
+### Instruction:
+Who are you
+### Response:
+   I am an assistant   
+<|EOT|>
+### Instruction:
+Another question
+### Response:
+
 23
 eachadea/vicuna-13b-1.1
 361
@@ -1401,6 +1486,15 @@ USER: Who are you
 ASSISTANT:    I am an assistant   </s>
 USER: Another question
 
+155
+You are a helpful assistant
+
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
 11
 Orca-Vicuna
 367
@@ -1442,6 +1536,14 @@ USER: Who are you
 ASSISTANT:    I am an assistant   </s>
 USER: Another question
 
+162
+SYSTEM: You are a helpful assistant
+USER: Hello
+ASSISTANT: Hi there</s>
+USER: Who are you
+ASSISTANT:    I am an assistant   </s>
+USER: Another question
+ASSISTANT:
 31
 CohereForAI/c4ai-command-r-plus
 1204
@@ -1462,6 +1564,8 @@ CohereForAI/c4ai-command-r-plus
 <|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>
 440
 <|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|>
+480
+<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>You are a helpful assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Hello<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>Hi there<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Who are you<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>I am an assistant<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|USER_TOKEN|>Another question<|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>
 7
 Llama-3
 348
@@ -1526,6 +1630,22 @@ Who are you<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 I am an assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
 
 Another question<|eot_id|>
+455
+<|start_header_id|>system<|end_header_id|>
+
+You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Hello<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+Hi there<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Who are you<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+I am an assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Another question<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+
 10
 Phi-3-mini
 269
@@ -1600,6 +1720,20 @@ Who are you<|end|>
 <|user|>
 Another question<|end|>
 
+200
+<|user|>
+You are a helpful assistant
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
 11
 Phi-3-small
 218
@@ -1660,6 +1794,21 @@ Who are you<|end|>
    I am an assistant   <|end|>
 <|user|>
 Another question<|end|>
+
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
 
 12
 Phi-3-medium
@@ -1735,6 +1884,20 @@ Who are you<|end|>
 <|user|>
 Another question<|end|>
 
+200
+<|user|>
+You are a helpful assistant
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
 12
 Phi-3-vision
 220
@@ -1796,6 +1959,21 @@ Who are you<|end|>
 <|user|>
 Another question<|end|>
 
+218
+<|system|>
+You are a helpful assistant<|end|>
+<|user|>
+Hello<|end|>
+<|assistant|>
+Hi there<|end|>
+<|user|>
+Who are you<|end|>
+<|assistant|>
+   I am an assistant   <|end|>
+<|user|>
+Another question<|end|>
+<|assistant|>
+
 8
 ChatGLM3
 247
@@ -1842,6 +2020,14 @@ ChatGLM3
  Who are you<|assistant|>
     I am an assistant   <|user|>
  Another question
+185
+[gMASK]sop<|system|>
+ You are a helpful assistant<|user|>
+ Hello<|assistant|>
+ Hi there<|user|>
+ Who are you<|assistant|>
+    I am an assistant   <|user|>
+ Another question<|assistant|>
 8
 ChatGLM4
 669
@@ -1892,6 +2078,15 @@ Hi there<|user|>
 Who are you<|assistant|>
    I am an assistant   <|user|>
 Another question
+182
+[gMASK]<sop><|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
+
 7
 GLMEdge
 263
@@ -1939,6 +2134,14 @@ Hi there<|user|>
 Who are you<|assistant|>
    I am an assistant   <|user|>
 Another question
+169
+<|system|>
+You are a helpful assistant<|user|>
+Hello<|assistant|>
+Hi there<|user|>
+Who are you<|assistant|>
+   I am an assistant   <|user|>
+Another question<|assistant|>
 33
 MiniCPM-3B-OpenHermes-2.5-v2-GGUF
 178
@@ -1955,6 +2158,8 @@ You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am 
 1
 1
 0
+120
+You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>
 120
 You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>
 120
@@ -2007,6 +2212,16 @@ Assistant: Hi there<｜end▁of▁sentence｜>User: Who are you
 Assistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question
 
 
+202
+You are a helpful assistant
+
+User: Hello
+
+Assistant: Hi there<｜end▁of▁sentence｜>User: Who are you
+
+Assistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question
+
+Assistant:
 35
 ibm-granite/granite-3.0-8b-instruct
 1185
@@ -2085,6 +2300,14 @@ ibm-granite/granite-3.0-8b-instruct
 <|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
 <|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
 
+455
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
 81
 mistralai/Mistral-7B-Instruct-v0.2 (mistralai 'v1' template with a system prompt)
 1058
@@ -2129,6 +2352,10 @@ Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s
 1
 1
 0
+150
+ [INST] You are a helpful assistant
+
+Hello [/INST] Hi there</s> [INST] Who are you [/INST]    I am an assistant   </s> [INST] Another question [/INST]
 150
  [INST] You are a helpful assistant
 
@@ -2252,6 +2479,10 @@ Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] A
 [INST] You are a helpful assistant
 
 Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] Another question[/INST]
+138
+[INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST] I am an assistant</s>[INST] You are a helpful assistant
+
+Another question[/INST]
 100
 Mistral-Nemo-Instruct-2407 (mistralai 'v3-tekken' template; modified to have system prompt at start)
 3945
@@ -2367,6 +2598,10 @@ Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST
 [INST]You are a helpful assistant
 
 Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]Another question[/INST]
+139
+[INST]Hello[/INST]Hi there</s>[INST]Who are you[/INST]   I am an assistant   </s>[INST]You are a helpful assistant
+
+Another question[/INST]
 63
 mistralai/Mistral-Large-Instruct-2411 (mistralai 'v7' template)
 423
@@ -2383,6 +2618,8 @@ mistralai/Mistral-Large-Instruct-2411 (mistralai 'v7' template)
 1
 1
 0
+174
+[SYSTEM_PROMPT] You are a helpful assistant[/SYSTEM_PROMPT][INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST]    I am an assistant   </s>[INST] Another question[/INST]
 174
 [SYSTEM_PROMPT] You are a helpful assistant[/SYSTEM_PROMPT][INST] Hello[/INST] Hi there</s>[INST] Who are you[/INST]    I am an assistant   </s>[INST] Another question[/INST]
 174
@@ -2432,6 +2669,8 @@ ai-sage/GigaChat-20B-A3B-instruct
 <s>You are a helpful assistant<|message_sep|>user<|role_sep|>Hello<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>Hi there<|message_sep|>user<|role_sep|>Who are you<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>   I am an assistant   <|message_sep|>user<|role_sep|>Another question<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>
 417
 <s>You are a helpful assistant<|message_sep|>user<|role_sep|>Hello<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>Hi there<|message_sep|>user<|role_sep|>Who are you<|message_sep|>available functions<|role_sep|>[]<|message_sep|>assistant<|role_sep|>   I am an assistant   <|message_sep|>user<|role_sep|>Another question<|message_sep|>available functions<|role_sep|>[]<|message_sep|>
+0
+
 30
 Infinigence/Megrez-3B-Instruct
 425
@@ -2452,6 +2691,8 @@ Infinigence/Megrez-3B-Instruct
 <|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|><|role_start|>assistant<|role_end|>
 354
 <|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|>
+389
+<|role_start|>system<|role_end|>You are a helpful assistant<|turn_end|><|role_start|>user<|role_end|>Hello<|turn_end|><|role_start|>assistant<|role_end|>Hi there<|turn_end|><|role_start|>user<|role_end|>Who are you<|turn_end|><|role_start|>assistant<|role_end|>   I am an assistant   <|turn_end|><|role_start|>user<|role_end|>Another question<|turn_end|><|role_start|>assistant<|role_end|>
 5
 phi-4
 377
@@ -2472,6 +2713,8 @@ phi-4
 <|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|><|im_start|>assistant<|im_sep|>
 318
 <|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|>
+349
+<|im_start|>system<|im_sep|>You are a helpful assistant<|im_end|><|im_start|>user<|im_sep|>Hello<|im_end|><|im_start|>assistant<|im_sep|>Hi there<|im_end|><|im_start|>user<|im_sep|>Who are you<|im_end|><|im_start|>assistant<|im_sep|>   I am an assistant   <|im_end|><|im_start|>user<|im_sep|>Another question<|im_end|><|im_start|>assistant<|im_sep|>
 35
 yandex/YandexGPT-5-Lite-8B-instruct
 1986
@@ -2586,6 +2829,19 @@ Hello
  Пользователь: Another question
 
 
+252
+<s> Пользователь: You are a helpful assistant
+Hello
+
+ Ассистент: Hi there
+
+ Пользователь: Who are you
+
+ Ассистент:    I am an assistant   
+
+ Пользователь: Another question
+
+ Ассистент:[SEP]
 21
 inclusionAI/Ling-lite
 293
@@ -2606,6 +2862,8 @@ inclusionAI/Ling-lite
 <role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question<role>ASSISTANT</role>
 207
 <role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question
+229
+<role>SYSTEM</role>You are a helpful assistant<role>HUMAN</role>Hello<role>ASSISTANT</role>Hi there<role>HUMAN</role>Who are you<role>ASSISTANT</role>   I am an assistant   <role>HUMAN</role>Another question<role>ASSISTANT</role>
 36
 ByteDance-Seed/Seed-OSS-36B-Instruct
 562
@@ -2653,6 +2911,15 @@ Hi there<seed:eos><seed:bos>user
 Who are you<seed:eos><seed:bos>assistant
 I am an assistant<seed:eos><seed:bos>user
 Another question<seed:eos>
+266
+<seed:bos>system
+You are a helpful assistant<seed:eos><seed:bos>user
+Hello<seed:eos><seed:bos>assistant
+Hi there<seed:eos><seed:bos>user
+Who are you<seed:eos><seed:bos>assistant
+I am an assistant<seed:eos><seed:bos>user
+Another question<seed:eos><seed:bos>assistant
+
 35
 ibm-granite/granite-3.x (tool call)
 477
@@ -2730,6 +2997,17 @@ tool_response
 <|start_of_role|>assistant_tool_call<|end_of_role|><|tool_call|>[{"name": "get_weather", "arguments": {"location": "NYC"}}]<|end_of_text|>
 <|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
 
+736
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|>[{"name": "get_weather", "arguments": {"location": "NYC"}}]<|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
 35
 ibm-granite/granite-4.0 (tool call)
 529
@@ -2807,6 +3085,19 @@ tool_response
 </tool_call><|end_of_text|>
 <|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
 
+759
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
 35
 ibm-granite/granite-4.1 (tool call)
 503
@@ -2884,3 +3175,16 @@ tool_response
 </tool_call><|end_of_text|>
 <|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
 
+759
+<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Who are you<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>   I am an assistant   <|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Another question<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>What is the weather?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|><|tool_call|><tool_call>
+{"name": "get_weather", "arguments": {"location": "NYC"}}
+</tool_call><|end_of_text|>
+<|start_of_role|>tool_response<|end_of_role|>{"temperature": 72}<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>
