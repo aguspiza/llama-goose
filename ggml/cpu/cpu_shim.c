@@ -105,3 +105,21 @@ bool lg_alloc_weights(struct ggml_context * ctx, lg_tensors matmul, lg_buffers o
     free(pick);
     return true;
 }
+
+// common_cpu_get_num_math's answer on MinGW and on systems it has no special
+// case for: half the logical CPUs above 4.
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+int lg_default_threads(void) {
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    int n = (int) si.dwNumberOfProcessors;
+#else
+    int n = (int) sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    return n > 0 ? (n <= 4 ? n : n / 2) : 4;
+}

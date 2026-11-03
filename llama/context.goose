@@ -15,7 +15,7 @@ let MAX_NODES = 8192;
 
 struct Context {
     n_ctx: i64,
-    n_threads: i32 = 4,
+    n_threads: i32 = 0,          // 0: ggml::default_threads()
     kv_ctx: ggml::Ctx,
     kv_buf: ggml::Buffer,
     k: ggml::Tensor[..512],      // per attention layer: [n_embd_k_gqa, n_ctx], f16
@@ -30,6 +30,7 @@ fn pad_to(n: i64, to: i64) -> i64 { (n + to - 1) / to * to }
 
 fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     c.n_ctx = pad_to(n_ctx, 256);
+    if c.n_threads <= 0 { c.n_threads = ggml::default_threads(); }
     let n_layer = m.hp.n_layer as i64;
     c.kv_ctx = ggml::init(3 * n_layer * ggml::tensor_overhead(), true);
     for il in n_layer {
@@ -374,10 +375,18 @@ fn any_recurrent(m: model::Model&) -> bool {
     return false;
 }
 
+// Forgets everything: llama_memory_clear(mem, true).
+fn clear(c: Context&) {
+    ggml::backend_buffer_clear(c.kv_buf, 0);
+    c.n_past = 0;
+}
+
 // Runs tokens, at positions n_past.., through the model; writes the logits
-// of the last one to logits.
-fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&) {
+// of the last one to logits. With `outputs` (indices into tokens, in
+// order), the logits of those tokens instead, one row of n_vocab after another.
+fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&, outputs: const i32[:] = []) {
     let n_tokens = tokens.len;
+    let n_outputs = if outputs.len > 0 { outputs.len } else { 1 };
     guard n_tokens > 0 && c.n_past + n_tokens <= c.n_ctx else { abort("decode: the context is full"); }
     let pos0 = c.n_past;
 
@@ -391,7 +400,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             pos: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
-            out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, 1),
+            out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_outputs),
             kv_idxs: ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens),
             mask: ggml::NONE,
             mask_swa: ggml::NONE,
@@ -430,7 +439,8 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     for t in n_tokens { pos.push((pos0 + t) as i32); idxs.push(pos0 + t); }
     ggml::backend_set_i32(b.inp.tokens, tokens);
     ggml::backend_set_i32(b.inp.pos, pos);
-    ggml::backend_set_i32(b.inp.out_ids, [(n_tokens - 1) as i32]);
+    if outputs.len > 0 { ggml::backend_set_i32(b.inp.out_ids, outputs); }
+    else { ggml::backend_set_i32(b.inp.out_ids, [(n_tokens - 1) as i32]); }
     ggml::backend_set_i64(b.inp.kv_idxs, idxs);
     if any_recurrent(m) { ggml::backend_set_i32(b.inp.s_copy, [0]); }
     var mask: f32[>..] = [];
@@ -446,7 +456,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
 
     print_traced(b);
     logits.clear();
-    logits.resize(ggml::ne(out, 0), 0.0);
+    logits.resize(ggml::nelements(out), 0.0);
     ggml::backend_get_f32(out, logits, 0);
     ggml::free(gctx);
     c.n_past += n_tokens;

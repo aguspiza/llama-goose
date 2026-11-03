@@ -15,7 +15,7 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | Unicode, pre-tokenizer splits | ported | `tests/unicode_split` |
 | SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
 | WPM, UGM, RWKV, PLaMo tokenizers | load, do not tokenize yet | |
-| model loading, KV cache, decode | ported for gemma3, llama, lfm2 | `tools/simple` |
+| model loading, KV cache, decode | ported for gemma3, llama, lfm2 | `tools/simple`, `tools/perplexity` |
 | other architectures | not yet | |
 | sampling: penalties, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | sampling: DRY, mirostat, adaptive-p, infill | not yet | |
@@ -41,6 +41,16 @@ fixed seed it writes the same text as `llama-completion` (eight runs over
 the three architectures, with penalties, typical, XTC, dynamic temperature,
 top-n-sigma, and the sampling settings a GGUF recommends): the RNG is
 `std::mt19937` and the uniform draws follow libstdc++.
+
+`tools/perplexity` is llama-perplexity's default mode (one sequence per
+batch). Over the first chunks of llama.cpp's README at `-c 512`, with
+`-b 512` and `-b 128`, it prints the same perplexities as llama-perplexity
+for all three architectures. It scores the logits on a pool of Goose
+threads, as llama.cpp does with its own; with gemma3's 262k-token
+vocabulary that is as much work as the model. Run time is within 10% of
+llama-perplexity's (4.9 s against 5.4 s for gemma-3-270m, 4 chunks).
+Both tools default to llama.cpp's thread count (half the logical CPUs
+above 4); `-t` sets it.
 
 `LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
 llama.cpp's eval callback.

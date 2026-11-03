@@ -15,12 +15,12 @@ export GOOSE_CC=gcc
 avx_fix=$([[ $(uname -s) == MINGW* || $(uname -s) == MSYS* ]] && echo '-Wa,-muse-unaligned-vector-move' || true)
 
 for program in "$@"; do
-    # the last command of the dry run compiles and links the program
+    # goose build first: it reports errors, builds the runtime and recompiles
+    # the packages' C that changed (a quick -O0 build of the program)
+    "$goose" build -O0 "$program" > /dev/null
+    # then the last command of the dry run (compile and link) at -O3
     link=$("$goose" build --dry-run "$program" 2>/dev/null | grep '^"' | tail -1)
     link=${link/ -O2 / -O3 -march=native $avx_fix }
-    # goose build first: it builds the runtime and recompiles the packages' C
-    # that changed (a quick -O0 build of the program), then the -O3 one
-    "$goose" build -O0 "$program" > /dev/null
     eval "$link"
     echo "built ${program%.goose}.exe"
 done

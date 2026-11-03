@@ -28,6 +28,7 @@ fn main() {
     var n_predict = -1;
     var n_ctx = 4096;
     var n_batch = 2048;
+    var n_threads: i32 = 0;
     var sp = sampler::Params { .. };
 
     var i = 1;
@@ -53,6 +54,7 @@ fn main() {
         else if a == "-n" || a == "--n-predict" { n_predict = int_value(); }
         else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); }
         else if a == "-b" || a == "--batch-size" { n_batch = int_value(); }
+        else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
         else if a == "-s" || a == "--seed" { sp.seed = (int_value() & 0xFFFFFFFF) as! u32; }
         else if a == "--temp" { sp.temp = max(flt_value(), 0.0); sp.user_set |= sampler::USER_TEMP; }
         else if a == "--top-k" { sp.top_k = int_value(); sp.user_set |= sampler::USER_TOP_K; }
@@ -81,7 +83,7 @@ fn main() {
     vocab::tokenize(prompt, true, true, tokens);
     if tokens.len == 0 { fail("empty prompt"); }
 
-    var c = context::Context { .. };
+    var c = context::Context { n_threads: n_threads, .. };
     context::init(c, m, n_ctx);
     if tokens.len > c.n_ctx - 4 { fail("the prompt is too long for the context"); }
 
