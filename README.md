@@ -20,12 +20,15 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
 | JSON schema to grammar | ported | `tests/json_schema`: the 83 cases of `test-json-schema-to-grammar.cpp`, the same grammar text; `tools/completion -j`/`-jf` |
-| sampling: adaptive-p, infill; lazy grammars (tool calls) | not yet | |
+| lazy grammars (word and token triggers) | ported | through the tool call grammars below |
+| sampling: adaptive-p, infill; regex grammar triggers | not yet | |
 | built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
 | Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
-| Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported, except the specialized handlers that rewrite messages (Ministral 3, GPT-OSS, DeepSeek V3.2+, K2 Horizon, LLM-jp, TranslateGemma, old Gemma 4); LFM2's is ported | `tests/chat_template`, `tools/completion --jinja` |
+| Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported | `tests/chat_template`, `tools/completion --jinja` |
+| PEG parsers (`common/peg-parser`) | ported | `tests/peg`: test-gbnf-generation's cases and parse cases of test-basic |
+| tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 75 templates of `models/templates`; `tests/chat_peg`: all 517 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
 | `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
-| tool call and reasoning parsers (autoparser, PEG), grammars, the rest of `common/`, server (and so `llama-cli`, which runs it) | not yet | |
+| the rest of `common/`, server (and so `llama-cli`, which runs it) | not yet | |
 
 `tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
 and greedy sampling it writes byte for byte the text llama.cpp's
@@ -80,6 +83,19 @@ grammars of llama.cpp's `grammars/` (JSON, lists, arithmetic, chess, C,
 Japanese) and a conversation with a grammar, `tools/completion --grammar`
 writes the same text as `llama-completion` on the three models.
 `scripts/gen-grammar-cases.sh` regenerates `tests/data/grammar_cases.txt`.
+
+`common/chat_apply.goose` is `common_chat_templates_apply` with Jinja the
+whole way: the conversation and tools as OpenAI JSON, the template's
+workarounds, and the output's parser from `common/parsers` (in
+`common/chat_parsers.goose`) or from the differential autoparser
+(`common/autoparser.goose`), which renders the template with pairs of sample
+conversations and reads its markers off the differences. The PEG parsers
+(`common/peg.goose`) also write the grammar; their GBNF names carry parser
+ids, so the parsers are made in the order GCC evaluates the C++ expressions
+(right operand of `+` first), and the grammars come out the same text.
+`tests/chat_peg` runs test-chat.cpp's 517 PEG cases against what llama.cpp
+makes of them (`scripts/gen-peg-chat-cases.sh`), and `tests/autoparser` the
+analysis of every template (`scripts/gen-autoparser-cases.sh`).
 
 `common/json_schema.goose` is `json-schema-to-grammar.cpp` with the schema
 model of `json-schema.cpp`: the schema is read with the standard library's

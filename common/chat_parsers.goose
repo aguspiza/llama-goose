@@ -559,6 +559,7 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     if h == H_MINIMAX_M3 { init_minimax_m3(t, g); return; }
     if h == H_MUSE_GLIMMER { init_muse(t, g, false); return; }
     if h == H_MUSE_SPARK { init_muse(t, g, true); return; }
+    if h == H_HARMONY_XML { init_harmony_xml(t, g); return; }
     json_schema::fail(str("the dedicated handler ", handler_name(h), " is not ported yet"));
 }
 
@@ -3029,6 +3030,211 @@ fn init_muse(t: chat_render::Template, g: chat_render::Gen, spark: bool) {
         } else {
             build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
             chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "(?:^|<\\|start\\|>assistant)( to=(?!self<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
+        }
+    }
+}
+
+//
+// Harmony with XML tool calls (harmony-xml.cpp)
+//
+
+fn gbnf_literal(s: const u8[:]) -> u8[>..] { str(json_schema::t(json_schema::format_literal(json_schema::lit(s)))) }
+
+fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
+    let PARAM_OPEN = "<rfl:parameter name=\"";
+    let PARAM_CLOSE = "\n</rfl:parameter>";
+    // the end of generation text must reach the parser: an XML call has no closer of its own
+    var eog_list: const u8[:][>..] = [];
+    for e in ["<|call|>", "<|return|>", "<|endoftext|>", "<|im_end|>", "<|fim_pad|>", "<|repo_name|>", "<|file_sep|>"] { eog_list.push(e); }
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { .. }, gp);
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    chat_render::thinking_start.append("<|channel|>analysis<|message|>");
+    chat_render::list_push(chat_render::thinking_ends, "<|end|>");
+    for tk in ["<|channel|>", "<|constrain|>", "<|message|>", "<|start|>", "<|end|>"] { preserve(tk); }
+    for e in eog_list { preserve(e); }
+    chat_render::assistant_start.append("<|start|>assistant");
+    chat_render::user_start.append("<|start|>user");
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append("<|start|>assistant<|channel|>analysis<|message|>");
+        gp.append(g.continue_reasoning);
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+            gp.append("<|end|><|start|>assistant<|channel|>final<|message|>");
+            gp.append(g.continue_content);
+        }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    let tools = has_tools();
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    peg::begin();
+    let start = peg::rule("start", peg::literal("<|start|>assistant"), false);
+    var eog = peg::choice([]);
+    for e in eog_list { eog = peg::choice2(eog, peg::literal(e)); }
+    fn with_eog(first: const u8[:][:]) -> const u8[:][>..] {
+        var l: const u8[:][>..] = [];
+        for f in first { l.push(f); }
+        for e in eog_list { l.push(e); }
+        return l;
+    }
+    let analysis_open = peg::literal("<|channel|>analysis<|message|>");
+    let analysis_body = peg::until_one_of(with_eog(["<|end|>", "<|constrain|><|start|>assistant", "<|start|>assistant"]));
+    let ab = peg::literal("<|constrain|>");
+    let aa = peg::literal("<|end|>");
+    let analysis_close = peg::optional(peg::choice2(peg::choice2(aa, ab), eog));
+    if extract {
+        let r = chat_peg::reasoning(analysis_body);
+        peg::rule("analysis", peg::chain([peg::ci(analysis_open), peg::ci(r), peg::ci(analysis_close)]), false);
+    } else {
+        let c = chat_peg::content(peg::seq2(analysis_body, analysis_close));
+        let o = peg::atomic(chat_peg::content(analysis_open));
+        peg::rule("analysis", peg::seq2(o, c), false);
+    }
+    let analysis = peg::ref("analysis");
+    let fe = peg::literal("<|end|>");
+    let fo = peg::optional(peg::choice2(fe, eog));
+    let fc = chat_peg::content(peg::until_one_of(with_eog(["<|end|>"])));
+    let fl = peg::literal("<|channel|>final<|message|>");
+    let final_msg = peg::rule("final", peg::chain([peg::ci(fl), peg::ci(fc), peg::ci(fo)]), false);
+    var root = -1;
+    if rf {
+        let constrain_type = peg::chars("[A-Za-z0-9_-]", 1, -1);
+        let co = peg::optional(peg::literal("<|constrain|>"));
+        let cs = peg::space();
+        let constraint = peg::optional(peg::chain([peg::ci(cs), peg::ci(co), peg::ci(constrain_type)]));
+        let re = peg::literal("<|end|>");
+        let ro = peg::optional(peg::choice2(re, eog));
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let c = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
+        let l2 = peg::literal("<|message|>");
+        let l1 = peg::literal("<|channel|>final");
+        let response_format = peg::rule("response-format", peg::chain([peg::ci(l1), peg::ci(constraint), peg::ci(l2), peg::ci(c), peg::ci(ro)]), false);
+        let z = peg::zero_or_more(peg::seq2(analysis, start));
+        root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(response_format)]);
+    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+        // a missing closing tag is tolerated
+        let ve0 = [PARAM_OPEN, "<|end|>"];
+        let value_ends = with_eog(ve0);
+        var string_ends: const u8[:][>..] = [];
+        string_ends.push(PARAM_CLOSE);
+        var ends_text: u8[>..] = [];
+        for e in value_ends { chat_render::list_push(ends_text, str("\n", e)); }
+        var start_e = 0;
+        for i in ends_text.len { if ends_text[i] == 0 { string_ends.push(ends_text[start_e..i]); start_e = i + 1; } }
+        var next_open = peg::choice([]);
+        for e in value_ends { next_open = peg::choice2(next_open, peg::literal(e)); }
+        let gb = str(gbnf_literal("\n"), " ", gbnf_literal(PARAM_CLOSE[1..]), "?");
+        // literal(PARAM_CLOSE) | (literal("\n") + peek(optional(literal("\n")) + next_open))
+        let pk_o = peg::optional(peg::literal("\n"));
+        let pk = peg::peek(peg::seq2(pk_o, next_open));
+        let nl = peg::literal("\n");
+        let b = peg::seq2(nl, pk);
+        let a = peg::literal(PARAM_CLOSE);
+        let arg_close = chat_peg::tool_arg_close(peg::gbnf(peg::choice2(a, b), gb));
+        let sv = chat_peg::tool_arg_string_value(peg::until_one_of(string_ends));
+        let arg_string = peg::rule("rfl-arg-string", peg::ac(peg::seq2(sv, arg_close), PARAM_CLOSE), false);
+        let arg_sep = peg::optional(peg::literal("\n"));
+        var call_close_gbnf = gbnf_literal("<|end|>");
+        for e in eog_list { call_close_gbnf.append(" | "); call_close_gbnf.append(gbnf_literal(e)); }
+        let cp = peg::peek(peg::literal("<|start|>assistant"));
+        let ce = peg::literal("<|end|>");
+        let call_close = peg::gbnf(peg::choice2(peg::choice2(ce, eog), cp), str("(", call_close_gbnf, ")?"));
+        var tool_choice = peg::choice([]);
+        for i in json_schema::json_len(tools_v) {
+            let func = function_of(i);
+            guard func >= 0 else { continue; }
+            let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+            var arg_rules: i64[>..] = [];
+            let root_node = chat_peg::params_schema(func);
+            for k in json_schema::prop_count(root_node) {
+                let rule_name = str("tool-", i, "-arg-", k);
+                let pname = str(json_schema::prop_name(root_node, k));
+                let pnode = json_schema::prop_node(root_node, k);
+                let l2 = peg::literal("\">\n");
+                let tan = chat_peg::tool_arg_name(peg::literal(pname));
+                let l1 = peg::literal(PARAM_OPEN);
+                let arg_open = chat_peg::tool_arg_open(peg::chain([peg::ci(l1), peg::ci(tan), peg::ci(l2)]));
+                let types = json_schema::value_types(pnode);
+                let string_bit = 1 << json_schema::TYPE_STRING;
+                let container_bits = (1 << json_schema::TYPE_OBJECT) | (1 << json_schema::TYPE_ARRAY);
+                var arg_value = peg::eps();
+                if (types & string_bit) == 0 && (types & container_bits) != 0 {
+                    // the schema's grammar fixes the key order, the model keeps its own
+                    arg_value = peg::seq2(chat_peg::tool_arg_json_value(peg::json()), arg_close);
+                } else if (types & string_bit) == 0 {
+                    let j = peg::json();
+                    let jv = chat_peg::tool_arg_json_value(peg::schema(j, str(rule_name, "-schema"), pnode, false));
+                    arg_value = peg::seq2(jv, arg_close);
+                } else if types == string_bit {
+                    arg_value = arg_string;
+                } else {
+                    var json_value = peg::choice([]);
+                    if (types & (1 << json_schema::TYPE_OBJECT)) != 0 { json_value = peg::choice2(json_value, peg::json_object()); }
+                    if (types & (1 << json_schema::TYPE_ARRAY)) != 0 { json_value = peg::choice2(json_value, peg::json_array()); }
+                    if (types & ((1 << json_schema::TYPE_NUMBER) | (1 << json_schema::TYPE_INTEGER))) != 0 { json_value = peg::choice2(json_value, peg::json_number()); }
+                    if (types & (1 << json_schema::TYPE_BOOLEAN)) != 0 { json_value = peg::choice2(json_value, peg::json_bool()); }
+                    if (types & (1 << json_schema::TYPE_NULL)) != 0 { json_value = peg::choice2(json_value, peg::json_null()); }
+                    let at = peg::atomic(peg::seq2(chat_peg::tool_arg_json_value(json_value), arg_close));
+                    arg_value = peg::gbnf(peg::choice2(at, arg_string), "rfl-arg-string");
+                }
+                arg_rules.push(peg::rule(rule_name, chat_peg::tool_arg(peg::seq2(arg_open, arg_value)), false));
+            }
+            if arg_rules.len == 0 {
+                let any_name = peg::chars("[^\"\\n<]", 1, -1);
+                let l2 = peg::literal("\">\n");
+                let tan = chat_peg::tool_arg_name(any_name);
+                let l1 = peg::literal(PARAM_OPEN);
+                let open = chat_peg::tool_arg_open(peg::chain([peg::ci(l1), peg::ci(tan), peg::ci(l2)]));
+                arg_rules.push(peg::rule(str("tool-", i, "-arg-any"), chat_peg::tool_arg(peg::seq2(open, arg_string)), false));
+            }
+            let args = peg::zero_or_more(peg::seq2(peg::choice(arg_rules), arg_sep));
+            // tool(tool_open(" to=" + tool_name(name) + "<|channel|>analysis <|constrain|>xml<|message|>") + tool_args(args) + tool_close(call_close))
+            let tc = chat_peg::tool_close(call_close);
+            let ta = chat_peg::tool_args(args);
+            let l2 = peg::literal("<|channel|>analysis <|constrain|>xml<|message|>");
+            let tn = chat_peg::tool_name(peg::literal(name));
+            let l1 = peg::literal(" to=");
+            let open = chat_peg::tool_open(peg::chain([peg::ci(l1), peg::ci(tn), peg::ci(l2)]));
+            let call = chat_peg::tool(peg::chain([peg::ci(open), peg::ci(ta), peg::ci(tc)]));
+            let r = peg::rule(str("tool-", i), call, false);
+            tool_choice = peg::choice2(tool_choice, r);
+        }
+        var calls = tool_choice;
+        if g.parallel_tool_calls {
+            let z = peg::zero_or_more(peg::seq2(start, tool_choice));
+            calls = peg::seq2(tool_choice, z);
+        }
+        let tool_call = peg::trigger_rule("tool-call", calls);
+        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+            let z = peg::zero_or_more(peg::seq2(analysis, start));
+            root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(tool_call)]);
+        } else {
+            let c = chat_peg::content(peg::rest());
+            let ch = peg::choice2(peg::choice2(tool_call, final_msg), c);
+            let z = peg::zero_or_more(peg::seq2(analysis, start));
+            root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(ch)]);
+        }
+    } else {
+        let rest = peg::rest();
+        let unsolicited = peg::rule("unsolicited", peg::atomic(peg::seq2(peg::literal(" to="), rest)), false);
+        // output without a channel header is content, not a failed request
+        let c = chat_peg::content(peg::rest());
+        let ch = peg::choice2(peg::choice2(final_msg, unsolicited), c);
+        let z = peg::zero_or_more(peg::seq2(analysis, start));
+        root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(ch)]);
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        let lazy = !(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED));
+        build_grammar(lazy);
+        if lazy {
+            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^\\s+to$");
+            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant(\\s+to)");
         }
     }
 }
