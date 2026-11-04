@@ -8,6 +8,7 @@
 // port-of: common/json-schema.cpp, common/json-schema-to-grammar.cpp, common/trie.cpp (the trie)
 import std;
 import exception;
+import os;
 import json;
 import .number;
 
@@ -98,8 +99,6 @@ recursive fn convert(n: json::Node&) -> i64 {
 
 // The JSON text as values: the root, or -1 and the error in err.
 fn parse_json(text: const u8[:]) -> i64 {
-    jv.clear();
-    jl.clear();
     jstack.clear();
     // the parse's own, as convert copies what it keeps
     var jtext: u8[>..] = [];
@@ -260,9 +259,10 @@ var kstack: i64[>..<] = [];
 var pstack: Prop[>..<] = [];
 
 // the $ref targets, by ref (node -1 while it is being built)
-struct RefEntry { ref: Str, node: i64 }
+struct RefEntry { ref: Str, node: i64, doc: i64 }
 var refs: RefEntry[>..] = [];
 var root_json = -1;
+var doc = 0;         // the document being built; its $refs are its own
 
 fn new_node(n: SNode) -> i64 { nodes.push(n); return nodes.len - 1; }
 
@@ -353,7 +353,7 @@ fn resolve_ref(ref: Str, path: Str) -> i64 {
 }
 
 fn find_ref(ref: const u8[:]) -> i64 {
-    for e, k in refs { if t(e.ref) == ref { return k; } }
+    for e, k in refs { if e.doc == doc && t(e.ref) == ref { return k; } }
     return -1;
 }
 
@@ -363,7 +363,7 @@ recursive fn build_ref(v: i64, path: Str) -> i64 {
     if !starts_with(t(ref), "#/") { sfail(path, str("unsupported $ref ", t(ref), ", only references into the same document are supported")); }
     if find_ref(t(ref)) < 0 {
         // the key first, so that a cycle back to this $ref stops here
-        refs.push(RefEntry { ref: ref, node: -1 });
+        refs.push(RefEntry { ref: ref, node: -1, doc: doc });
         let k = refs.len - 1;
         let target = resolve_ref(ref, path);
         let n = build_node(target, ref);
@@ -552,18 +552,17 @@ recursive fn build_node_impl(schema: i64, path: Str, type_override: i64) -> i64 
 }
 
 // common_chat_schema_from_json: the root node of the JSON schema v.
+// The nodes are added to those of the documents before.
 fn build_document(v: i64) -> i64 {
-    nodes.clear();
-    kids.clear();
-    props.clear();
     kstack.clear();
     pstack.clear();
-    refs.clear();
     depth = 0;
+    doc++;
     root_json = v;
+    let first = nodes.len;
     let root = build_node(v, lit("#"));
     // the $refs get their targets once all are built
-    for k in nodes.len {
+    for k in first..nodes.len {
         guard nodes[k].kind == K_REF else { continue; }
         let e = find_ref(t(nodes[k].ref));
         nodes[k].target = refs[e].node;
@@ -1735,9 +1734,88 @@ fn check_errors() {
 // json_schema_to_grammar: the GBNF grammar of the JSON schema `schema` (its
 // text), into out; false, and the message in err, if the schema is not
 // JSON or falls outside what the converter handles.
-fn to_grammar(schema: const u8[:], out: u8[>..]&) -> bool {
+// Forgets the schemas, their JSON and the texts.
+fn reset() {
     sb.clear();
+    jv.clear();
+    jl.clear();
+    nodes.clear();
+    kids.clear();
+    props.clear();
+    refs.clear();
+}
+
+// A JSON schema's text as schema nodes, added to those there are: its root
+// node; -1, and the error in err, if it is not JSON or not a schema
+// (common_chat_schema_from_json).
+fn from_json(schema: const u8[:]) -> i64 {
     let v = parse_json(schema);
+    if v < 0 { return -1; }
+    var root = -1;
+    fn body() { root = build_document(v); }
+    exception::try<Fail>(body);
+    return root;
+}
+
+// A JSON value's text, added to the values there are (common_json::parse).
+fn json_value(text: const u8[:]) -> i64 { parse_json(text) }
+
+// Whether a value the node admits may be a string (common_chat_schema::may_be_string).
+fn may_be_string(node: i64) -> bool {
+    var visited: i64[>..] = [];
+    return may_be_string_impl(node, visited, 0);
+}
+
+recursive fn may_be_string_impl(node: i64, visited: i64[>..]&, d: i64) -> bool {
+    let nd = nodes[node];
+    let k = nd.kind;
+    if k == K_STRING { return true; }
+    if k == K_CONST { return kind(nd.value) == J_STRING; }
+    if k == K_ENUM {
+        for i in nd.kids_n { if kind(kids[nd.kids_at + i]) == J_STRING { return true; } }
+        return false;
+    }
+    if k == K_REF {
+        // a cycle is taken as not a string, to be safe
+        if nd.target < 0 { return false; }
+        for v in visited { if v == nd.target { return false; } }
+        visited.push(nd.target);
+        let r = may_be_string_impl(nd.target, visited, d + 1);
+        visited.pop();
+        return r;
+    }
+    if k == K_ANY_OF {
+        for i in nd.kids_n { if may_be_string_impl(kids[nd.kids_at + i], visited, d + 1) { return true; } }
+        return false;
+    }
+    if k == K_ALL_OF {
+        // every child must allow a string, an any child constrains nothing
+        var any_string = false;
+        for i in nd.kids_n {
+            let c = kids[nd.kids_at + i];
+            guard nodes[c].kind != K_ANY else { continue; }
+            if !may_be_string_impl(c, visited, d + 1) { return false; }
+            any_string = true;
+        }
+        return any_string;
+    }
+    return false;
+}
+
+// build_grammar: begin_grammar, then rules and schemas added, then
+// end_grammar for the text. add_rule and add_schema throw Fail, which
+// the caller's handler takes.
+fn begin_grammar() { start_converter(); }
+fn add_schema(name, node: i64) -> Str { visit(node, if t(name) == "root" { lit("") } else { name }) }
+fn end_grammar(out) {
+    check_errors();
+    format_grammar(out);
+}
+
+fn to_grammar(schema: const u8[:], out: u8[>..]&) -> bool {
+    reset();
+    let v = parse_json(schema);
+
     if v < 0 { return false; }
     var ok = false;
     fn body() {

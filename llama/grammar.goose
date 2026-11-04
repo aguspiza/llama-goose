@@ -794,8 +794,89 @@ fn init_parsed(root: const u8[:]) -> bool {
 // llama_grammar_init_impl from a grammar's text: false, and the error in
 // err, if it does not parse or has no root symbol.
 fn init(text: const u8[:], root: const u8[:], with_vocab: bool) -> bool {
+    awaiting = false;
+    tbuf.clear();
+    tpos.clear();
+    ttokens.clear();
+    twords.clear();
+    tword_at.clear();
     if !parse(text, with_vocab) || prules.len == 0 { return false; }
     return init_parsed(root);
+}
+
+//
+// lazy grammars
+//
+
+// A lazy grammar (llama_sampler_init_grammar_lazy_patterns) constrains
+// nothing until a trigger: one of its tokens, or one of its words in the
+// text generated so far. Then the tokens from the word on are replayed
+// into it. The words are what common_sampler makes of chat's word
+// triggers: regex_escape(word), which std::regex_search finds where the
+// word itself is.
+var awaiting = false;
+var tbuf: u8[>..<] = [];                 // the text since the start, while awaiting
+struct TPos { token: i32, start: i64, end: i64 }
+var tpos: TPos[>..<] = [];               // each token's piece in tbuf
+var ttokens: i32[>..<] = [];
+var twords: u8[>..<] = [];
+var tword_at: Range[>..<] = [];
+
+// Makes the grammar just initialized lazy, its triggers to be added.
+fn make_lazy() { awaiting = true; }
+fn add_trigger_token(token: i32) { ttokens.push(token); }
+fn add_trigger_word(word: const u8[:]) {
+    tword_at.push(Range { at: twords.len, len: word.len });
+    twords.append(word);
+}
+
+fn awaiting_trigger() -> bool { awaiting }
+
+fn find_bytes(hay: const u8[:], needle: const u8[:]) -> i64 {
+    if needle.len == 0 { return 0; }
+    var i = 0;
+    while i + needle.len <= hay.len {
+        if hay[i..i + needle.len] == needle { return i; }
+        i++;
+    }
+    return -1;
+}
+
+// accept_impl while awaiting a trigger.
+fn accept_awaiting(token: i32, piece: const u8[:]) {
+    for t in ttokens {
+        guard t == token else { continue; }
+        awaiting = false;
+        tbuf.clear();
+        accept_checked(token, piece);
+        return;
+    }
+    tpos.push(TPos { token: token, start: tbuf.len, end: tbuf.len + piece.len });
+    tbuf.append(piece);
+    for r in tword_at {
+        let start = find_bytes(tbuf, twords[r.at..r.at + r.len]);
+        guard start >= 0 else { continue; }
+        awaiting = false;
+        // the tokens from start on, the first maybe in part
+        var replay: u8[>..] = [];
+        for p in tpos {
+            guard p.end > start else { continue; }
+            let piece_start = max(p.start, start);
+            replay.clear();
+            replay.append(tbuf[piece_start..p.end]);
+            accept_checked(p.token, replay);
+        }
+        tbuf.clear();
+        tpos.clear();
+        return;
+    }
+}
+
+fn accept_checked(token: i32, piece: const u8[:]) {
+    if !accept_token(token, piece) {
+        write_stderr(str("Unexpected empty grammar stack after accepting piece: ", piece, " (", token, ")\n"));
+        abort("grammar");
+    }
 }
 
 // The grammar's stacks, one per entry: whether any is empty (the grammar
@@ -1008,6 +1089,7 @@ fn reject_candidates(set_first: i64, set_n: i64, cands: const Cand[:]) -> i64 {
 fn reject_tokens(ids: const i32[:], rejected: bool[>..]&) {
     rejected.clear();
     for id in ids { rejected.push(false); }
+    if awaiting { return; }
     let allow_eog = can_end();
     var cands: Cand[>..] = [];
     ccps.clear();
@@ -1030,13 +1112,12 @@ fn reject_tokens(ids: const i32[:], rejected: bool[>..]&) {
 // llama_grammar_accept_impl: the grammar after the token. It must be one
 // the grammar takes.
 fn accept_impl(token: i32) {
+    let piece = vocab::token_piece(token);
+    if awaiting { accept_awaiting(token, piece); return; }
     if vocab::is_eog(token) {
         if can_end() { return; }
         abort("grammar: an end of generation token where the grammar cannot end");
     }
-    let piece = vocab::token_piece(token);
-    if !accept_token(token, piece) {
-        write_stderr(str("Unexpected empty grammar stack after accepting piece: ", piece, " (", token, ")\n"));
-        abort("grammar");
-    }
+    accept_checked(token, piece);
 }
+
