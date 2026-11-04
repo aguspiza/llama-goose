@@ -557,6 +557,8 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     if h == H_LING3 { init_ling3(t, g); return; }
     if h == H_K2_HORIZON { init_k2_horizon(t, g); return; }
     if h == H_MINIMAX_M3 { init_minimax_m3(t, g); return; }
+    if h == H_MUSE_GLIMMER { init_muse(t, g, false); return; }
+    if h == H_MUSE_SPARK { init_muse(t, g, true); return; }
     json_schema::fail(str("the dedicated handler ", handler_name(h), " is not ported yet"));
 }
 
@@ -2867,4 +2869,166 @@ fn map_minimax_m3() {
     chat_peg::mapper_reset();
     mm_stack.clear();
     for n in peg::result_nodes { mm3_visit(n); }
+}
+
+//
+// Muse Glimmer and Muse Spark (muse-glimmer.cpp, muse-spark.cpp): each
+// assistant message "<|start|>assistant to=<recipient><|message|>...", ended
+// by <|eom|> (more follow) or <|eot|>; Spark adds commentary asides
+//
+
+fn init_muse(t: chat_render::Template, g: chat_render::Gen, spark: bool) {
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { .. }, gp);
+    // the generation prompt is just the assistant's start: the model writes its recipient
+    gp.clear();
+    gp.append("<|start|>assistant");
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    for tk in ["<|start|>", "<|message|>", "<|eom|>", "<|eot|>", "<atem:function_calls>", "<atem:invoke", "<atem:parameter",
+               "</atem:parameter>", "</atem:invoke>", "</atem:function_calls>"] { preserve(tk); }
+    chat_render::assistant_start.append("<|start|>assistant");
+    chat_render::user_start.append("<|start|>user");
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append("<|start|>assistant to=self<|message|>");
+        gp.append(g.continue_reasoning);
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+            gp.append("<|eom|><|start|>assistant to=user<|message|>");
+            gp.append(g.continue_content);
+        }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let tools = has_tools();
+    let rf = !spark && schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    peg::begin();
+    let start = peg::rule("start", peg::literal("<|start|>assistant"), false);
+    var root = -1;
+    if !extract && !include {
+        root = peg::seq2(start, chat_peg::content(peg::rest()));
+    } else {
+        {
+            let l2 = peg::literal("<|eom|>");
+            let body = if extract { chat_peg::reasoning(peg::until("<|eom|>")) } else { chat_peg::content(peg::until("<|eom|>")) };
+            let l1 = peg::literal(" to=self<|message|>");
+            peg::rule("analysis", peg::chain([peg::ci(l1), peg::ci(body), peg::ci(l2)]), false);
+        }
+        let analysis = peg::ref("analysis");
+        // Spark: commentary, content the user sees mid turn, ended by <|eom|>
+        var aside = analysis;
+        if spark {
+            let l2 = peg::literal("<|eom|>");
+            let c = chat_peg::content(peg::until("<|eom|>"));
+            let l1 = peg::literal(" to=commentary<|message|>");
+            let preamble = peg::rule("preamble", peg::chain([peg::ci(l1), peg::ci(c), peg::ci(l2)]), false);
+            aside = peg::rule("aside", peg::choice2(analysis, preamble), false);
+        }
+        let recipient = peg::optional(peg::literal(" to=user"));
+        let fc = chat_peg::content(peg::until_one_of(["<|eot|>", "<|eom|>"]));
+        let fl = peg::literal("<|message|>");
+        let final_msg = peg::rule("final", peg::chain([peg::ci(recipient), peg::ci(fl), peg::ci(fc)]), false);
+        if rf {
+            let j = peg::json();
+            let node = json_schema::build_document(schema_v);
+            let response_json = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
+            let l2 = peg::literal("```");
+            let s2 = peg::space();
+            let s1 = peg::space();
+            let l1 = peg::literal("```json");
+            let fenced = peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(response_json), peg::ci(s2), peg::ci(l2)]);
+            let ch = peg::choice2(fenced, response_json);
+            let lm = peg::literal("<|message|>");
+            let response_format = peg::rule("response-format", peg::chain([peg::ci(recipient), peg::ci(lm), peg::ci(ch)]), false);
+            let z = peg::zero_or_more(peg::seq2(start, analysis));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
+        } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+            let cl0 = chat_peg::tool_arg_close(peg::literal("</atem:parameter>"));
+            let sv0 = chat_peg::tool_arg_string_value(peg::until("</atem:parameter>"));
+            let string_value = peg::ac(peg::seq2(sv0, cl0), "</atem:parameter>");
+            var tool_choice = peg::choice([]);
+            for i in json_schema::json_len(tools_v) {
+                let func = function_of(i);
+                guard func >= 0 else { continue; }
+                let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+                var arg_rules: i64[>..] = [];
+                let root_node = chat_peg::params_schema(func);
+                for k in json_schema::prop_count(root_node) {
+                    let pname = str(json_schema::prop_name(root_node, k));
+                    let pnode = json_schema::prop_node(root_node, k);
+                    var value_parser = peg::eps();
+                    if json_schema::may_be_string(pnode) {
+                        value_parser = string_value;
+                    } else {
+                        let cl = chat_peg::tool_arg_close(peg::literal("</atem:parameter>"));
+                        let j = peg::json();
+                        let jv = chat_peg::tool_arg_json_value(peg::schema(j, str("tool-", i, "-arg-", k, "-schema"), pnode, false));
+                        value_parser = peg::seq2(jv, cl);
+                    }
+                    let l2 = peg::literal("\">");
+                    let tan = chat_peg::tool_arg_name(peg::literal(pname));
+                    let l1 = peg::literal("<atem:parameter name=\"");
+                    let open = chat_peg::tool_arg_open(peg::chain([peg::ci(l1), peg::ci(tan), peg::ci(l2)]));
+                    arg_rules.push(chat_peg::tool_arg(peg::seq2(open, value_parser)));
+                }
+                var args = peg::eps();
+                if arg_rules.len > 0 {
+                    let s = peg::space();
+                    args = peg::zero_or_more(peg::seq2(peg::choice(arg_rules), s));
+                }
+                // tool(tool_open(" to=" + until("<|message|>") + ... + space()) << tool_args(args) << tool_close(...))
+                let o8 = peg::space();
+                let o7 = peg::literal("\">");
+                let o6 = chat_peg::tool_name(peg::literal(name));
+                let o5 = peg::literal("<atem:invoke name=\"");
+                let o4 = peg::space();
+                let o3 = peg::literal("<|message|><atem:function_calls>");
+                let o2 = peg::until("<|message|>");
+                let o1 = peg::literal(" to=");
+                let open = chat_peg::tool_open(peg::chain([peg::ci(o1), peg::ci(o2), peg::ci(o3), peg::ci(o4), peg::ci(o5), peg::ci(o6), peg::ci(o7), peg::ci(o8)]));
+                let ta = chat_peg::tool_args(args);
+                let x = peg::spaced(open, ta);
+                let c3 = peg::literal("</atem:function_calls>");
+                let c2 = peg::space();
+                let c1 = peg::literal("</atem:invoke>");
+                let tc = chat_peg::tool_close(peg::chain([peg::ci(c1), peg::ci(c2), peg::ci(c3)]));
+                let tp = chat_peg::tool(peg::spaced(x, tc));
+                let r = peg::rule(str("tool-", i), tp, false);
+                tool_choice = peg::choice2(tool_choice, r);
+            }
+            var tool_calls = -1;
+            if g.parallel_tool_calls {
+                let l = peg::literal("<|eom|>");
+                let z = peg::zero_or_more(peg::chain([peg::ci(l), peg::ci(start), peg::ci(tool_choice)]));
+                tool_calls = peg::trigger_rule("tool-call", peg::seq2(tool_choice, z));
+            } else {
+                tool_calls = peg::trigger_rule("tool-call", tool_choice);
+            }
+            if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+                let z = peg::zero_or_more(peg::seq2(start, aside));
+                root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(tool_calls)]);
+            } else {
+                let l = peg::literal("<|eom|>");
+                let trailing = peg::optional(peg::chain([peg::ci(l), peg::ci(start), peg::ci(tool_calls)]));
+                let ch = peg::choice2(tool_calls, peg::seq2(final_msg, trailing));
+                let z = peg::zero_or_more(peg::seq2(start, aside));
+                root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(ch)]);
+            }
+        } else {
+            let z = peg::zero_or_more(peg::seq2(start, aside));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(final_msg)]);
+        }
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        if spark {
+            build_grammar(g.tool_choice != chat_render::TOOL_CHOICE_REQUIRED);
+            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant( to=(?!self<\\|message\\|>)(?!commentary<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
+        } else {
+            build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
+            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "(?:^|<\\|start\\|>assistant)( to=(?!self<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
+        }
+    }
 }
