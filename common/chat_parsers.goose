@@ -552,6 +552,8 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     if h == H_KIMI_K2 { init_kimi_k2(t, g); return; }
     if h == H_KIMI_K3 { init_kimi_k3(t, g); return; }
     if h == H_MINISTRAL_3 { init_ministral_3(t, g); return; }
+    if h == H_GPT_OSS { init_gpt_oss(t, g); return; }
+    if h == H_LLM_JP_HARMONY { init_llm_jp_harmony(t, g); return; }
     json_schema::fail(str("the dedicated handler ", handler_name(h), " is not ported yet"));
 }
 
@@ -1541,5 +1543,291 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
     if include {
         build_grammar(tools && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
         chat_render::add_trigger(chat_render::TRIGGER_WORD, "[TOOL_CALLS]");
+    }
+}
+
+//
+// GPT-OSS and LLM-jp (gpt-oss.cpp, llm-jp-harmony.cpp)
+//
+
+// The messages with the reasoning as the "thinking" field the template
+// reads, and no content where there are tool calls, into out.
+fn harmony_messages(g: chat_render::Gen, out: u8[>..]&) {
+    var ok = false;
+    fn adjust() {
+        jinja::reset();
+        let arr = jinja::from_json(g.messages, false);
+        let res = jinja::mk_array();
+        for i in jinja::arr_len(arr) {
+            let m = jinja::arr_at(arr, i);
+            let r = jinja::obj_get_name(m, "reasoning_content");
+            if r >= 0 && jinja::kind(r) == jinja::K_STRING {
+                let drop_content = has_tool_calls(m);
+                let a = jinja::mk_object();
+                for k in jinja::obj_len(m) {
+                    let key = jinja::sbytes(jinja::obj_key(m, k));
+                    if drop_content && key == "content" { continue; }
+                    jinja::obj_set_name(a, key, jinja::obj_value(m, k));
+                }
+                jinja::obj_set_name(a, "thinking", r);
+                jinja::arr_push(res, a);
+            } else {
+                jinja::arr_push(res, m);
+            }
+        }
+        chat_render::dump(out, res);
+        ok = true;
+    }
+    exception::try<jinja::Fail>(adjust);
+    if !ok { json_schema::fail(jinja::err); }
+}
+
+// common_chat_prompt::replace_last: the last from in the prompt's template
+// parts (not the user's input) replaced with to.
+fn prompt_replace_last(from: const u8[:], to: const u8[:]) {
+    var k = chat_render::prompt_parts.len;
+    while k > 0 {
+        k--;
+        let p = chat_render::prompt_parts[k];
+        guard !p.input else { continue; }
+        let start = if k == 0 { 0 } else { chat_render::prompt_parts[k - 1].end };
+        let text = chat_render::prompt[start..p.end];
+        var pos = -1;
+        var i = 0;
+        while i + from.len <= text.len { if text[i..i + from.len] == from { pos = i; } i++; }
+        guard pos >= 0 else { continue; }
+        // the prompt rebuilt with the part changed
+        var out: u8[>..] = [];
+        out.append(chat_render::prompt[..start + pos]);
+        out.append(to);
+        out.append(chat_render::prompt[start + pos + from.len..]);
+        let delta = to.len - from.len;
+        chat_render::prompt.clear();
+        chat_render::prompt.append(out);
+        for j in k..chat_render::prompt_parts.len { chat_render::prompt_parts[j].end += delta; }
+        return;
+    }
+}
+
+fn harmony_common(t: chat_render::Template, g: chat_render::Gen, gp: u8[>..]&) {
+    var adjusted: u8[>..] = [];
+    harmony_messages(g, adjusted);
+    let ov = chat_render::Override { has_messages: true, messages: adjusted, .. };
+    render(t, g, ov, gp);
+    // during inference with no generation prompt, <|return|> is <|end|>
+    if !g.add_generation_prompt { prompt_replace_last("<|return|>", "<|end|>"); }
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    chat_render::thinking_start.append("<|channel|>analysis<|message|>");
+    chat_render::list_push(chat_render::thinking_ends, "<|end|>");
+    for tk in ["<|channel|>", "<|constrain|>", "<|message|>", "<|start|>", "<|end|>"] { preserve(tk); }
+    chat_render::assistant_start.append("<|start|>assistant");
+    chat_render::user_start.append("<|start|>user");
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append("<|start|>assistant<|channel|>analysis<|message|>");
+        gp.append(g.continue_reasoning);
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+            gp.append("<|end|><|start|>assistant<|channel|>final<|message|>");
+            gp.append(g.continue_content);
+        }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+}
+
+fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
+    var gp: u8[>..] = [];
+    harmony_common(t, g, gp);
+    let tools = has_tools();
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    peg::begin();
+    let start = peg::rule("start", peg::literal("<|start|>assistant"), false);
+    let end = peg::rule("end", peg::literal("<|end|>"), false);
+    let content = peg::rule("message-content", peg::until("<|end|>"), false);
+    // literal("<|channel|>") + (literal("commentary") | literal("analysis"))
+    let an = peg::literal("analysis");
+    let co = peg::literal("commentary");
+    let ca = peg::choice2(co, an);
+    let channel = peg::seq2(peg::literal("<|channel|>"), ca);
+    let constrain_type = peg::chars("[A-Za-z0-9_-]", 1, -1);
+    // gpt-oss-20b may put this commentary before the channels
+    let so = peg::optional(peg::literal(" to=assistant"));
+    let stray = peg::optional(peg::seq2(peg::literal("<|channel|>commentary"), so));
+    let start_analysis = peg::seq2(stray, peg::literal("<|channel|>analysis<|message|>"));
+    if extract {
+        let r = chat_peg::reasoning(content);
+        peg::rule("analysis", peg::chain([peg::ci(start_analysis), peg::ci(r), peg::ci(end)]), false);
+    } else {
+        peg::rule("analysis", chat_peg::content(peg::chain([peg::ci(start_analysis), peg::ci(content), peg::ci(end)])), false);
+    }
+    let analysis = peg::ref("analysis");
+    let pc = chat_peg::content(content);
+    let pl = peg::literal("<|channel|>commentary<|message|>");
+    let preamble = peg::rule("preamble", peg::chain([peg::ci(pl), peg::ci(pc), peg::ci(end)]), false);
+    let fc = chat_peg::content(content);
+    let fl = peg::literal("<|channel|>final<|message|>");
+    let final_msg = peg::rule("final", peg::chain([peg::ci(stray), peg::ci(fl), peg::ci(fc)]), false);
+    // unsolicited tool calls (builtin functions) consumed
+    let ul = peg::literal(" to=");
+    let uo = peg::optional(channel);
+    let unsolicited = peg::rule("unsolicited", peg::atomic(peg::chain([peg::ci(uo), peg::ci(ul), peg::ci(content), peg::ci(end)])), false);
+    let any = peg::rule("any", peg::choice2(preamble, analysis), false);
+    var root = -1;
+    if rf {
+        let o = peg::optional(peg::literal("<|constrain|>"));
+        let s = peg::space();
+        let constraint = peg::optional(peg::chain([peg::ci(s), peg::ci(o), peg::ci(constrain_type)]));
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let c = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
+        let l2 = peg::literal("<|message|>");
+        let l1 = peg::literal("<|channel|>final");
+        let response_format = peg::rule("response-format", peg::chain([peg::ci(l1), peg::ci(constraint), peg::ci(l2), peg::ci(c)]), false);
+        let z = peg::zero_or_more(peg::seq2(start, analysis));
+        root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
+    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+        var tool_choice = peg::choice([]);
+        for i in json_schema::json_len(tools_v) {
+            let func = function_of(i);
+            guard func >= 0 else { continue; }
+            let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+            let tn = chat_peg::tool_name(peg::literal(name));
+            let func_name = peg::seq2(peg::literal(" to=functions."), tn);
+            let o = peg::optional(peg::literal("<|constrain|>"));
+            let s = peg::space();
+            let constraint = peg::optional(peg::chain([peg::ci(s), peg::ci(o), peg::ci(constrain_type)]));
+            let j = peg::json();
+            let node = chat_peg::params_schema(func);
+            let args = chat_peg::tool_args(peg::schema(j, str("tool-", i, "-schema"), node, false));
+            // the recipient in the role header, or in the channel header
+            let m1 = peg::literal("<|message|>");
+            let in_role = chat_peg::tool(peg::seq2(chat_peg::tool_open(peg::chain([peg::ci(func_name), peg::ci(channel), peg::ci(constraint), peg::ci(m1)])), args));
+            let m2 = peg::literal("<|message|>");
+            let in_channel = chat_peg::tool(peg::seq2(chat_peg::tool_open(peg::chain([peg::ci(channel), peg::ci(func_name), peg::ci(constraint), peg::ci(m2)])), args));
+            let r = peg::rule(str("tool-", i), peg::choice2(in_role, in_channel), false);
+            tool_choice = peg::choice2(tool_choice, r);
+        }
+        let tool_call = peg::trigger_rule("tool-call", tool_choice);
+        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+            let z = peg::zero_or_more(peg::seq2(start, any));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(tool_call)]);
+        } else {
+            let ch = peg::choice2(tool_call, final_msg);
+            let z = peg::zero_or_more(peg::seq2(start, any));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(ch)]);
+        }
+    } else {
+        let ch = peg::choice2(final_msg, unsolicited);
+        let z = peg::zero_or_more(peg::seq2(start, any));
+        root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(ch)]);
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^\\s+to$");
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^<\\|channel\\|>(?:commentary|analysis)\\s+to=functions$");
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant(\\s+to)");
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant(<\\|channel\\|>(?:commentary|analysis)\\s+to)");
+    }
+}
+
+fn init_llm_jp_harmony(t: chat_render::Template, g: chat_render::Gen) {
+    var gp: u8[>..] = [];
+    harmony_common(t, g, gp);
+    let tools = has_tools();
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    peg::begin();
+    // the space the tokenizer puts after special tokens (more than GBNF's space)
+    let sp = peg::chars("[ ]", 0, -1);
+    let channel_tag = peg::seq2(peg::literal("<|channel|>"), sp);
+    // one space only: an intended leading space stays in the body
+    let mo = peg::optional(peg::literal(" "));
+    let message = peg::seq2(peg::literal("<|message|>"), mo);
+    let sa = peg::literal("assistant");
+    let ss = peg::literal("<|start|>");
+    let start = peg::rule("start", peg::chain([peg::ci(ss), peg::ci(sp), peg::ci(sa)]), false);
+    let end = peg::rule("end", peg::literal("<|end|>"), false);
+    let content = peg::rule("message-content", peg::until("<|end|>"), false);
+    let an = peg::literal("analysis");
+    let co = peg::literal("commentary");
+    let channel = peg::seq2(channel_tag, peg::choice2(co, an));
+    let constrain_type = peg::chars("[A-Za-z0-9_-]", 1, -1);
+    // optional(space() + optional(literal("<|constrain|>") + sp) + constrain_type)
+    let cl = peg::literal("<|constrain|>");
+    let co2 = peg::optional(peg::seq2(cl, sp));
+    let cs = peg::space();
+    let constraint = peg::optional(peg::chain([peg::ci(cs), peg::ci(co2), peg::ci(constrain_type)]));
+    let al = peg::literal("analysis");
+    let start_analysis = peg::chain([peg::ci(channel_tag), peg::ci(al), peg::ci(message)]);
+    if extract {
+        let r = chat_peg::reasoning(content);
+        peg::rule("analysis", peg::chain([peg::ci(start_analysis), peg::ci(r), peg::ci(end)]), false);
+    } else {
+        peg::rule("analysis", chat_peg::content(peg::chain([peg::ci(start_analysis), peg::ci(content), peg::ci(end)])), false);
+    }
+    let analysis = peg::ref("analysis");
+    let pc = chat_peg::content(content);
+    let pl = peg::literal("commentary");
+    let preamble = peg::rule("preamble", peg::chain([peg::ci(channel_tag), peg::ci(pl), peg::ci(message), peg::ci(pc), peg::ci(end)]), false);
+    let fc = chat_peg::content(content);
+    let fl = peg::literal("final");
+    let final_msg = peg::rule("final", peg::chain([peg::ci(channel_tag), peg::ci(fl), peg::ci(message), peg::ci(fc)]), false);
+    let any = peg::rule("any", peg::choice2(preamble, analysis), false);
+    var root = -1;
+    if rf {
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let c = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
+        let l = peg::literal("final");
+        let response_format = peg::rule("response-format", peg::chain([peg::ci(channel_tag), peg::ci(l), peg::ci(constraint), peg::ci(message), peg::ci(c)]), false);
+        let z = peg::zero_or_more(peg::seq2(start, analysis));
+        root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
+    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+        var tool_choice = peg::choice([]);
+        for i in json_schema::json_len(tools_v) {
+            let func = function_of(i);
+            guard func >= 0 else { continue; }
+            let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+            let tn = chat_peg::tool_name(peg::literal(name));
+            let func_name = peg::seq2(peg::literal(" to=functions."), tn);
+            let j = peg::json();
+            let node = chat_peg::params_schema(func);
+            let args = chat_peg::tool_args(peg::schema(j, str("tool-", i, "-schema"), node, false));
+            let in_role = chat_peg::tool(peg::seq2(chat_peg::tool_open(peg::chain([peg::ci(func_name), peg::ci(channel), peg::ci(constraint), peg::ci(message)])), args));
+            let in_channel = chat_peg::tool(peg::seq2(chat_peg::tool_open(peg::chain([peg::ci(channel), peg::ci(func_name), peg::ci(constraint), peg::ci(message)])), args));
+            let r = peg::rule(str("tool-", i), peg::choice2(in_role, in_channel), false);
+            tool_choice = peg::choice2(tool_choice, r);
+        }
+        // parallel calls apart with <|end|>, all in the trigger rule
+        var calls = tool_choice;
+        if g.parallel_tool_calls {
+            let z = peg::zero_or_more(peg::chain([peg::ci(end), peg::ci(start), peg::ci(tool_choice)]));
+            calls = peg::seq2(tool_choice, z);
+        }
+        let tool_call = peg::trigger_rule("tool-call", calls);
+        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+            let z = peg::zero_or_more(peg::seq2(start, any));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(tool_call)]);
+        } else {
+            let ch = peg::choice2(tool_call, final_msg);
+            let z = peg::zero_or_more(peg::seq2(start, any));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(ch)]);
+        }
+    } else {
+        let z = peg::zero_or_more(peg::seq2(start, any));
+        root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(final_msg)]);
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^\\s+to$");
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to=functions$");
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>\\s*assistant(\\s+to)");
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>\\s*assistant(<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to)");
     }
 }
