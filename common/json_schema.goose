@@ -1928,3 +1928,8 @@ recursive fn value_types_impl(node: i64, visited: i64[>..]&) -> i64 {
     }
     return 0;
 }
+
+// An anyOf node's alternatives, and an array node's items.
+fn anyof_count(n: i64) -> i64 { if nodes[n].kind == K_ANY_OF { nodes[n].kids_n } else { 0 } }
+fn anyof_child(n: i64, k: i64) -> i64 { kids[nodes[n].kids_at + k] }
+fn array_items(n: i64) -> i64 { nodes[n].items }

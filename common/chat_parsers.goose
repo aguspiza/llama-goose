@@ -81,7 +81,6 @@ fn detect(src: const u8[:]) -> i64 {
 var err: u8[>..] = [];
 
 // The mappers of the formats with their own.
-fn map_minimax_m3() { chat_peg::map_parse(); }
 
 //
 // what the handlers share
@@ -555,6 +554,9 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     if h == H_GPT_OSS { init_gpt_oss(t, g); return; }
     if h == H_LLM_JP_HARMONY { init_llm_jp_harmony(t, g); return; }
     if h == H_DEEPSEEK_V3_2 { init_deepseek_v3_2(t, g); return; }
+    if h == H_LING3 { init_ling3(t, g); return; }
+    if h == H_K2_HORIZON { init_k2_horizon(t, g); return; }
+    if h == H_MINIMAX_M3 { init_minimax_m3(t, g); return; }
     json_schema::fail(str("the dedicated handler ", handler_name(h), " is not ported yet"));
 }
 
@@ -2149,4 +2151,720 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
         build_grammar(tools && !require_tools);
         chat_render::add_trigger(chat_render::TRIGGER_WORD, FC_START);
     }
+}
+
+//
+// Ling 3.0, Bailing V3 (ling3.cpp)
+//
+
+fn last_index(s: const u8[:], needle: const u8[:]) -> i64 {
+    var pos = -1;
+    var i = 0;
+    while i + needle.len <= s.len { if s[i..i + needle.len] == needle { pos = i; } i++; }
+    return pos;
+}
+
+fn init_ling3(t: chat_render::Template, g: chat_render::Gen) {
+    let ROLE = "<role>ASSISTANT</role>";
+    let THINK_START = "<think>";
+    let THINK_END = "</think>";
+    let CALL_START = "<tool_call>";
+    let CALL_END = "</tool_call>";
+    let ARG_KEY = "<arg_key>";
+    let ARG_KEY_END = "</arg_key>";
+    let ARG_VAL = "<arg_value>";
+    let ROLE_END = "<|role_end|>";
+    let ARG_VAL_END = "</arg_value>";
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { .. }, gp);
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    for tk in [THINK_START, THINK_END, CALL_START, CALL_END, ARG_KEY, ARG_KEY_END, ARG_VAL, ARG_VAL_END, ROLE_END] { preserve(tk); }
+    chat_render::thinking_start.append(THINK_START);
+    // a call may come before the think block is closed
+    chat_render::list_push(chat_render::thinking_ends, THINK_END);
+    chat_render::list_push(chat_render::thinking_ends, CALL_START);
+    chat_render::assistant_start.append("<role>ASSISTANT</role>");
+    chat_render::user_start.append("<role>HUMAN</role>");
+    // the model may spell the end-of-turn token out as text
+    chat_render::list_push(chat_render::additional_stops, ROLE_END);
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append(ROLE);
+        gp.push(10);
+        gp.append(THINK_START);
+        gp.append(g.continue_reasoning);
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    // the generation prompt opens the think block when thinking is on
+    var think_open = false;
+    if chat_render::has_continuation(g) {
+        think_open = g.continue_final_message != chat_render::CONTINUE_CONTENT;
+    } else {
+        let last_open = last_index(gp, THINK_START);
+        let last_close = last_index(gp, THINK_END);
+        think_open = last_open >= 0 && (last_close < 0 || last_open > last_close);
+    }
+    let tools = has_tools();
+    let rf = has_response_format();
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    peg::begin();
+    let end = peg::end();
+    let oo = peg::optional(peg::space());
+    let opener = peg::optional(peg::seq2(peg::literal(ROLE), oo));
+    let body_end = if think_open { peg::until_one_of([THINK_END, CALL_START]) } else { peg::until_one_of([THINK_END]) };
+    let think_body = if extract { chat_peg::reasoning(body_end) } else { chat_peg::content(body_end) };
+    let ro2 = peg::optional(peg::literal(THINK_END));
+    let ro1 = peg::optional(peg::literal(THINK_START));
+    let reasoning = peg::optional(peg::chain([peg::ci(ro1), peg::ci(think_body), peg::ci(ro2)]));
+    let content = peg::optional(chat_peg::content(peg::until_one_of([CALL_START])));
+    let to2 = peg::optional(peg::literal(ROLE_END));
+    let to1 = peg::optional(chat_peg::content(peg::until(ROLE_END)));
+    let tail = peg::seq2(to1, to2);
+    var root = -1;
+    if rf {
+        // the think block closes before the JSON
+        let l2 = peg::literal(THINK_END);
+        let l1 = peg::literal(THINK_START);
+        let closed = peg::chain([peg::ci(l1), peg::ci(think_body), peg::ci(l2)]);
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let response_format = chat_peg::content(peg::schema(j, "response-format", node, false));
+        let x = peg::spaced(closed, response_format);
+        root = peg::chain([peg::ci(opener), peg::ci(x), peg::ci(end)]);
+    } else if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+        root = peg::chain([peg::ci(opener), peg::ci(reasoning), peg::ci(tail), peg::ci(end)]);
+    } else {
+        var tool_choices = peg::choice([]);
+        let arg_close = chat_peg::tool_arg_close(peg::literal(ARG_VAL_END));
+        let sv = chat_peg::tool_arg_string_value(peg::until(ARG_VAL_END));
+        let arg_string = peg::rule("ling3-arg-string", peg::seq2(sv, arg_close), false);
+        for i in json_schema::json_len(tools_v) {
+            let func = function_of(i);
+            guard func >= 0 else { continue; }
+            let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+            var required_args: i64[>..] = [];
+            var optional_args: i64[>..] = [];
+            let root_node = chat_peg::params_schema(func);
+            for k in json_schema::prop_count(root_node) {
+                let rule_name = str("ling3-arg-", i, "-", k);
+                let pname = str(json_schema::prop_name(root_node, k));
+                let pnode = json_schema::prop_node(root_node, k);
+                let types = json_schema::value_types(pnode);
+                let string_bit = 1 << json_schema::TYPE_STRING;
+                // strings are raw text up to the closing tag, the rest JSON
+                var arg_value = peg::eps();
+                if (types & string_bit) == 0 {
+                    let j = peg::json();
+                    let jv = chat_peg::tool_arg_json_value(peg::schema(j, str(rule_name, "-schema"), pnode, false));
+                    arg_value = peg::seq2(jv, arg_close);
+                } else if types == string_bit {
+                    arg_value = arg_string;
+                } else {
+                    let j = peg::json();
+                    let jv = chat_peg::tool_arg_json_value(peg::schema(j, str(rule_name, "-schema"), pnode, false));
+                    let at = peg::atomic(peg::seq2(jv, arg_close));
+                    arg_value = peg::gbnf(peg::choice2(at, arg_string), "ling3-arg-string");
+                }
+                // optional(space()) + tool_arg(tool_arg_open(ARG_KEY + tool_arg_name(name) + ARG_KEY_END) + optional(space()) + ARG_VAL + value)
+                let lav = peg::literal(ARG_VAL);
+                let o2 = peg::optional(peg::space());
+                let lake = peg::literal(ARG_KEY_END);
+                let tan = chat_peg::tool_arg_name(peg::literal(pname));
+                let lak = peg::literal(ARG_KEY);
+                let open = chat_peg::tool_arg_open(peg::chain([peg::ci(lak), peg::ci(tan), peg::ci(lake)]));
+                let ta = chat_peg::tool_arg(peg::chain([peg::ci(open), peg::ci(o2), peg::ci(lav), peg::ci(arg_value)]));
+                let o = peg::optional(peg::space());
+                let arg = peg::rule(rule_name, peg::seq2(o, ta), false);
+                if json_schema::prop_required(root_node, k) { required_args.push(arg); } else { optional_args.push(arg); }
+            }
+            var args = chat_peg::permute(str("ling3-", i, "-args"), required_args);
+            if optional_args.len > 0 { args = peg::seq2(args, peg::zero_or_more(peg::choice(optional_args))); }
+            // tool(tool_open(CALL_START + tool_name(name) + optional(space())) + tool_args(args) + tool_close(optional(space()) + CALL_END))
+            let lce = peg::literal(CALL_END);
+            let co = peg::optional(peg::space());
+            let tc = chat_peg::tool_close(peg::seq2(co, lce));
+            let ta = chat_peg::tool_args(args);
+            let no = peg::optional(peg::space());
+            let tn = chat_peg::tool_name(peg::literal(name));
+            let lcs = peg::literal(CALL_START);
+            let open = chat_peg::tool_open(peg::chain([peg::ci(lcs), peg::ci(tn), peg::ci(no)]));
+            let call = chat_peg::tool(peg::chain([peg::ci(open), peg::ci(ta), peg::ci(tc)]));
+            let r = peg::rule(str("ling3-tool-", i), call, false);
+            tool_choices = peg::choice2(tool_choices, r);
+        }
+        var calls = tool_choices;
+        if g.parallel_tool_calls {
+            let s = peg::space();
+            let z = peg::zero_or_more(peg::seq2(s, tool_choices));
+            calls = peg::seq2(tool_choices, z);
+        }
+        let so2 = peg::optional(peg::literal(ROLE_END));
+        let so1 = peg::optional(chat_peg::content(peg::until(ROLE_END)));
+        let s = peg::space();
+        let section = peg::trigger_rule("ling3-tool-call", peg::chain([peg::ci(calls), peg::ci(s), peg::ci(so1), peg::ci(so2)]));
+        let tools_p = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { section } else { peg::optional(section) };
+        root = peg::chain([peg::ci(opener), peg::ci(reasoning), peg::ci(content), peg::ci(tools_p), peg::ci(tail), peg::ci(end)]);
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        build_grammar(!rf && g.tool_choice != chat_render::TOOL_CHOICE_REQUIRED);
+        chat_render::add_trigger(chat_render::TRIGGER_WORD, CALL_START);
+    }
+}
+
+//
+// K2 Horizon (k2-horizon.cpp)
+//
+
+// optional(THINK_START + space() + ac(body + think_end, ends))
+fn k2h_think_block(think_start: const u8[:], body: i64, think_end: i64, ends: const u8[:][:]) -> i64 {
+    let ac = peg::ac_one_of(peg::seq2(body, think_end), ends);
+    let s = peg::space();
+    return peg::optional(peg::chain([peg::cs(think_start), peg::ci(s), peg::ci(ac)]));
+}
+
+fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
+    // the template wants a thinking field on every assistant message
+    var adjusted: u8[>..] = [];
+    var ok = false;
+    fn adjust() {
+        jinja::reset();
+        let arr = jinja::from_json(g.messages, false);
+        for i in jinja::arr_len(arr) {
+            let m = jinja::arr_at(arr, i);
+            if role_of(m) == "assistant" && jinja::obj_get_name(m, "reasoning_content") < 0 {
+                jinja::obj_set_name(m, "reasoning_content", jinja::mk_str("", false));
+            }
+        }
+        chat_render::dump(adjusted, arr);
+        ok = true;
+    }
+    exception::try<jinja::Fail>(adjust);
+    if !ok { json_schema::fail(jinja::err); }
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { has_messages: true, messages: adjusted, .. }, gp);
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    let effort = context_string_quiet(g, "reasoning_effort", "high");
+    let call_format = context_string_quiet(g, "tool_call_format", "xml");
+    // templates that know enable_thinking turn it off with an empty <ifm|think></ifm|think>
+    let thinking_off = !g.enable_thinking && find(chat_render::source(t), "enable_thinking") >= 0;
+    let think = if thinking_off { "ifm|think" } else if effort == "medium" { "ifm|think_fast" } else if effort == "low" { "ifm|think_faster" } else { "ifm|think" };
+    let GEN_PREFIX = "<|ifm|im_start|>assistant\n";
+    let THINK_START = str("<", think, ">");
+    let THINK_END = str("</", think, ">");
+    let SECTION_START = "<ifm|tool_calls>";
+    let SECTION_END = "</ifm|tool_calls>";
+    let CALL_START = "<ifm|tool_call>";
+    let CALL_END = "</ifm|tool_call>";
+    let ARG_KEY = "<ifm|arg_key>";
+    let ARG_KEY_END = "</ifm|arg_key>";
+    let ARG_TYPE = "<ifm|arg_type>";
+    let ARG_TYPE_END = "</ifm|arg_type>";
+    let ARG_VAL = "<ifm|arg_value>";
+    let ARG_VAL_END = "</ifm|arg_value>";
+    chat_render::thinking_start.append(THINK_START);
+    chat_render::list_push(chat_render::thinking_ends, THINK_END);
+    preserve(THINK_END);
+    preserve(THINK_START);
+    for tk in [SECTION_START, SECTION_END, CALL_START, CALL_END, ARG_KEY, ARG_KEY_END, ARG_TYPE, ARG_TYPE_END, ARG_VAL, ARG_VAL_END] { preserve(tk); }
+    chat_render::assistant_start.append("<|ifm|im_start|>assistant");
+    chat_render::user_start.append("<|ifm|im_start|>user");
+    let tools = has_tools();
+    let rf = has_response_format();
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append(GEN_PREFIX);
+        gp.append(THINK_START);
+        gp.push(10);
+        gp.append(g.continue_reasoning);
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    var ends: const u8[:][>..] = [];
+    ends.push(THINK_END);
+    peg::begin();
+    let generation_prompt = peg::literal(GEN_PREFIX);
+    var think_end = peg::choice([]);
+    for e in ends { think_end = peg::choice2(think_end, peg::literal(e)); }
+    let think_body = peg::until_one_of(ends);
+    var reasoning = -1;
+    if extract {
+        let r = chat_peg::reasoning(think_body);
+        reasoning = k2h_think_block(THINK_START, r, think_end, ends);
+    } else {
+        reasoning = peg::eps();
+    }
+    var root = -1;
+    if rf {
+        // the answer is bare JSON: the think block goes even when not extracted
+        let thoughts = if extract { reasoning } else { k2h_think_block(THINK_START, think_body, think_end, ends) };
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let c = chat_peg::content(peg::schema(j, "response-format", node, false));
+        root = peg::seq2(generation_prompt, peg::spaced(thoughts, c));
+    } else if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+        let c = chat_peg::content(peg::rest());
+        root = peg::seq2(generation_prompt, peg::spaced(reasoning, c));
+    } else {
+        var tool_choice = peg::choice([]);
+        if call_format == "json" {
+            tool_choice = chat_peg::standard_json_tools(CALL_START, CALL_END, tools_v, false, true, "", "", false, false, "", "", [], false);
+        } else {
+            let arg_close = chat_peg::tool_arg_close(peg::literal(ARG_VAL_END));
+            let sv = chat_peg::tool_arg_string_value(peg::until(ARG_VAL_END));
+            let arg_string = peg::rule("xml-arg-string", peg::ac(peg::seq2(sv, arg_close), ARG_VAL_END), false);
+            // the models leave out <ifm|arg_type> even when asked for xml_typed
+            var arg_type = -1;
+            if call_format == "xml_typed" {
+                let s = peg::space();
+                let u = peg::until(ARG_TYPE_END);
+                arg_type = peg::optional(peg::chain([peg::cs(ARG_TYPE), peg::ci(u), peg::cs(ARG_TYPE_END), peg::ci(s)]));
+            } else {
+                arg_type = peg::eps();
+            }
+            for i in json_schema::json_len(tools_v) {
+                let func = function_of(i);
+                guard func >= 0 else { continue; }
+                let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+                var required_args: i64[>..] = [];
+                var optional_args: i64[>..] = [];
+                let root_node = chat_peg::params_schema(func);
+                for k in json_schema::prop_count(root_node) {
+                    let rule_name = str("tool-", i, "-arg-", k);
+                    let pname = str(json_schema::prop_name(root_node, k));
+                    let pnode = json_schema::prop_node(root_node, k);
+                    let types = json_schema::value_types(pnode);
+                    let string_bit = 1 << json_schema::TYPE_STRING;
+                    var arg_value = arg_string;
+                    if (types & string_bit) == 0 {
+                        let j = peg::json();
+                        let jv = chat_peg::tool_arg_json_value(peg::schema(j, str(rule_name, "-schema"), pnode, false));
+                        arg_value = peg::seq2(jv, arg_close);
+                    }
+                    if (types & string_bit) != 0 && types != string_bit {
+                        // the string alternative takes any text: only the parser needs the JSON ones
+                        var json_value = peg::choice([]);
+                        if (types & (1 << json_schema::TYPE_OBJECT)) != 0 { json_value = peg::choice2(json_value, peg::json_object()); }
+                        if (types & (1 << json_schema::TYPE_ARRAY)) != 0 { json_value = peg::choice2(json_value, peg::json_array()); }
+                        if (types & ((1 << json_schema::TYPE_NUMBER) | (1 << json_schema::TYPE_INTEGER))) != 0 { json_value = peg::choice2(json_value, peg::json_number()); }
+                        if (types & (1 << json_schema::TYPE_BOOLEAN)) != 0 { json_value = peg::choice2(json_value, peg::json_bool()); }
+                        if (types & (1 << json_schema::TYPE_NULL)) != 0 { json_value = peg::choice2(json_value, peg::json_null()); }
+                        let at = peg::atomic(peg::seq2(chat_peg::tool_arg_json_value(json_value), arg_close));
+                        arg_value = peg::gbnf(peg::choice2(at, arg_string), "xml-arg-string");
+                    }
+                    // space() + tool_arg(tool_arg_open(ARG_KEY + tool_arg_name(name) + ARG_KEY_END) << (arg_type + ARG_VAL + arg_value))
+                    let tan = chat_peg::tool_arg_name(peg::literal(pname));
+                    let open = chat_peg::tool_arg_open(peg::chain([peg::cs(ARG_KEY), peg::ci(tan), peg::cs(ARG_KEY_END)]));
+                    let y = peg::chain([peg::ci(arg_type), peg::cs(ARG_VAL), peg::ci(arg_value)]);
+                    let ta = chat_peg::tool_arg(peg::spaced(open, y));
+                    let s = peg::space();
+                    let arg = peg::seq2(s, ta);
+                    let r = peg::rule(rule_name, arg, false);
+                    if json_schema::prop_required(root_node, k) { required_args.push(r); } else { optional_args.push(r); }
+                }
+                var args = chat_peg::permute(str("tool-", i, "-args"), required_args);
+                if optional_args.len > 0 { args = peg::seq2(args, peg::zero_or_more(peg::choice(optional_args))); }
+                // tool((tool_open(CALL_START + tool_name(name) + "\n") + tool_args(args)) << tool_close(CALL_END))
+                let ta = chat_peg::tool_args(args);
+                let tn = chat_peg::tool_name(peg::literal(name));
+                let open = chat_peg::tool_open(peg::chain([peg::cs(CALL_START), peg::ci(tn), peg::cs("\n")]));
+                let x = peg::seq2(open, ta);
+                let tc = chat_peg::tool_close(peg::literal(CALL_END));
+                let r = peg::rule(str("tool-", i), chat_peg::tool(peg::spaced(x, tc)), false);
+                tool_choice = peg::choice2(tool_choice, r);
+            }
+        }
+        let required = g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+        var calls = tool_choice;
+        if g.parallel_tool_calls {
+            let s = peg::space();
+            let z = peg::zero_or_more(peg::seq2(s, tool_choice));
+            calls = peg::seq2(tool_choice, z);
+        }
+        // SECTION_START << calls << SECTION_END
+        let ls = peg::literal(SECTION_START);
+        let a = peg::spaced(ls, calls);
+        let le = peg::literal(SECTION_END);
+        let tool_calls = peg::trigger_rule("tool-calls", peg::repeat(peg::spaced(a, le), if required { 1 } else { 0 }, 1));
+        // the thinking stays inline when a required call skips the content parser
+        if required && !extract { reasoning = chat_peg::content(k2h_think_block(THINK_START, think_body, think_end, ends)); }
+        // a required call comes right after the reasoning
+        let content = if required { peg::eps() } else { chat_peg::content(peg::until(SECTION_START)) };
+        let b = peg::spaced(reasoning, content);
+        root = peg::seq2(generation_prompt, peg::spaced(b, tool_calls));
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        let lazy = !(rf || g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED);
+        build_grammar(lazy);
+        if lazy { chat_render::add_trigger(chat_render::TRIGGER_WORD, SECTION_START); }
+    }
+}
+
+// extra_context.value(key, def), quietly
+fn context_string_quiet(g: chat_render::Gen, key: const u8[:], def: const u8[:]) -> u8[>..] {
+    if g.extra_context.len == 0 { return str(def); }
+    let v = json_schema::json_value(g.extra_context);
+    let x = chat_peg::jget(v, key);
+    if x >= 0 && json_schema::json_kind(x) == json_schema::J_STRING { return str(json_schema::json_str(x)); }
+    return str(def);
+}
+
+//
+// MiniMax M3 (minimax-m3.cpp), and its mapper
+//
+
+let MM3_NS = "]<]minimax[>[";
+let TOOL_ARG_OBJECT = "tool-arg-object";
+let TOOL_ARG_ARRAY = "tool-arg-array";
+let TOOL_ARG_ITEM = "tool-arg-item";
+
+// The names the recursion builds, as ranges of mm_names (a name made for a
+// call is dropped when it returns), and the lists it builds, on mm_build.
+struct R2 { at: i64, len: i64 }
+var mm_names: u8[>..<] = [];
+var mm_build: i64[>..<] = [];
+
+fn mmn(r: R2) -> const u8[:] { mm_names[r.at..r.at + r.len] }
+
+// until and ac of a name, copied out of mm_names first
+fn mm_until(r: R2) -> i64 { let c = str(mmn(r)); return peg::until(c); }
+fn mm_ac(p: i64, r: R2) -> i64 { let c = str(mmn(r)); return peg::ac(p, c); }
+
+fn mm_text(b: const u8[:]) -> R2 {
+    let at0 = mm_names.len;
+    for c in b { mm_names.push(c); }
+    return R2 { at: at0, len: b.len };
+}
+
+// name + sep + k, or name + suffix (k < 0)
+fn mm_name(name: R2, sep: const u8[:], k: i64) -> R2 {
+    let at0 = mm_names.len;
+    for i in name.len { mm_names.push(mm_names[name.at + i]); }
+    for c in sep { mm_names.push(c); }
+    if k >= 0 {
+        var digits: u8[>..] = [];
+        format(digits, k);
+        for c in digits { mm_names.push(c); }
+    }
+    return R2 { at: at0, len: mm_names.len - at0 };
+}
+
+// The argument value of schema node n, its close tag close: the template
+// writes values out in XML, recursively (value_of).
+recursive fn mm3_value_of(n: i64, name: R2, close: R2) -> i64 {
+    let close_tag = chat_peg::tool_arg_close(peg::literal(mmn(close)));
+    // a string takes anything: a union with a string in it is a string
+    if json_schema::may_be_string(n) {
+        let sv = chat_peg::tool_arg_string_value(mm_until(close));
+        return mm_ac(peg::seq2(sv, close_tag), close);
+    }
+    let kind = json_schema::node_kind(n);
+    if kind == json_schema::K_ANY_OF {
+        let mark = mm_build.len;
+        for k in json_schema::anyof_count(n) {
+            let nm0 = mm_names.len;
+            let alt_name = mm_name(name, "-", k);
+            let alt = mm3_value_of(json_schema::anyof_child(n, k), alt_name, close);
+            mm_names.resize(nm0);
+            mm_build.push(alt);
+        }
+        let r = peg::choice(mm_build[mark..]);
+        mm_build.resize(mark);
+        return r;
+    }
+    if kind == json_schema::K_OBJECT && json_schema::prop_count(n) > 0 {
+        // tag(OBJECT, members) + space() + close_tag
+        let s = peg::space();
+        let members = mm3_members_of(n, name);
+        let tg = peg::tag(TOOL_ARG_OBJECT, members);
+        return peg::chain([peg::ci(tg), peg::ci(s), peg::ci(close_tag)]);
+    }
+    if kind == json_schema::K_ARRAY {
+        let nm0 = mm_names.len;
+        let item_close = mm_text(str(MM3_NS, "</item>"));
+        let item_name = mm_name(name, "-item", -1);
+        let v = mm3_value_of(json_schema::array_items(n), item_name, item_close);
+        mm_names.resize(nm0);
+        let l = peg::literal(str(MM3_NS, "<item>"));
+        let item = peg::rule(str(mmn(name), "-item"), peg::tag(TOOL_ARG_ITEM, peg::seq2(l, v)), false);
+        // tag(ARRAY, repeat(space() + item, 0, -1)) + space() + close_tag
+        let s2 = peg::space();
+        let s1 = peg::space();
+        let ta = peg::tag(TOOL_ARG_ARRAY, peg::repeat(peg::seq2(s1, item), 0, -1));
+        return peg::chain([peg::ci(ta), peg::ci(s2), peg::ci(close_tag)]);
+    }
+    let j = peg::json();
+    let jv = chat_peg::tool_arg_json_value(peg::schema(j, str(mmn(name), "-schema"), n, false));
+    return peg::seq2(jv, close_tag);
+}
+
+// element_of: <NS<tag>>value
+recursive fn mm3_element_of(tag: R2, n: i64, name: R2) -> i64 {
+    let nm0 = mm_names.len;
+    let close = mm_text(str(MM3_NS, "</", mmn(tag), ">"));
+    let v = mm3_value_of(n, name, close);
+    mm_names.resize(nm0);
+    let l2 = peg::literal(">");
+    let tan = chat_peg::tool_arg_name(peg::literal(mmn(tag)));
+    let l1 = peg::literal(str(MM3_NS, "<"));
+    let open = chat_peg::tool_arg_open(peg::chain([peg::ci(l1), peg::ci(tan), peg::ci(l2)]));
+    return peg::rule(mmn(name), chat_peg::tool_arg(peg::seq2(open, v)), false);
+}
+
+// members_of: the required properties in order, then the optional ones in any order and number.
+recursive fn mm3_members_of(n: i64, prefix: R2) -> i64 {
+    // (element, required) pairs
+    let mark = mm_build.len;
+    for k in json_schema::prop_count(n) {
+        let nm0 = mm_names.len;
+        let pname = mm_text(json_schema::prop_name(n, k));
+        let el_name = mm_name(prefix, "-", k);
+        let element = mm3_element_of(pname, json_schema::prop_node(n, k), el_name);
+        mm_names.resize(nm0);
+        mm_build.push(element);
+        mm_build.push(if json_schema::prop_required(n, k) { 1 } else { 0 });
+    }
+    var members = peg::eps();
+    var first = true;
+    var k = mark;
+    while k < mm_build.len {
+        if mm_build[k + 1] == 1 {
+            if !first { let s = peg::space(); members = peg::seq2(members, s); }
+            first = false;
+            members = peg::seq2(members, mm_build[k]);
+        }
+        k += 2;
+    }
+    var any_optional = -1;
+    k = mark;
+    while k < mm_build.len {
+        if mm_build[k + 1] == 0 {
+            if any_optional < 0 { any_optional = peg::choice([]); }
+            any_optional = peg::choice2(any_optional, mm_build[k]);
+        }
+        k += 2;
+    }
+    mm_build.resize(mark);
+    if any_optional >= 0 {
+        let s = peg::space();
+        let rep = peg::repeat(peg::seq2(s, any_optional), 0, -1);
+        members = peg::seq2(members, rep);
+    }
+    return members;
+}
+
+fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
+    let THINK_START = "<mm:think>";
+    let THINK_END = "</mm:think>";
+    let FC_START = str(MM3_NS, "<tool_call>");
+    let FC_END = str(MM3_NS, "</tool_call>");
+    let INVOKE_END = str(MM3_NS, "</invoke>");
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { .. }, gp);
+    chat_render::format = chat_render::FORMAT_PEG_MINIMAX_M3;
+    chat_render::supports_thinking = true;
+    chat_render::thinking_start.append(THINK_START);
+    chat_render::list_push(chat_render::thinking_ends, THINK_END);
+    for tk in [MM3_NS, "<tool_call>", "</tool_call>", THINK_START, THINK_END] { preserve(tk); }
+    chat_render::assistant_start.append("]~b]ai");
+    chat_render::user_start.append("]~b]user");
+    let tools = has_tools();
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let GEN_PROMPT = str(gp);
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append(GEN_PROMPT);
+        gp.append(THINK_START);
+        gp.append(g.continue_reasoning);
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    peg::begin();
+    let generation_prompt = chat_peg::prefix(GEN_PROMPT, THINK_START);
+    let end = peg::end();
+    var reasoning = peg::eps();
+    if extract {
+        var think_block = -1;
+        if g.enable_thinking {
+            // THINK_START + space() + ac(reasoning(until(THINK_END)) + THINK_END, THINK_END)
+            let l2 = peg::literal(THINK_END);
+            let r = chat_peg::reasoning(peg::until(THINK_END));
+            let ac = peg::ac(peg::seq2(r, l2), THINK_END);
+            let s = peg::space();
+            let l = peg::literal(THINK_START);
+            think_block = peg::chain([peg::ci(l), peg::ci(s), peg::ci(ac)]);
+        } else {
+            let l2 = peg::literal(THINK_END);
+            let u = peg::until(THINK_END);
+            let ac = peg::ac(peg::seq2(u, l2), THINK_END);
+            let l = peg::literal(THINK_START);
+            think_block = peg::seq2(l, ac);
+        }
+        // a turn without reasoning starts with a bare </mm:think>
+        reasoning = peg::optional(peg::choice([think_block, peg::literal(THINK_END)]));
+    }
+    var root = -1;
+    if rf {
+        let l2 = peg::literal("```");
+        let s2 = peg::space();
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let c = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
+        let s1 = peg::space();
+        let l1 = peg::literal("```json");
+        let response_format = peg::rule("response-format", peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(c), peg::ci(s2), peg::ci(l2)]), false);
+        root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(response_format), peg::ci(end)]);
+    } else if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+        let c = chat_peg::content(peg::rest());
+        root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(c), peg::ci(end)]);
+    } else {
+        var tool_choice = peg::choice([]);
+        for i in json_schema::json_len(tools_v) {
+            let func = function_of(i);
+            guard func >= 0 else { continue; }
+            let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+            let root_node = chat_peg::params_schema(func);
+            var invoke_body = peg::eps();
+            if json_schema::node_kind(root_node) == json_schema::K_OBJECT {
+                mm_names.clear();
+                mm_build.clear();
+                invoke_body = mm3_members_of(root_node, mm_text(str("tool-", i, "-arg")));
+            }
+            // tool(tool_open(NS<invoke name=" + tool_name(name) + ">) + space() + body + space() + tool_close(INVOKE_END))
+            let tc = chat_peg::tool_close(peg::literal(INVOKE_END));
+            let s2 = peg::space();
+            let s1 = peg::space();
+            let l2 = peg::literal("\">");
+            let tn = chat_peg::tool_name(peg::literal(name));
+            let l1 = peg::literal(str(MM3_NS, "<invoke name=\""));
+            let open = chat_peg::tool_open(peg::chain([peg::ci(l1), peg::ci(tn), peg::ci(l2)]));
+            let fp = chat_peg::tool(peg::chain([peg::ci(open), peg::ci(s1), peg::ci(invoke_body), peg::ci(s2), peg::ci(tc)]));
+            let r = peg::rule(str("tool-", i), fp, false);
+            tool_choice = peg::choice2(tool_choice, r);
+        }
+        let require_tools = g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+        var tool_calls = peg::eps();
+        if g.parallel_tool_calls {
+            let l2 = peg::literal(FC_END);
+            let s2 = peg::space();
+            let s3 = peg::space();
+            let z = peg::zero_or_more(peg::seq2(s3, tool_choice));
+            let s1 = peg::space();
+            let l1 = peg::literal(FC_START);
+            tool_calls = peg::trigger_rule("tool-call", peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(tool_choice), peg::ci(z), peg::ci(s2), peg::ci(l2)]));
+        } else {
+            let l2 = peg::literal(FC_END);
+            let s2 = peg::space();
+            let s1 = peg::space();
+            let l1 = peg::literal(FC_START);
+            tool_calls = peg::trigger_rule("tool-call", peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(tool_choice), peg::ci(s2), peg::ci(l2)]));
+        }
+        if !require_tools { tool_calls = peg::optional(tool_calls); }
+        let before = chat_peg::content(peg::until(FC_START));
+        root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(before), peg::ci(tool_calls), peg::ci(end)]);
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
+        chat_render::add_trigger(chat_render::TRIGGER_WORD, FC_START);
+    }
+}
+
+// the mapper (common_chat_peg_minimax_m3_mapper)
+
+var mm_stack: i64[>..<] = [];
+
+recursive fn mm3_collect(n: i64, tag: const u8[:]) {
+    for k in node_kids(n) {
+        let c = peg::node_child(n, k);
+        if peg::node_tag(c) == tag { mm_stack.push(c); } else { mm3_collect(c, tag); }
+    }
+}
+
+fn mm3_value_node(n: i64) -> i64 {
+    for k in node_kids(n) {
+        let c = peg::node_child(n, k);
+        let tg = peg::node_tag(c);
+        if tg == chat_peg::TOOL_ARG_VALUE || tg == chat_peg::TOOL_ARG_STRING_VALUE || tg == TOOL_ARG_OBJECT || tg == TOOL_ARG_ARRAY { return c; }
+    }
+    return -1;
+}
+
+recursive fn mm3_value_to_json(out: u8[>..]&, id: i64, closed: bool) {
+    if id < 0 { return; }
+    let tg = peg::node_tag(id);
+    if tg == TOOL_ARG_OBJECT { mm3_container_to_json(out, id, true, closed); return; }
+    if tg == TOOL_ARG_ARRAY { mm3_container_to_json(out, id, false, closed); return; }
+    if tg == chat_peg::TOOL_ARG_STRING_VALUE {
+        out.push('"');
+        chat_peg::escape_inner(out, peg::node_text(id));
+        if closed { out.push('"'); }
+        return;
+    }
+    // numbers and booleans as the template wrote them
+    out.append(peg::node_text(id));
+}
+
+recursive fn mm3_member_to_json(out: u8[>..]&, n: i64) {
+    let name_id = peg::find_by_tag(n, chat_peg::TOOL_ARG_NAME, 3);
+    if name_id < 0 { return; }
+    json_schema::json_string(out, peg::node_text(name_id));
+    out.push(':');
+    mm3_value_to_json(out, mm3_value_node(n), !node_partial(n));
+}
+
+recursive fn mm3_container_to_json(out: u8[>..]&, n: i64, is_object: bool, closed: bool) {
+    let tag = if is_object { chat_peg::TOOL_ARG } else { TOOL_ARG_ITEM };
+    let at0 = mm_stack.len;
+    mm3_collect(n, tag);
+    let count = mm_stack.len - at0;
+    out.push(if is_object { '{' } else { '[' });
+    var add_comma = false;
+    for k in count {
+        let entry = mm_stack[at0 + k];
+        // an entry that writes nothing is left out
+        let mark = out.len;
+        if add_comma { out.push(','); }
+        let m2 = out.len;
+        if is_object { mm3_member_to_json(out, entry); } else { mm3_value_to_json(out, mm3_value_node(entry), !node_partial(entry)); }
+        if out.len == m2 { out.resize(mark); } else { add_comma = true; }
+    }
+    mm_stack.resize(at0);
+    if closed { out.push(if is_object { '}' } else { ']' }); }
+}
+
+recursive fn mm3_visit(n: i64) {
+    let tg = peg::node_tag(n);
+    if tg == chat_peg::REASONING { peg::sanitized_text(n, chat_peg::reasoning_text); return; }
+    if tg == chat_peg::CONTENT { peg::sanitized_text(n, chat_peg::content_text); return; }
+    if tg == chat_peg::TOOL {
+        let name_id = peg::find_by_tag(n, chat_peg::TOOL_NAME, 3);
+        if name_id >= 0 {
+            var args: u8[>..] = [];
+            mm3_container_to_json(args, n, true, !node_partial(n));
+            let nm = chat_peg::keep(peg::node_text(name_id));
+            let a = chat_peg::keep(args);
+            chat_peg::calls.push(chat_peg::Call { name: nm, arguments: a, id: chat_peg::S { .. } });
+        }
+        return;
+    }
+    for k in node_kids(n) { mm3_visit(peg::node_child(n, k)); }
+}
+
+fn map_minimax_m3() {
+    chat_peg::mapper_reset();
+    mm_stack.clear();
+    for n in peg::result_nodes { mm3_visit(n); }
 }
