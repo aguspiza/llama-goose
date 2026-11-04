@@ -28,7 +28,8 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | PEG parsers (`common/peg-parser`) | ported | `tests/peg`: test-gbnf-generation's cases and parse cases of test-basic |
 | tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 75 templates of `models/templates`; `tests/chat_peg`: all 517 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
 | `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
-| the rest of `common/`, server (and so `llama-cli`, which runs it) | not yet | |
+| `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported with one slot (requests are served one at a time), except embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses with gemma-3 and LFM2.5 |
+| the rest of `common/`, `llama-cli` | not yet | |
 
 `tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
 and greedy sampling it writes byte for byte the text llama.cpp's
@@ -123,6 +124,17 @@ fixed in llama.cpp's too, three-turn chats in English and Spanish give the
 same bytes on all three models. Like simple-chat it runs 4 threads
 (libllama's default, not common's): ggml's flash attention splits a long
 KV cache by thread, so the thread count changes the last bits.
+
+`tools/server` is `llama-server`, over `tools/net` (sockets in C, HTTP/1.1
+in Goose) and `common/jdoc` (JSON written as nlohmann writes it). With one
+slot on both, `scripts/compare-server.py` sends 29 requests to it and to
+llama.cpp's `llama-server` and compares the responses, less ids, times and
+the cached-token counts: completions with and without streaming, stop
+strings, grammars and JSON schemas, chat with tool calls (streamed as
+deltas), prefilled assistant messages and errors. All 29 are the same with
+gemma-3 270M and LFM2.5 230M. The cached-token counts differ because
+llama-server reuses an SWA or recurrent cache only from a checkpoint, while
+this server keeps every attention cell and reuses more.
 
 `LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
 llama.cpp's eval callback.

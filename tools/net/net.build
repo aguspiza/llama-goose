@@ -1,0 +1,4 @@
+// The sockets behind net.goose: Winsock on Windows.
+c_sources = ["net.c"];
+c_flags_cc = ["-O2"];
+c_libs_windows = ["ws2_32"];

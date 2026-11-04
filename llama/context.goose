@@ -381,6 +381,16 @@ fn clear(c: Context&) {
     c.n_past = 0;
 }
 
+// Keeps the first n cells, forgets the rest: llama_memory_seq_rm(mem, 0, n,
+// -1). A recurrent state cannot go back, so it is cleared unless n keeps
+// all of it; the cells kept: n or 0.
+fn keep_first(c: Context&, m: model::Model&, n: i64) -> i64 {
+    if n >= c.n_past { return c.n_past; }
+    if any_recurrent(m) { clear(c); return 0; }
+    c.n_past = n;
+    return n;
+}
+
 // Runs tokens, at positions n_past.., through the model; writes the logits
 // of the last one to logits. With `outputs` (indices into tokens, in
 // order), the logits of those tokens instead, one row of n_vocab after another.
