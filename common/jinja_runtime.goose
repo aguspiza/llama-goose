@@ -46,7 +46,7 @@ fn new_ctx() -> Ctx {
     obj_set_name(env, "False", mk_bool(false));
     obj_set_name(env, "none", mk_none());
     obj_set_name(env, "None", mk_none());
-    now = number::c_time();
+    now = number::now();
     return Ctx { env: env, depth: 0 };
 }
 

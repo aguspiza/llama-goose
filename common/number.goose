@@ -110,3 +110,8 @@ fn float_json(out: u8[>..]&, v: f64) {
     if v - v != 0.0 { out.append(if v < 0.0 { "-Infinity" } else { "Infinity" }); return; }
     float_repr(out, v);
 }
+
+// The time now; fixed_time instead when set (>= 0), for tests that compare
+// with prompts made at another time.
+var fixed_time: i64 = -1;
+fn now() -> i64 { if fixed_time >= 0 { fixed_time } else { c_time() } }

@@ -1757,8 +1757,27 @@ fn from_json(schema: const u8[:]) -> i64 {
     return root;
 }
 
-// A JSON value's text, added to the values there are (common_json::parse).
+// A JSON value's text, added to the values there are (common_json::parse):
+// the value, or -1 and the error in err.
 fn json_value(text: const u8[:]) -> i64 { parse_json(text) }
+
+// The schema nodes of a JSON value read before: the root node, or -1 and
+// the error in err.
+fn from_value(v: i64) -> i64 {
+    var root = -1;
+    fn body() { root = build_document(v); }
+    exception::try<Fail>(body);
+    return root;
+}
+
+// A JSON value's members and elements, for the chat code.
+fn get_member(v: i64, name: const u8[:]) -> i64 { get(v, name) }
+fn json_kind(v: i64) -> u8 { kind(v) }
+fn json_len(v: i64) -> i64 { jv[v].n }
+fn json_at(v: i64, k: i64) -> i64 { jl[jv[v].at + k] }
+fn json_key(v: i64, k: i64) -> const u8[:] { t(jv[jl[jv[v].at + k]].key) }
+fn json_str(v: i64) -> const u8[:] { t(jv[v].s) }
+fn json_dump(out: u8[>..]&, v: i64) { dump_into(out, v); }
 
 // Whether a value the node admits may be a string (common_chat_schema::may_be_string).
 fn may_be_string(node: i64) -> bool {
@@ -1836,3 +1855,10 @@ fn to_grammar(schema: const u8[:], out: u8[>..]&) -> bool {
     }
     return ok;
 }
+
+// A schema node's kind, and an object node's properties (in schema order).
+fn node_kind(n: i64) -> u8 { nodes[n].kind }
+fn prop_count(n: i64) -> i64 { if nodes[n].kind == K_OBJECT { nodes[n].kids_n } else { 0 } }
+fn prop_name(n: i64, k: i64) -> const u8[:] { t(props[nodes[n].kids_at + k].name) }
+fn prop_node(n: i64, k: i64) -> i64 { props[nodes[n].kids_at + k].node }
+fn prop_required(n: i64, k: i64) -> bool { props[nodes[n].kids_at + k].required }

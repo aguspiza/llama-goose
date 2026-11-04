@@ -1374,3 +1374,47 @@ fn grammar(a: i64, lazy: bool, out: u8[>..]&) -> bool {
     exception::try<json_schema::Fail>(body) { f => err.clear(); err.append(json_schema::err); };
     return ok;
 }
+
+//
+// C++ expressions, in the order GCC builds them
+//
+
+// An operand of a + chain: a parser, or a string (p < 0), whose literal the
+// operator makes when it joins it.
+struct CItem { p: i64 = -1, s: const u8[:] = "" }
+
+fn ci(p: i64) -> CItem { CItem { p: p, .. } }
+fn cs(s: const u8[:]) -> CItem { CItem { s: s, .. } }
+
+// e1 + e2 + ... (left to right). GCC evaluates the operands right to left,
+// so the caller makes the parser operands last to first; the sequences,
+// and the literals of the string operands, are made here, left to right.
+fn chain(items: const CItem[:]) -> i64 {
+    var acc = items[0].p;
+    var k = 1;
+    if acc < 0 {
+        // "s" + p
+        let l = literal(items[0].s);
+        acc = seq2(l, items[1].p);
+        k = 2;
+    }
+    while k < items.len {
+        let x = if items[k].p >= 0 { items[k].p } else { literal(items[k].s) };
+        acc = seq2(acc, x);
+        k++;
+    }
+    return acc;
+}
+
+// Ends the arena and forgets it if it is the last one (for the short-lived
+// parsers of the template analysis).
+fn release(a: i64) {
+    guard a == arenas.len - 1 else { return; }
+    let base = arenas[a].base;
+    ps.resize(base);
+    var w = 0;
+    for r in rules.len { if rules[r].arena != a { rules[w] = rules[r]; w++; } }
+    rules.resize(w);
+    arenas.pop();
+    cur = arenas.len - 1;
+}
