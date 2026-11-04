@@ -554,6 +554,7 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     if h == H_MINISTRAL_3 { init_ministral_3(t, g); return; }
     if h == H_GPT_OSS { init_gpt_oss(t, g); return; }
     if h == H_LLM_JP_HARMONY { init_llm_jp_harmony(t, g); return; }
+    if h == H_DEEPSEEK_V3_2 { init_deepseek_v3_2(t, g); return; }
     json_schema::fail(str("the dedicated handler ", handler_name(h), " is not ported yet"));
 }
 
@@ -1829,5 +1830,323 @@ fn init_llm_jp_harmony(t: chat_render::Template, g: chat_render::Gen) {
         chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to=functions$");
         chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>\\s*assistant(\\s+to)");
         chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>\\s*assistant(<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to)");
+    }
+}
+
+//
+// DeepSeek V3.2, V4, V4.1 (deepseek.cpp)
+//
+
+fn str_member(m: i64, key: const u8[:]) -> const u8[:] {
+    let v = jinja::obj_get_name(m, key);
+    return if v >= 0 && jinja::kind(v) == jinja::K_STRING { jinja::sbytes(v) } else { "" };
+}
+
+// deepseek_v4_sort_tool_results: the tool results of a user block in the
+// order of the calls they answer (by id), as V4 renders them.
+fn deepseek_v4_sort_tool_results(arr: i64) {
+    var order_ids: u8[>..] = [];        // the call ids, 0-separated, by index
+    var have_order = false;
+    var i = 0;
+    let n = jinja::arr_len(arr);
+    fn order_of(m: i64) -> i64 {
+        let id = str_member(m, "tool_call_id");
+        var start = 0;
+        var k = 0;
+        var found = 0;
+        for j in order_ids.len {
+            guard order_ids[j] == 0 else { continue; }
+            if order_ids[start..j].len > 0 && order_ids[start..j] == id { found = k; }
+            start = j + 1;
+            k++;
+        }
+        return found;
+    }
+    while i < n {
+        let msg = jinja::arr_at(arr, i);
+        let role = str(role_of(msg));
+        if role == "assistant" && has_tool_calls(msg) {
+            order_ids.clear();
+            have_order = false;
+            let tcs = jinja::obj_get_name(msg, "tool_calls");
+            // std::map from id to the call's index: the last call of an id wins
+            for k in jinja::arr_len(tcs) {
+                let id = str_member(jinja::arr_at(tcs, k), "id");
+                if id.len > 0 { have_order = true; }
+                order_ids.append(id);
+                order_ids.push(0);
+            }
+            i++;
+            continue;
+        }
+        if role != "user" && role != "tool" { i++; continue; }
+        // a run of user and tool messages: one user block
+        var positions: i64[>..] = [];
+        var run_end = i;
+        while run_end < n {
+            let r = role_of(jinja::arr_at(arr, run_end));
+            if r == "tool" { positions.push(run_end); } else if r != "user" { break; }
+            run_end++;
+        }
+        if positions.len > 1 && have_order {
+            var results: i64[>..] = [];
+            for p in positions { results.push(jinja::arr_at(arr, p)); }
+            stable_sort(results) { a, b => order_of(a) < order_of(b) };
+            let base = jinja::vals[arr].a;
+            for k in positions.len { jinja::items[base + positions[k]] = results[k]; }
+        }
+        i = run_end;
+    }
+}
+
+fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
+    let src = chat_render::source(t);
+    // V4: the tool call block is "tool_calls", the results go in call order, and the
+    // non-thinking generation prompt ends with a bare </think>
+    let is_v4 = find(src, "function_calls") < 0;
+    // V4.1: the DSML tag names have a leading space
+    let is_v41 = is_v4 && find(src, "｜DSML｜ calls>") >= 0;
+    var adjusted: u8[>..] = [];
+    var tools_text: u8[>..] = [];
+    var ok = false;
+    fn adjust() {
+        jinja::reset();
+        let arr = jinja::from_json(g.messages, false);
+        if is_v4 {
+            deepseek_v4_sort_tool_results(arr);
+            chat_render::dump(adjusted, arr);
+        }
+        // V4.1 may declare the tools on a system message
+        if is_v41 && !has_tools() {
+            var first = true;
+            for k in jinja::arr_len(arr) {
+                let m = jinja::arr_at(arr, k);
+                guard role_of(m) == "system" else { continue; }
+                let mt = jinja::obj_get_name(m, "tools");
+                guard mt >= 0 && jinja::kind(mt) == jinja::K_ARRAY else { continue; }
+                if tools_text.len == 0 { tools_text.push('['); }
+                for q in jinja::arr_len(mt) {
+                    if !first { tools_text.push(','); }
+                    first = false;
+                    chat_render::dump(tools_text, jinja::arr_at(mt, q));
+                }
+            }
+            if tools_text.len > 0 { tools_text.push(']'); }
+        }
+        ok = true;
+    }
+    exception::try<jinja::Fail>(adjust);
+    if !ok { json_schema::fail(jinja::err); }
+    if tools_text.len > 0 { tools_v = json_schema::json_value(tools_text); }
+    let tools = has_tools();
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    // more context: the response format, and V4.1's reasoning effort mapped
+    var context: u8[>..] = [];
+    if is_v4 && rf {
+        context.append("{\"response_format\":");
+        json_schema::json_dump(context, schema_v);
+    }
+    if is_v41 && g.extra_context.len > 0 {
+        let ec = json_schema::json_value(g.extra_context);
+        let re = chat_peg::jget(ec, "reasoning_effort");
+        if re >= 0 && json_schema::json_kind(re) == json_schema::J_STRING {
+            let effort = json_schema::json_str(re);
+            if effort == "minimal" || effort == "xhigh" || effort == "medium" {
+                context.append(if context.len == 0 { "{" } else { "," });
+                context.append("\"reasoning_effort\":");
+                context.append(if effort == "minimal" { "\"low\"" } else if effort == "xhigh" { "\"max\"" } else { "null" });
+            }
+        }
+    }
+    if context.len > 0 { context.push('}'); }
+    let DSML = "｜DSML｜";
+    let THINK_START = "<think>";
+    let THINK_END = "</think>";
+    let TAG_SP = if is_v41 { " " } else { "" };
+    let TC_BLOCK = if is_v41 { "calls" } else if is_v4 { "tool_calls" } else { "function_calls" };
+    let FC_START = str("<", DSML, TAG_SP, TC_BLOCK, ">");
+    let FC_END = str("</", DSML, TAG_SP, TC_BLOCK, ">");
+    let INVOKE_START = str("<", DSML, TAG_SP, "invoke");
+    let INVOKE_END = str("</", DSML, TAG_SP, "invoke>");
+    let PARAM_START = str("<", DSML, TAG_SP, "parameter");
+    let PARAM_END = str("</", DSML, TAG_SP, "parameter>");
+    let GEN_PROMPT = "<｜Assistant｜>";
+    let TC_SEPARATOR = "\n\n";
+    chat_render::assistant_start.append(GEN_PROMPT);
+    chat_render::user_start.append("<｜User｜>");
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { has_messages: is_v4, messages: adjusted, context: context, .. }, gp);
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    chat_render::thinking_start.append(THINK_START);
+    chat_render::list_push(chat_render::thinking_ends, THINK_END);
+    chat_render::list_push(chat_render::thinking_ends, FC_START);
+    preserve(DSML);
+    preserve(THINK_START);
+    preserve(THINK_END);
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append(GEN_PROMPT);
+        if is_v4 && g.continue_reasoning.len == 0 {
+            gp.append(THINK_END);
+            if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(g.continue_content); }
+        } else {
+            gp.append(THINK_START);
+            gp.append(g.continue_reasoning);
+            if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    let require_tools = g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+    let has_tool_calls = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
+    peg::begin();
+    let generation_prompt = peg::literal(GEN_PROMPT);
+    let end = peg::end();
+    // the tool call section first: the reasoning may need it
+    var tool_choice = peg::choice([]);
+    if has_tool_calls {
+        for i in json_schema::json_len(tools_v) {
+            let func = function_of(i);
+            guard func >= 0 else { continue; }
+            let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+            var required: i64[>..] = [];
+            var optional: i64[>..] = [];
+            let root_node = chat_peg::params_schema(func);
+            for k in json_schema::prop_count(root_node) {
+                let pname = str(json_schema::prop_name(root_node, k));
+                let pnode = json_schema::prop_node(root_node, k);
+                let is_string = json_schema::may_be_string(pnode);
+                let close = chat_peg::tool_arg_close(peg::literal(PARAM_END));
+                var value = -1;
+                if is_string {
+                    value = chat_peg::tool_arg_string_value(peg::until(PARAM_END));
+                } else {
+                    let j = peg::json();
+                    value = chat_peg::tool_arg_json_value(peg::schema(j, str("tool-", i, "-arg-", k, "-schema"), pnode, false));
+                }
+                let l2 = peg::literal(str("\" string=\"", if is_string { "true" } else { "false" }, "\">"));
+                let tan = chat_peg::tool_arg_name(peg::literal(pname));
+                let l1 = peg::literal(str(PARAM_START, " name=\""));
+                let open = chat_peg::tool_arg_open(peg::chain([peg::ci(l1), peg::ci(tan), peg::ci(l2)]));
+                let arg = chat_peg::tool_arg(peg::chain([peg::ci(open), peg::ci(value), peg::ci(close)]));
+                let named = peg::rule(str("tool-", i, "-arg-", k), arg, false);
+                if json_schema::prop_required(root_node, k) { required.push(named); } else { optional.push(named); }
+            }
+            var args_seq = peg::eps();
+            for r, k in required {
+                if k > 0 { let s = peg::space(); args_seq = peg::seq2(args_seq, s); }
+                args_seq = peg::seq2(args_seq, r);
+            }
+            if optional.len > 0 {
+                var any_opt = peg::choice([]);
+                for o in optional { any_opt = peg::choice2(any_opt, o); }
+                let s = peg::space();
+                let rep = peg::repeat(peg::seq2(s, any_opt), 0, -1);
+                args_seq = peg::seq2(args_seq, rep);
+            }
+            // tool(tool_open(INVOKE_START + " name=\"" + tool_name(name) + "\">\n") + body + space() + tool_close(INVOKE_END))
+            let tc = chat_peg::tool_close(peg::literal(INVOKE_END));
+            let s = peg::space();
+            let l2 = peg::literal("\">\n");
+            let tn = chat_peg::tool_name(peg::literal(name));
+            let l1 = peg::literal(str(INVOKE_START, " name=\""));
+            let open = chat_peg::tool_open(peg::chain([peg::ci(l1), peg::ci(tn), peg::ci(l2)]));
+            let fp = chat_peg::tool(peg::chain([peg::ci(open), peg::ci(args_seq), peg::ci(s), peg::ci(tc)]));
+            let r = peg::rule(str("tool-", i), fp, false);
+            tool_choice = peg::choice2(tool_choice, r);
+        }
+    }
+    var tool_calls = peg::eps();
+    if g.parallel_tool_calls {
+        let l2 = peg::literal(FC_END);
+        let s2 = peg::space();
+        let s3 = peg::space();
+        let z = peg::zero_or_more(peg::seq2(s3, tool_choice));
+        let s1 = peg::space();
+        let l1 = peg::literal(FC_START);
+        tool_calls = peg::trigger_rule("tool-call", peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(tool_choice), peg::ci(z), peg::ci(s2), peg::ci(l2)]));
+    } else {
+        let l2 = peg::literal(FC_END);
+        let s2 = peg::space();
+        let s1 = peg::space();
+        let l1 = peg::literal(FC_START);
+        tool_calls = peg::trigger_rule("tool-call", peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(tool_choice), peg::ci(s2), peg::ci(l2)]));
+    }
+    var reasoning = peg::eps();
+    var reasoning_with_tc = peg::eps();
+    let obligatory = tool_calls;
+    var allow_reasoning_with_tc = false;
+    if !require_tools { tool_calls = peg::optional(tool_calls); }
+    if extract && g.enable_thinking {
+        if is_v41 {
+            // V4.1 renders a continuation without reasoning as "<｜Assistant｜></think>"
+            let te = peg::literal(THINK_END);
+            let r = chat_peg::reasoning(peg::until(THINK_END));
+            let x = peg::chain([peg::cs(THINK_START), peg::ci(r), peg::cs(THINK_END)]);
+            reasoning = peg::optional(peg::choice2(x, te));
+        } else {
+            let r = chat_peg::reasoning(peg::until(THINK_END));
+            reasoning = peg::optional(peg::chain([peg::cs(THINK_START), peg::ci(r), peg::cs(THINK_END)]));
+        }
+        // THINK_START + reasoning(until_one_of(...)) + space() + obligatory
+        let s = peg::space();
+        let sep_fc = str(TC_SEPARATOR, FC_START);
+        var ends: const u8[:][>..] = [];
+        ends.push(sep_fc);
+        ends.push(FC_START);
+        ends.push(THINK_END);
+        let r = chat_peg::reasoning(peg::until_one_of(ends));
+        reasoning_with_tc = peg::chain([peg::cs(THINK_START), peg::ci(r), peg::ci(s), peg::ci(obligatory)]);
+        allow_reasoning_with_tc = true;
+    } else if extract {
+        // thinking off: the empty <think></think> (V3.2) or bare </think> (V4) of the generation prompt
+        if is_v4 {
+            reasoning = peg::optional(peg::literal(THINK_END));
+        } else {
+            let l2 = peg::literal(THINK_END);
+            let u = peg::until(THINK_END);
+            let l1 = peg::literal(THINK_START);
+            reasoning = peg::optional(peg::chain([peg::ci(l1), peg::ci(u), peg::ci(l2)]));
+        }
+    }
+    var root = -1;
+    if rf {
+        let l2 = peg::literal("```");
+        let s2 = peg::space();
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let c = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
+        let s1 = peg::space();
+        let l1 = peg::literal("```json");
+        let response_format = peg::rule("response-format", peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(c), peg::ci(s2), peg::ci(l2)]), false);
+        root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(response_format), peg::ci(end)]);
+    } else if !has_tool_calls {
+        let c = chat_peg::content(peg::rest());
+        root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(c), peg::ci(end)]);
+    } else {
+        // negate(THINK_START) + content(until_one_of(...)) + space()
+        let s = peg::space();
+        let sep_fc = str(TC_SEPARATOR, FC_START);
+        var ends: const u8[:][>..] = [];
+        ends.push(sep_fc);
+        ends.push(FC_START);
+        let c = chat_peg::content(peg::until_one_of(ends));
+        let n = peg::negate(peg::literal(THINK_START));
+        let before = peg::chain([peg::ci(n), peg::ci(c), peg::ci(s)]);
+        if allow_reasoning_with_tc {
+            let y = peg::chain([peg::ci(reasoning), peg::ci(before), peg::ci(tool_calls)]);
+            let ch = peg::choice2(reasoning_with_tc, y);
+            root = peg::chain([peg::ci(generation_prompt), peg::ci(ch), peg::ci(end)]);
+        } else {
+            root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(before), peg::ci(tool_calls), peg::ci(end)]);
+        }
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        build_grammar(tools && !require_tools);
+        chat_render::add_trigger(chat_render::TRIGGER_WORD, FC_START);
     }
 }
