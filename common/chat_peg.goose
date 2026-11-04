@@ -810,3 +810,113 @@ fn parse_anywhere_and_extract(a: i64, input: const u8[:]) -> bool {
     }
     return false;
 }
+
+//
+// Python-style tool calls (LFM2)
+//
+
+// python_or_json_value: python_value, the leaves also JSON's true, false and null.
+recursive fn python_or_json_value() -> i64 {
+    let r = peg::rule_open("python-or-json-value", false);
+    if r >= 0 { return r; }
+    let ws = peg::space();
+    let value = python_or_json_value();
+    let ps = peg::python_string();
+    let colon = peg::literal(":");
+    let member = peg::seq([ps, ws, colon, ws, value]);
+    let comma = peg::literal(",");
+    let members = peg::seq([member, peg::zero_or_more(peg::seq([ws, comma, ws, member]))]);
+    var dict = peg::rule_open("python-or-json-dict", false);
+    if dict < 0 {
+        let open = peg::literal("{");
+        let close1 = peg::literal("}");
+        let close2 = peg::literal("}");
+        dict = peg::rule_close("python-or-json-dict", peg::seq([open, ws, peg::choice([close1, peg::seq([members, ws, close2])]), ws]), false);
+    }
+    let comma2 = peg::literal(",");
+    let elements = peg::seq([value, peg::zero_or_more(peg::seq([comma2, ws, value]))]);
+    var array = peg::rule_open("python-or-json-array", false);
+    if array < 0 {
+        let open = peg::literal("[");
+        let close1 = peg::literal("]");
+        let close2 = peg::literal("]");
+        array = peg::rule_close("python-or-json-array", peg::seq([open, ws, peg::choice([close1, peg::seq([elements, ws, close2])]), ws]), false);
+    }
+    let a = peg::python_string();
+    let b = peg::python_number();
+    let c = peg::python_bool();
+    let d = peg::python_null();
+    let e = peg::json_bool();
+    let f = peg::json_null();
+    return peg::rule_close("python-or-json-value", peg::choice([dict, array, a, b, c, d, e, f]), false);
+}
+
+// python_style_tool_calls: [name(arg1="value1", arg2=123), ...]
+fn python_style_tool_calls(tools: i64, parallel_tool_calls: bool, allow_json_literals: bool) -> i64 {
+    if tools < 0 || json_schema::json_kind(tools) != json_schema::J_ARRAY || json_schema::json_len(tools) == 0 { return peg::eps(); }
+    var tool_choices = peg::choice([]);
+    for i in json_schema::json_len(tools) {
+        let function = tool_function(tools, i);
+        guard function >= 0 else { continue; }
+        let name = jstr(jget(function, "name"));
+        let params = tool_parameters(function);
+        var args = peg::eps();
+        let props = jget(params, "properties");
+        if props >= 0 && json_schema::json_len(props) > 0 {
+            var arg_choice = peg::choice([]);
+            for k in json_schema::json_len(props) {
+                let prop_name = json_schema::json_key(props, k);
+                let prop_def = json_schema::json_at(props, k);
+                let is_string_type = jstr(jget(prop_def, "type")) == "string";
+                let arg_name_parser = peg::literal(prop_name);
+                var arg_value_parser = peg::eps();
+                // choice({ "\"" + string_content('"') + "\"", "'" + string_content('\'') + "'" })
+                let a3 = peg::literal("\"");
+                let a2 = peg::string_content('"');
+                let a1 = peg::literal("\"");
+                let a = peg::chain([peg::ci(a1), peg::ci(a2), peg::ci(a3)]);
+                let b3 = peg::literal("'");
+                let b2 = peg::string_content('\'');
+                let b1 = peg::literal("'");
+                let b = peg::chain([peg::ci(b1), peg::ci(b2), peg::ci(b3)]);
+                let string_value_parser = tool_arg_value(peg::choice([a, b]));
+                if is_string_type {
+                    arg_value_parser = string_value_parser;
+                } else {
+                    arg_value_parser = tool_arg_value(if allow_json_literals { python_or_json_value() } else { peg::python_value() });
+                }
+                // tool_arg(tool_arg_open(tool_arg_name(name) + "=") + value + tool_arg_close(eps()))
+                let close = tool_arg_close(peg::eps());
+                let eq = peg::literal("=");
+                let open = tool_arg_open(peg::seq2(tool_arg_name(arg_name_parser), eq));
+                let arg_rule = tool_arg(peg::chain([peg::ci(open), peg::ci(arg_value_parser), peg::ci(close)]));
+                arg_choice = peg::choice2(arg_choice, arg_rule);
+            }
+            // arg_choice + zero_or_more("," + space() + arg_choice)
+            let s = peg::space();
+            let z = peg::zero_or_more(peg::chain([peg::cs(","), peg::ci(s), peg::ci(arg_choice)]));
+            args = peg::seq2(arg_choice, z);
+        }
+        // tool(tool_open(tool_name(literal(name)) + "(") + space() + tool_args(args) + space() + tool_close(")"))
+        let tc = tool_close(peg::literal(")"));
+        let s2 = peg::space();
+        let ta = tool_args(args);
+        let s1 = peg::space();
+        let paren = peg::literal("(");
+        let to = tool_open(peg::seq2(tool_name(peg::literal(name)), paren));
+        let tp = tool(peg::chain([peg::ci(to), peg::ci(s1), peg::ci(ta), peg::ci(s2), peg::ci(tc)]));
+        let r = peg::rule(str("tool-", i), tp, false);
+        tool_choices = peg::choice2(tool_choices, r);
+    }
+    if parallel_tool_calls {
+        // "[" + space() + tool_choices + zero_or_more("," + space() + tool_choices) + space() + "]"
+        let s2 = peg::space();
+        let s = peg::space();
+        let z = peg::zero_or_more(peg::chain([peg::cs(","), peg::ci(s), peg::ci(tool_choices)]));
+        let s1 = peg::space();
+        return peg::chain([peg::cs("["), peg::ci(s1), peg::ci(tool_choices), peg::ci(z), peg::ci(s2), peg::cs("]")]);
+    }
+    let s2 = peg::space();
+    let s1 = peg::space();
+    return peg::chain([peg::cs("["), peg::ci(s1), peg::ci(tool_choices), peg::ci(s2), peg::cs("]")]);
+}

@@ -1862,3 +1862,69 @@ fn prop_count(n: i64) -> i64 { if nodes[n].kind == K_OBJECT { nodes[n].kids_n } 
 fn prop_name(n: i64, k: i64) -> const u8[:] { t(props[nodes[n].kids_at + k].name) }
 fn prop_node(n: i64, k: i64) -> i64 { props[nodes[n].kids_at + k].node }
 fn prop_required(n: i64, k: i64) -> bool { props[nodes[n].kids_at + k].required }
+
+// The JSON types a value the node admits may have (value_types), as a
+// mask of 1 << TYPE_*.
+let TYPE_NULL = 0;
+let TYPE_BOOLEAN = 1;
+let TYPE_NUMBER = 2;
+let TYPE_INTEGER = 3;
+let TYPE_STRING = 4;
+let TYPE_ARRAY = 5;
+let TYPE_OBJECT = 6;
+let TYPES_ALL = 127;
+
+fn json_type(v: i64) -> i64 {
+    let k = kind(v);
+    if k == J_NULL { return TYPE_NULL; }
+    if k == J_BOOL { return TYPE_BOOLEAN; }
+    if k == J_INT { return TYPE_INTEGER; }
+    if k == J_FLOAT { return TYPE_NUMBER; }
+    if k == J_STRING { return TYPE_STRING; }
+    if k == J_ARRAY { return TYPE_ARRAY; }
+    return TYPE_OBJECT;
+}
+
+fn value_types(node: i64) -> i64 {
+    var visited: i64[>..] = [];
+    return value_types_impl(node, visited);
+}
+
+recursive fn value_types_impl(node: i64, visited: i64[>..]&) -> i64 {
+    let nd = nodes[node];
+    let k = nd.kind;
+    if k == K_ANY { return TYPES_ALL; }
+    if k == K_NULL { return 1 << TYPE_NULL; }
+    if k == K_BOOLEAN { return 1 << TYPE_BOOLEAN; }
+    if k == K_NUMBER { return (1 << TYPE_NUMBER) | (1 << TYPE_INTEGER); }
+    if k == K_INTEGER { return 1 << TYPE_INTEGER; }
+    if k == K_STRING { return 1 << TYPE_STRING; }
+    if k == K_ARRAY || k == K_TUPLE { return 1 << TYPE_ARRAY; }
+    if k == K_OBJECT { return 1 << TYPE_OBJECT; }
+    if k == K_CONST { return 1 << json_type(nd.value); }
+    if k == K_ENUM {
+        var types = 0;
+        for i in nd.kids_n { types |= 1 << json_type(kids[nd.kids_at + i]); }
+        return types;
+    }
+    if k == K_REF {
+        // a cycle contributes no type, to be safe
+        if nd.target < 0 { return 0; }
+        for v in visited { if v == nd.target { return 0; } }
+        visited.push(nd.target);
+        let r = value_types_impl(nd.target, visited);
+        visited.pop();
+        return r;
+    }
+    if k == K_ANY_OF {
+        var types = 0;
+        for i in nd.kids_n { types |= value_types_impl(kids[nd.kids_at + i], visited); }
+        return types;
+    }
+    if k == K_ALL_OF {
+        var types = TYPES_ALL;
+        for i in nd.kids_n { types &= value_types_impl(kids[nd.kids_at + i], visited); }
+        return types;
+    }
+    return 0;
+}
