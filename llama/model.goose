@@ -1,6 +1,6 @@
 // A model: its hyperparameters and its weights, loaded from a GGUF file.
-// So far: gemma3, llama, and lfm2 (attention and short convolutions).
-// port-of: src/llama-model.cpp src/llama-hparams.cpp src/llama-hparams.h src/llama-model-loader.cpp
+// So far: gemma3, llama, lfm2 (attention and short convolutions) and lfm3.
+// port-of: src/llama-model.cpp src/llama-hparams.cpp src/llama-hparams.h src/llama-model-loader.cpp src/models/lfm3.cpp
 import std;
 import math;
 import ggml from "../ggml";
@@ -18,6 +18,7 @@ let ARCH_UNKNOWN = 0;
 let ARCH_GEMMA3 = 1;
 let ARCH_LLAMA = 2;
 let ARCH_LFM2 = 3;
+let ARCH_LFM3 = 4;
 
 struct HParams {
     arch: i64,
@@ -80,6 +81,7 @@ struct Layer {
     ffn_up_b: ggml::Tensor,
     ffn_down_b: ggml::Tensor,
     ffn_post_norm: ggml::Tensor,
+    attn_gate: ggml::Tensor,         // lfm3: a sigmoid gate per head on the attention's output
     shortconv_conv: ggml::Tensor,
     shortconv_in_proj: ggml::Tensor,
     shortconv_out_proj: ggml::Tensor,
@@ -102,13 +104,14 @@ struct Model {
 //
 
 fn arch_name_of(arch: i64) -> const u8[:] {
-    match arch { ARCH_GEMMA3 => "gemma3", ARCH_LLAMA => "llama", ARCH_LFM2 => "lfm2", _ => "unknown" }
+    match arch { ARCH_GEMMA3 => "gemma3", ARCH_LLAMA => "llama", ARCH_LFM2 => "lfm2", ARCH_LFM3 => "lfm3", _ => "unknown" }
 }
 
 fn arch_from_name(name: const u8[:]) -> i64 {
     if name == "gemma3" { return ARCH_GEMMA3; }
     if name == "llama" { return ARCH_LLAMA; }
     if name == "lfm2" { return ARCH_LFM2; }
+    if name == "lfm3" { return ARCH_LFM3; }
     return ARCH_UNKNOWN;
 }
 
@@ -209,6 +212,7 @@ fn load_hparams(m: Model&) {
         ARCH_GEMMA3 => load_hparams_gemma3(m),
         ARCH_LLAMA => load_hparams_llama(m),
         ARCH_LFM2 => load_hparams_lfm2(m),
+        ARCH_LFM3 => load_hparams_lfm3(m),
         _ => abort("unknown architecture"),
     }
 }
@@ -272,6 +276,24 @@ fn load_hparams_lfm2(m: Model&) {
         m.hp.swa_type = SWA_STANDARD;
         for il in m.hp.n_layer as i64 { m.hp.is_swa[il] = !m.hp.is_recr[il]; }
     }
+    m.hp.rope_type = ggml::ROPE_TYPE_NEOX;
+}
+
+// models/lfm3.cpp: lfm2's short convolutions, and attention that mixes
+// full and sliding window layers.
+fn load_hparams_lfm3(m: Model&) {
+    get_u32(m, "shortconv.l_cache", m.hp.n_shortconv_l_cache);
+    get_f32(m, "attention.layer_norm_rms_epsilon", m.hp.f_norm_rms_eps);
+    for il in m.hp.n_layer as i64 { m.hp.is_recr[il] = m.hp.n_head_kv[il] == 0; }
+    load_swa_pattern(m, 0);
+    var any = false;
+    for s in m.hp.is_swa { if s { any = true; } }
+    guard any else { abort("LFM3 requires sliding window attention layers"); }
+    m.hp.swa_type = SWA_STANDARD;
+    get_u32(m, "attention.sliding_window", m.hp.n_swa);
+    get_f32(m, "rope.freq_base_swa", m.hp.rope_freq_base_train_swa);
+    var causal = true;
+    if vocab::get_bool(m.meta, akey(m, "attention.causal"), causal) && !causal { abort("lfm3 decision models: not ported yet"); }
     m.hp.rope_type = ggml::ROPE_TYPE_NEOX;
 }
 
@@ -381,6 +403,41 @@ fn load_tensors_lfm2(m: Model&) {
     }
 }
 
+fn load_tensors_lfm3(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    let rope_freqs = tensor(m, "rope_freqs.weight", false);
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        // absent when the model has no sandwich norms
+        ly.attn_post_norm = layer_tensor(m, il, "post_attention_norm", false);
+        ly.ffn_post_norm = layer_tensor(m, il, "post_ffw_norm", false);
+        if (ly.attn_post_norm.p == 0) != (ly.ffn_post_norm.p == 0) { abort("LFM3 requires both post norms or neither"); }
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        if !m.hp.is_recr[il] {
+            ly.attn_q_norm = layer_tensor(m, il, "attn_q_norm");
+            ly.attn_k_norm = layer_tensor(m, il, "attn_k_norm");
+            load_qkv(m, il, ly);
+            ly.wo = layer_tensor(m, il, "attn_output");
+            ly.attn_gate = layer_tensor(m, il, "attn_gate");
+            if !m.hp.is_swa[il] {
+                if rope_freqs.p == 0 { abort("missing tensor 'rope_freqs.weight'"); }
+                ly.rope_freqs = rope_freqs;
+            }
+        } else {
+            ly.shortconv_conv = layer_tensor(m, il, "shortconv.conv");
+            ly.shortconv_in_proj = layer_tensor(m, il, "shortconv.in_proj");
+            ly.shortconv_out_proj = layer_tensor(m, il, "shortconv.out_proj");
+        }
+        m.layers.push(ly);
+    }
+}
+
 // The weights read by mul_mat, which llama.cpp places in the CPU's repack
 // buffers where it can (its create_tensor gives them GGML_OP_MUL_MAT).
 fn matmul_weights(m: Model&) -> ggml::Tensor[>..] {
@@ -389,7 +446,7 @@ fn matmul_weights(m: Model&) -> ggml::Tensor[>..] {
     for ly in m.layers {
         add(ly.wqkv); add(ly.wq); add(ly.wk); add(ly.wv); add(ly.wo);
         add(ly.ffn_gate); add(ly.ffn_up); add(ly.ffn_down);
-        add(ly.shortconv_in_proj); add(ly.shortconv_out_proj);
+        add(ly.shortconv_in_proj); add(ly.shortconv_out_proj); add(ly.attn_gate);
     }
     // a tied output is the token embeddings, read by get_rows
     if m.output.p != m.tok_embd.p { add(m.output); }
@@ -414,6 +471,7 @@ fn load(m: Model&, path: const u8[:]) {
         ARCH_GEMMA3 => load_tensors_gemma3(m),
         ARCH_LLAMA => load_tensors_llama(m),
         ARCH_LFM2 => load_tensors_lfm2(m),
+        ARCH_LFM3 => load_tensors_lfm3(m),
         _ => abort("unknown architecture"),
     }
 

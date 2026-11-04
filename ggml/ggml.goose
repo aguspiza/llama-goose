@@ -51,6 +51,7 @@ extern "ggml_mul_mat" fn mul_mat(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
 extern "ggml_rms_norm" fn rms_norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor;
 extern "ggml_norm" fn norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor;
 extern "ggml_tanh" fn tanh(ctx: Ctx, a: Tensor) -> Tensor;
+extern "ggml_sigmoid" fn sigmoid(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_silu" fn silu(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_gelu" fn gelu(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_geglu_split" fn geglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;

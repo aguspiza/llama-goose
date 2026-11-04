@@ -3,7 +3,7 @@
 // picks on the CPU. The graph of each architecture follows llama.cpp's
 // src/models/<arch>.cpp operation by operation.
 // port-of: src/llama-context.cpp src/llama-graph.cpp src/llama-kv-cache.cpp src/models/gemma3.cpp src/models/llama.cpp
-// port-of: src/models/lfm2.cpp src/models/lfm-base.cpp src/llama-memory-recurrent.cpp
+// port-of: src/models/lfm2.cpp src/models/lfm-base.cpp src/llama-memory-recurrent.cpp src/models/lfm3.cpp
 import std;
 import math;
 import os;
@@ -150,6 +150,12 @@ fn build_ffn_swiglu(b: Build&, ly: model::Layer, cur: ggml::Tensor) -> ggml::Ten
 // first n_kv cells; q, k, v are [head, n_head(_kv), n_tokens].
 fn build_attn(b: Build&, m: model::Model&, c: Context&, il: i64, wo: ggml::Tensor, wo_b: ggml::Tensor,
               q: ggml::Tensor, k_cur: ggml::Tensor, v_cur: ggml::Tensor, kq_scale: f32) -> ggml::Tensor {
+    return add_bias(b, ggml::mul_mat(b.ctx, wo, build_kqv(b, m, c, il, q, k_cur, v_cur, kq_scale)), wo_b);
+}
+
+// build_attn before the output projection: the heads' outputs, [head * n_head, n_tokens].
+fn build_kqv(b: Build&, m: model::Model&, c: Context&, il: i64,
+             q: ggml::Tensor, k_cur: ggml::Tensor, v_cur: ggml::Tensor, kq_scale: f32) -> ggml::Tensor {
     let hp .= m.hp;
     let ctx = b.ctx;
     let n_embd_k = model::n_embd_k_gqa(hp, il);
@@ -180,7 +186,7 @@ fn build_attn(b: Build&, m: model::Model&, c: Context&, il: i64, wo: ggml::Tenso
     cur = ggml::reshape_2d(ctx, cur, ggml::ne(cur, 0) * ggml::ne(cur, 1), ggml::ne(cur, 2) * ggml::ne(cur, 3));
     if il == 0 { trace(b, "kqv_out-0", cur); trace(b, "Vcur-0", v_cur); }
     ggml::build_forward_expand(b.gf, cur);
-    return add_bias(b, ggml::mul_mat(ctx, wo, cur), wo_b);
+    return cur;
 }
 
 fn rope(b: Build&, m: model::Model&, x: ggml::Tensor, freq_base: f32, freq_scale: f32,
@@ -355,6 +361,55 @@ fn build_lfm2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     return ggml::mul_mat(ctx, m.output, cur);
 }
 
+// models/lfm3.cpp
+fn build_lfm3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd_head = hp.n_embd_head_k as i64;
+
+    var cur = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    ggml::build_forward_expand(b.gf, cur);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var prev = cur;
+        cur = build_norm_rms(b, m, cur, ly.attn_norm);
+        if hp.is_recr[il] {
+            cur = build_shortconv(b, m, c, ly, cur, il);
+        } else {
+            let n_head = hp.n_head[il] as i64;
+            let swa = hp.is_swa[il];
+            let freq_base = if swa { hp.rope_freq_base_train_swa } else { hp.rope_freq_base_train };
+            let freq_scale = if swa { hp.rope_freq_scale_train_swa } else { hp.rope_freq_scale_train };
+            let factors = if swa { ggml::NONE } else { ly.rope_freqs };
+            var q, k, v = build_qkv(b, m, ly, cur, il);
+            q = build_norm_rms(b, m, q, ly.attn_q_norm);
+            k = build_norm_rms(b, m, k, ly.attn_k_norm);
+            q = rope(b, m, q, freq_base, freq_scale, factors);
+            k = rope(b, m, k, freq_base, freq_scale, factors);
+            var attn = build_kqv(b, m, c, il, q, k, v, 1.0 / sqrt(n_embd_head as f32));
+            // each head's output times the sigmoid of its gate
+            let gate = ggml::sigmoid(ctx, ggml::mul_mat(ctx, ly.attn_gate, cur));
+            let attn_3d = ggml::mul(ctx, ggml::reshape_3d(ctx, attn, n_embd_head, n_head, b.n_tokens),
+                                    ggml::reshape_3d(ctx, gate, 1, n_head, b.n_tokens));
+            attn = ggml::reshape_2d(ctx, attn_3d, n_embd_head * n_head, b.n_tokens);
+            cur = ggml::mul_mat(ctx, ly.wo, attn);
+        }
+        if ly.attn_post_norm.p != 0 { cur = build_norm_rms(b, m, cur, ly.attn_post_norm); }
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            prev = ggml::get_rows(ctx, prev, b.inp.out_ids);
+        }
+        cur = ggml::add(ctx, prev, cur);
+        let ffn_norm_out = build_norm_rms(b, m, cur, ly.ffn_norm);
+        var ffn_out = build_ffn_swiglu(b, ly, ffn_norm_out);
+        if ly.ffn_post_norm.p != 0 { ffn_out = build_norm_rms(b, m, ffn_out, ly.ffn_post_norm); }
+        cur = ggml::add(ctx, cur, ffn_out);
+    }
+    cur = build_norm_rms(b, m, cur, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
 let NEG_INF: f32 = -1.0 / 0.0;
 
 // mask[t][j] for token t (at position pos0 + t) and cell j: 0, or -inf when
@@ -438,6 +493,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         model::ARCH_GEMMA3 => build_gemma3(b, m, c),
         model::ARCH_LLAMA => build_llama(b, m, c),
         model::ARCH_LFM2 => build_lfm2(b, m, c),
+        model::ARCH_LFM3 => build_lfm3(b, m, c),
         _ => { abort("decode: unknown architecture"); },
     };
     ggml::set_output(out);

@@ -159,6 +159,37 @@ int64_t net_readable(int64_t fd) {
     return select((int) fd + 1, &set, NULL, NULL, &tv) > 0 ? 1 : 0;
 }
 
+typedef struct { const int64_t * data; int64_t len; } lg_fds;    // a const i64[:]
+
+// Waits up to timeout_ms for one of fds to be readable (a listening socket:
+// to have a connection): its index, or -1.
+int64_t net_wait(lg_fds fds, int64_t timeout_ms) {
+    fd_set set;
+    FD_ZERO(&set);
+    int64_t top = 0;
+    for (int64_t i = 0; i < fds.len && i < FD_SETSIZE; i++) {
+        FD_SET((lg_sock) fds.data[i], &set);
+        if (fds.data[i] > top) top = fds.data[i];
+    }
+    struct timeval tv = { (long) (timeout_ms / 1000), (long) (timeout_ms % 1000) * 1000 };
+    if (select((int) top + 1, &set, NULL, NULL, &tv) <= 0) return -1;
+    for (int64_t i = 0; i < fds.len && i < FD_SETSIZE; i++) {
+        if (FD_ISSET((lg_sock) fds.data[i], &set)) return i;
+    }
+    return -1;
+}
+
+// A receive timeout, so that a client that stops halfway cannot hold the server.
+void net_set_timeout(int64_t fd, int64_t ms) {
+#ifdef _WIN32
+    DWORD t = (DWORD) ms;
+    setsockopt((lg_sock) fd, SOL_SOCKET, SO_RCVTIMEO, (const char *) &t, sizeof t);
+#else
+    struct timeval tv = { (long) (ms / 1000), (long) (ms % 1000) * 1000 };
+    setsockopt((lg_sock) fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+#endif
+}
+
 void net_close(int64_t fd) {
     if (fd < 0) return;
 #ifdef _WIN32

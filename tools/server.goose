@@ -79,6 +79,7 @@ var n_batch = 2048;
 var model_path: u8[>..] = [];
 var model_name: u8[>..] = [];
 var api_key: u8[>..] = [];
+var static_dir: u8[>..] = [];           // --path: the files served under /, such as the web UI
 var use_jinja = true;
 var reasoning_format = chat_render::REASONING_DEEPSEEK;
 var enable_thinking = true;
@@ -1737,7 +1738,7 @@ fn route_props() {
     kb(o, "endpoint_slots", false);
     kb(o, "endpoint_props", false);
     kb(o, "endpoint_metrics", false);
-    kb(o, "ui", false);
+    kb(o, "ui", static_dir.len > 0);
     kraw(o, "ui_settings", "{}");
     ks(o, "chat_template", tmpl_src);
     k(o, "chat_template_caps");
@@ -1955,6 +1956,33 @@ fn route_chat() {
     generate(tokens);
 }
 
+// A file of --path, for a GET of path ("/" is index.html): false if there
+// is none. Paths that climb out of the directory are refused.
+fn serve_file(path: const u8[:]) -> bool {
+    guard find(path, "..") < 0 && find(path, "\\") < 0 else { return false; }
+    var file: u8[>..] = [];
+    file.append(static_dir);
+    file.append(if path == "/" { "/index.html" } else { path });
+    var data: u8[>..] = [];
+    guard read_file(file, data) else { return false; }
+    net::respond(conn, 200, content_type_of(file), data);
+    return true;
+}
+
+fn content_type_of(file: const u8[:]) -> const u8[:] {
+    if ends_with(file, ".html") { return "text/html; charset=utf-8"; }
+    if ends_with(file, ".js") || ends_with(file, ".mjs") { return "text/javascript; charset=utf-8"; }
+    if ends_with(file, ".css") { return "text/css; charset=utf-8"; }
+    if ends_with(file, ".json") { return "application/json; charset=utf-8"; }
+    if ends_with(file, ".webmanifest") { return "application/manifest+json"; }
+    if ends_with(file, ".svg") { return "image/svg+xml"; }
+    if ends_with(file, ".png") { return "image/png"; }
+    if ends_with(file, ".ico") { return "image/x-icon"; }
+    if ends_with(file, ".woff2") { return "font/woff2"; }
+    if ends_with(file, ".txt") { return "text/plain; charset=utf-8"; }
+    return "application/octet-stream";
+}
+
 fn authorized() -> bool {
     guard api_key.len > 0 else { return true; }
     let p = net::path();
@@ -1989,6 +2017,7 @@ fn handle(fd: i64) {
         else if post && path == "/apply-template" { route_apply_template(); }
         else if post && path == "/tokenize" { route_tokenize(); }
         else if post && path == "/detokenize" { route_detokenize(); }
+        else if get && static_dir.len > 0 && serve_file(path) {}
         else { respond_error(E_NOT_FOUND, "File Not Found"); }
     }
     exception::try<Fail>(body) { f =>
@@ -2007,6 +2036,11 @@ fn handle(fd: i64) {
 //
 // startup
 //
+
+fn remove_at(xs: i64[>..]&, at: i64) {
+    for j in at..xs.len - 1 { xs[j] = xs[j + 1]; }
+    xs.pop();
+}
 
 // llama_ftype_name
 fn ftype_of(ft: i64) -> const u8[:] {
@@ -2063,6 +2097,7 @@ fn main() {
         else if a == "--keep" { base_n_keep = int_value(); }
         else if a == "-a" || a == "--alias" { alias.clear(); alias.append(value()); }
         else if a == "--api-key" { api_key.clear(); api_key.append(value()); }
+        else if a == "--path" { static_dir.clear(); static_dir.append(value()); }
         else if a == "-np" || a == "--parallel" {
             if int_value() != 1 { write_stderr("warning: one slot only: --parallel is ignored\n"); }
         }
@@ -2165,10 +2200,40 @@ fn main() {
     let srv = net::listen(host, port);
     if srv < 0 { die(str("couldn't bind HTTP server socket, hostname: ", host, ", port: ", port)); }
     log(str("main: server is listening on http://", host, ":", net::port_of(srv)));
+    // The connections open, served once their request arrives: a browser
+    // opens some ahead of time, and those must not hold the others up.
+    var open: i64[>..] = [];
+    var opened_at: i64[>..] = [];
     loop {
-        let fd = net::accept(srv);
-        guard fd >= 0 else { continue; }
-        handle(fd);
-        net::close(fd);
+        var fds: i64[>..] = [];
+        fds.push(srv);
+        fds.append(open);
+        let i = net::wait(fds, 1000);
+        let now = time_ns() / 1000000000;
+        if i == 0 {
+            let fd = net::accept(srv);
+            if fd >= 0 {
+                net::set_timeout(fd, 30000);
+                open.push(fd);
+                opened_at.push(now);
+            }
+        } else if i > 0 {
+            let fd = open[i - 1];
+            remove_at(open, i - 1);
+            remove_at(opened_at, i - 1);
+            handle(fd);
+            net::close(fd);
+        }
+        // the ones idle for 30 s are closed
+        var k = 0;
+        while k < open.len {
+            if now - opened_at[k] > 30 {
+                net::close(open[k]);
+                remove_at(open, k);
+                remove_at(opened_at, k);
+            } else {
+                k++;
+            }
+        }
     }
 }

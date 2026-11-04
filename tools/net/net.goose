@@ -13,6 +13,9 @@ extern "net_recv" fn recv(fd: i64, buf: u8[:]) -> i64;
 extern "net_send" fn c_send(fd: i64, data: const u8[:]) -> i64;
 extern "net_readable" fn readable(fd: i64) -> i64;
 extern "net_close" fn close(fd: i64);
+// The index of the first of fds that is readable within timeout_ms, or -1.
+extern "net_wait" fn wait(fds: const i64[:], timeout_ms: i64) -> i64;
+extern "net_set_timeout" fn set_timeout(fd: i64, ms: i64);
 
 fn send(fd: i64, data: const u8[:]) -> bool { c_send(fd, data) == 0 }
 
