@@ -5,6 +5,8 @@
 // record_case instead of checking it.
 // Each field is "<byte length>\n<bytes>\n". The file starts with
 //   T  the time the prompts were made with (seconds since 1970)
+// then, before the first case of each template,
+//   S  template  its source
 // and each case is
 //   P  template  input  inputs (JSON)  ok
 //   ok:  prompt  prompt parts (JSON)  format  grammar  grammar_lazy

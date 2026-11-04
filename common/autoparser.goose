@@ -1444,8 +1444,11 @@ fn analyze_tmpl() -> bool {
 // The parsers are made in GCC's order: in a + b, b before a; a string
 // operand's literal inside the operator, after both operands.
 
-// generation_params, and its JSON read into json_schema values
-var gen = chat_render::Gen { .. };
+// what the parser depends on of the generation_params, and its JSON read
+// into json_schema values
+var g_tool_choice = 0;
+var g_parallel = true;
+var g_reasoning_format = 0;
 var tools_v = -1;
 var schema_v = -1;
 var extracting_reasoning = false;
@@ -1523,15 +1526,15 @@ fn build_tools_json_native() -> i64 {
         af = copy(a2);
     }
     let order = order_list();
-    let required = gen.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+    let required = g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
     var tools_parser = peg::eps();
     if section_start.len == 0 && per_call_start.len > 0 {
-        let single = chat_peg::standard_json_tools(per_call_start, per_call_end, tools_v, gen.parallel_tool_calls, required, nf, af,
+        let single = chat_peg::standard_json_tools(per_call_start, per_call_end, tools_v, g_parallel, required, nf, af,
             tools_array_wrapped, fun_name_is_key, id_field, gen_id_field, order, openai_wrapper_trigger);
         let s = peg::space();
         tools_parser = peg::trigger_rule("tool-calls", peg::one_or_more(peg::seq2(single, s)));
     } else {
-        tools_parser = chat_peg::standard_json_tools(section_start, section_end, tools_v, gen.parallel_tool_calls, required, nf, af,
+        tools_parser = chat_peg::standard_json_tools(section_start, section_end, tools_v, g_parallel, required, nf, af,
             tools_array_wrapped, fun_name_is_key, id_field, gen_id_field, order, openai_wrapper_trigger);
     }
     if content_always_wrapped() {
@@ -1655,11 +1658,11 @@ fn build_tools_tag_json() -> i64 {
         let r = peg::rule(str("tool-", i), f, false);
         tool_choice = peg::choice2(tool_choice, r);
     }
-    let require_calls = gen.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+    let require_calls = g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
     var tool_calls = peg::eps();
     if per_call_start.len > 0 {
         let wrapped = peg::chain([peg::cs(per_call_start), peg::ci(tool_choice), peg::cs(per_call_end)]);
-        if gen.parallel_tool_calls {
+        if g_parallel {
             let s = peg::space();
             let z = peg::zero_or_more(peg::seq2(s, wrapped));
             tool_calls = peg::trigger_rule("tool-call", peg::seq2(wrapped, z));
@@ -1675,7 +1678,7 @@ fn build_tools_tag_json() -> i64 {
         }
     } else {
         let separator = ", ";
-        if gen.parallel_tool_calls {
+        if g_parallel {
             let z = peg::zero_or_more(peg::chain([peg::cs(separator), peg::ci(tool_choice)]));
             tool_calls = peg::trigger_rule("tool-call", peg::chain([peg::cs(section_start), peg::ci(tool_choice), peg::ci(z), peg::cs(section_end)]));
         } else {
@@ -1743,14 +1746,14 @@ fn build_tools_tag_tagged() -> i64 {
         let r = peg::rule(str("tool-", i), f, false);
         tool_choice = peg::choice2(tool_choice, r);
     }
-    let require_tools = gen.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+    let require_tools = g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
     var tool_calls = peg::eps();
     if per_call_start.len > 0 {
         // per_call_start + space() + tool_choice + space() + per_call_end
         let s2 = peg::space();
         let s1 = peg::space();
         let wrapped = peg::chain([peg::cs(per_call_start), peg::ci(s1), peg::ci(tool_choice), peg::ci(s2), peg::cs(per_call_end)]);
-        if gen.parallel_tool_calls {
+        if g_parallel {
             let s = peg::space();
             let s3 = peg::space();
             let z = peg::zero_or_more(peg::seq2(s3, wrapped));
@@ -1775,7 +1778,7 @@ fn build_tools_tag_tagged() -> i64 {
         }
     } else {
         let separator = ", ";
-        if gen.parallel_tool_calls {
+        if g_parallel {
             let s2 = peg::space();
             let z = peg::zero_or_more(peg::chain([peg::cs(separator), peg::ci(tool_choice)]));
             let s1 = peg::space();
@@ -1802,7 +1805,9 @@ fn build_tools() -> i64 {
 // autoparser::build_parser: the output parser, as an arena.
 fn build_parser(generation_prompt: const u8[:]) -> i64 {
     peg::begin();
-    let extract = gen.reasoning_format != chat_render::REASONING_NONE;
+    // parser_build_context's constructor: reasoning_parser(p.eps())
+    peg::eps();
+    let extract = g_reasoning_format != chat_render::REASONING_NONE;
     extracting_reasoning = extract && r_mode != MODE_NONE;
     reasoning_parser = build_reasoning();
     var parser = peg::eps();
@@ -1825,7 +1830,7 @@ fn build_parser(generation_prompt: const u8[:]) -> i64 {
         let s = peg::space();
         parser = peg::chain([peg::ci(reasoning_parser), peg::ci(s), peg::ci(ch), peg::ci(e)]);
         pure_content = false;
-    } else if has_tools() && gen.tool_choice != chat_render::TOOL_CHOICE_NONE && tmpl.caps.supports_tool_calls {
+    } else if has_tools() && g_tool_choice != chat_render::TOOL_CHOICE_NONE && tmpl.caps.supports_tool_calls {
         parser = build_tools();
         pure_content = false;
     } else {
@@ -1845,14 +1850,17 @@ fn build_parser(generation_prompt: const u8[:]) -> i64 {
 // peg_generator::generate_parser for template t, analyzed before (the
 // analysis must be the module's state), with the inputs g: the prompt in
 // chat_render's prompt, the rest in its params. It throws json_schema::Fail.
-fn generate() {
-    tools_v = if gen.tools.len > 0 { json_schema::json_value(gen.tools) } else { -1 };
-    schema_v = if gen.json_schema.len > 0 { json_schema::json_value(gen.json_schema) } else { -1 };
-    chat_render::clear_params();
+fn generate(g: chat_render::Gen) {
+    g_tool_choice = g.tool_choice;
+    g_parallel = g.parallel_tool_calls;
+    g_reasoning_format = g.reasoning_format;
+    tools_v = if g.tools.len > 0 { json_schema::json_value(g.tools) } else { -1 };
+    schema_v = if g.json_schema.len > 0 { json_schema::json_value(g.json_schema) } else { -1 };
+    // chat_render's params are cleared by the caller
     var gp: u8[>..] = [];
     fn render() {
-        chat_render::generation_prompt(tmpl, gen, chat_render::Override { .. }, gp);
-        chat_render::direct_apply(tmpl, gen, chat_render::Override { .. });
+        chat_render::generation_prompt(tmpl, g, chat_render::Override { .. }, gp);
+        chat_render::direct_apply(tmpl, g, chat_render::Override { .. });
     }
     var rendered = false;
     fn try_render() { render(); rendered = true; }
@@ -1862,16 +1870,16 @@ fn generate() {
     chat_render::preserved_tokens.append(preserved);
     chat_render::additional_stops.append(stops);
     let parser_gp = str(gp);
-    if chat_render::has_continuation(gen) {
+    if chat_render::has_continuation(g) {
         // the generation prompt made by hand
         if r_start.len > 0 {
             let cut = str(until_find(gp, r_start));
             gp = copy(cut);
             gp.append(r_start);
-            gp.append(gen.continue_reasoning);
-            if gen.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(r_end); }
+            gp.append(g.continue_reasoning);
+            if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(r_end); }
         }
-        if gen.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(gen.continue_content); }
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -1879,9 +1887,9 @@ fn generate() {
     let tools_ok = f_mode != TOOLS_NONE && has_tools();
     let trigger = if section_start.len > 0 { str(section_start) } else { str(per_call_start) };
     let rf = has_response_format();
-    let include = rf || (tools_ok && ((gen.tool_choice == chat_render::TOOL_CHOICE_AUTO && trigger.len > 0) || gen.tool_choice == chat_render::TOOL_CHOICE_REQUIRED));
+    let include = rf || (tools_ok && ((g_tool_choice == chat_render::TOOL_CHOICE_AUTO && trigger.len > 0) || g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED));
     if include {
-        chat_render::grammar_lazy = !rf && gen.tool_choice == chat_render::TOOL_CHOICE_AUTO;
+        chat_render::grammar_lazy = !rf && g_tool_choice == chat_render::TOOL_CHOICE_AUTO;
         json_schema::begin_grammar();
         peg::build_grammar(chat_render::parser, chat_render::grammar_lazy);
         json_schema::end_grammar(chat_render::grammar);
@@ -1904,13 +1912,8 @@ fn generate() {
 // generate with its own handler: false, and the message in err, if it fails.
 fn try_generate(t: chat_render::Template, g: chat_render::Gen) -> bool {
     tmpl = t;
-    gen = g;
-    return try_generate_current();
-}
-
-fn try_generate_current() -> bool {
     var ok = false;
-    fn body() { generate(); ok = true; }
+    fn body() { generate(g); ok = true; }
     exception::try<json_schema::Fail>(body) { f => err.clear(); err.append(json_schema::err); };
     return ok;
 }

@@ -16,12 +16,15 @@ import .jinja_caps;
 namespace chat_render;
 
 // A parsed template (common_chat_template, without the parser it gets in
-// chat): its program, capabilities, and BOS and EOS texts.
+// chat): its program, capabilities, and BOS and EOS texts (in keep: a
+// template holds no references, so that it can go anywhere).
 struct Template {
     prog: jinja::Program = jinja::Program { .. },
     caps: jinja::Caps = jinja::Caps { .. },
-    bos: const u8[:] = "",
-    eos: const u8[:] = "",
+    bos_at: i64 = 0,
+    bos_len: i64 = 0,
+    eos_at: i64 = 0,
+    eos_len: i64 = 0,
     // chat's: the dedicated handler, or the autoparser analysis
     handler: i64 = -1,
     analysis: i64 = -1,
@@ -32,18 +35,19 @@ fn source(t: Template) -> const u8[:] { jinja::asrc[t.prog.src..t.prog.src + t.p
 // The texts templates keep.
 var keep: u8[>..] = [];
 
-fn kept(s: const u8[:]) -> const u8[:] {
-    let at0 = keep.len;
-    keep.append(s);
-    return keep[at0..keep.len];
-}
+fn bos(t: Template) -> const u8[:] { keep[t.bos_at..t.bos_at + t.bos_len] }
+fn eos(t: Template) -> const u8[:] { keep[t.eos_at..t.eos_at + t.eos_len] }
 
 // A template from its source; it throws jinja::Fail if it does not parse.
 fn make_template(src: const u8[:], bos: const u8[:], eos: const u8[:]) -> Template {
     let off, len = jinja::tokenize(src);
     let prog = jinja::parse(off, len);
     let caps = jinja::caps_get(prog);
-    return Template { prog: prog, caps: caps, bos: kept(bos), eos: kept(eos), .. };
+    let b0 = keep.len;
+    keep.append(bos);
+    let e0 = keep.len;
+    keep.append(eos);
+    return Template { prog: prog, caps: caps, bos_at: b0, bos_len: bos.len, eos_at: e0, eos_len: eos.len, .. };
 }
 
 let TOOL_CHOICE_AUTO = 0;
@@ -172,8 +176,8 @@ fn direct_apply(t: Template, g: Gen, ov: Override) {
         normalize(t, messages, mark);
     }
     jinja::obj_set_name(inp, "messages", messages);
-    jinja::obj_set_name(inp, "bos_token", jinja::mk_str(t.bos, mark));
-    jinja::obj_set_name(inp, "eos_token", jinja::mk_str(t.eos, mark));
+    jinja::obj_set_name(inp, "bos_token", jinja::mk_str(bos(t), mark));
+    jinja::obj_set_name(inp, "eos_token", jinja::mk_str(eos(t), mark));
     jinja::obj_set_name(inp, "enable_thinking", jinja::mk_bool(g.enable_thinking));
     if ov.has_tools || (g.tools.len > 0 && !json_empty(g.tools)) {
         jinja::obj_set_name(inp, "tools", jinja::from_json(if ov.has_tools { ov.tools } else { g.tools }, mark));
@@ -191,8 +195,8 @@ fn direct_apply(t: Template, g: Gen, ov: Override) {
         jinja::set_var(c, jinja::sbytes(jinja::obj_key(inp, k)), jinja::obj_value(inp, k));
     }
     // bos and eos are the model's, not the user's
-    jinja::set_var(c, "bos_token", jinja::mk_str(t.bos, false));
-    jinja::set_var(c, "eos_token", jinja::mk_str(t.eos, false));
+    jinja::set_var(c, "bos_token", jinja::mk_str(bos(t), false));
+    jinja::set_var(c, "eos_token", jinja::mk_str(eos(t), false));
     let r = jinja::render(t.prog, c);
 
     prompt.clear();
@@ -202,8 +206,8 @@ fn direct_apply(t: Template, g: Gen, ov: Override) {
         let p = jinja::parts[v.a + k];
         var text = jinja::part_bytes(p);
         // the vocabulary adds them itself
-        if k == 0 && g.add_bos && !p.input && starts_with(text, t.bos) { text = text[t.bos.len..]; }
-        if k == v.n - 1 && g.add_eos && !p.input && ends_with(text, t.eos) { text = text[..text.len - t.eos.len]; }
+        if k == 0 && g.add_bos && !p.input && starts_with(text, bos(t)) { text = text[t.bos_len..]; }
+        if k == v.n - 1 && g.add_eos && !p.input && ends_with(text, eos(t)) { text = text[..text.len - t.eos_len]; }
         prompt.append(text);
         prompt_parts.push(PromptPart { end: prompt.len, input: p.input });
     }
@@ -291,10 +295,10 @@ let FORMAT_PEG_NATIVE = 2;
 let FORMAT_PEG_GEMMA4 = 3;
 let FORMAT_PEG_MINIMAX_M3 = 4;
 
-let TRIGGER_WORD = 0;
-let TRIGGER_PATTERN = 1;
-let TRIGGER_PATTERN_FULL = 2;
-let TRIGGER_TOKEN = 3;
+let TRIGGER_TOKEN = 0;
+let TRIGGER_WORD = 1;
+let TRIGGER_PATTERN = 2;
+let TRIGGER_PATTERN_FULL = 3;
 
 var format = FORMAT_CONTENT_ONLY;
 var grammar: u8[>..] = [];

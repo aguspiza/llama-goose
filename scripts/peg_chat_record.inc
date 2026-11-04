@@ -60,6 +60,14 @@ static void record_case(const std::string & path, common_chat_templates * tmpls,
     }
     inputs["is_partial"] = tc.is_partial;
 
+    // the template's source, before its first case
+    static std::set<std::string> seen;
+    if (seen.insert(path).second) {
+        field("S");
+        field(path);
+        field(path == "deepseek-v4.1-min" ? std::string(DEEPSEEK_V4_1_MIN_TEMPLATE) : read_file(path));
+    }
+
     field("P");
     field(path);
     field(tc.input);
