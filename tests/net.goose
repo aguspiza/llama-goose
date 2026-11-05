@@ -63,6 +63,33 @@ fn main() {
     net::close(con3);
     net::close(srv);
 
+    // server base URLs
+    {
+        let h, p, pre, ok = net::parse_url("http://127.0.0.1:8080");
+        check("url", ok && h == "127.0.0.1" && p == 8080 && pre == "");
+        let h2, p2, pre2, ok2 = net::parse_url("http://example.local/api/v1/");
+        check("url prefix", ok2 && h2 == "example.local" && p2 == 80 && pre2 == "/api/v1");
+        let h3, p3, pre3, ok3 = net::parse_url("https://x");
+        check("url https refused", !ok3);
+    }
+
+    // a chunked body, received in arbitrary pieces
+    {
+        net::close_request();
+        net::cchunked = true;
+        let wire = "6\r\ndata: \r\n9;ext=1\r\n{\"a\":1}\n\n\r\n0\r\n\r\n";
+        for c in wire {
+            net::craw.push(c);
+            net::pump();
+        }
+        check("chunked body", net::cbody == "data: {\"a\":1}\n\n");
+        check("chunked end", net::cdone);
+        var payload: u8[>..] = [];
+        check("event", net::next_event(payload, 0) == 1 && payload == "{\"a\":1}");
+        check("events end", net::next_event(payload, 0) == -1);
+        net::close_request();
+    }
+
     if failed > 0 { print(failed, " failed"); exit(1); }
     print("net: all passed");
 }

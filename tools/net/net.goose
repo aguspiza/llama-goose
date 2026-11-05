@@ -177,3 +177,195 @@ fn send_event(fd: i64, data: const u8[:]) -> bool {
     format(out, "data: ", data, "\n\n");
     return send(fd, out);
 }
+
+//
+// the client side: requests to a server, and its server-sent events
+//
+
+// A server's base URL, http://host[:port][/prefix]: its host, port and path
+// prefix (no trailing slash); false if it is not one.
+fn parse_url(url: const u8[:]) -> u8[>..], i64, u8[>..], bool {
+    var host: u8[>..] = [];
+    var prefix: u8[>..] = [];
+    guard starts_with(url, "http://") else { return host, 0, prefix, false; }
+    var rest = url[7..];
+    let slash = find(rest, "/");
+    let authority = if slash >= 0 { rest[..slash] } else { rest };
+    if slash >= 0 { prefix.append(rest[slash..]); }
+    while prefix.len > 0 && prefix[prefix.len - 1] == '/' { prefix.pop(); }
+    var port = 80;
+    let colon = find(authority, ":");
+    if colon >= 0 {
+        host.append(authority[..colon]);
+        let p, ok = parse_int(authority[colon + 1..]);
+        guard ok && p > 0 && p < 65536 else { return host, 0, prefix, false; }
+        port = p;
+    } else {
+        host.append(authority);
+    }
+    return host, port, prefix, host.len > 0;
+}
+
+// The connection of the request in progress, and what came of it.
+var cfd = -1;
+var craw: u8[>..] = [];         // received, not yet decoded
+var cbody: u8[>..] = [];        // the body so far, decoded
+var cchunked = false;
+var cchunk_left = 0;            // of the current chunk; -1: a size line is next
+var cdone = false;              // the body is complete
+var clength = -1;               // Content-Length, -1 without one
+
+// Sends a request and reads its head: the status, or -1 when the server
+// cannot be reached or answers no HTTP.
+fn open_request(host: const u8[:], port: i64, method: const u8[:], path: const u8[:], body: const u8[:], accept: const u8[:]) -> i64 {
+    close_request();
+    cfd = connect(host, port);
+    guard cfd >= 0 else { return -1; }
+    var req: u8[>..] = [];
+    format(req, method, " ", path, " HTTP/1.1\r\nHost: ", host, ":", port, "\r\nConnection: close\r\nAccept: ", accept, "\r\n");
+    if method == "POST" { format(req, "Content-Type: application/json\r\nContent-Length: ", body.len, "\r\n"); }
+    req.append("\r\n");
+    req.append(body);
+    guard send(cfd, req) else { close_request(); return -1; }
+    var buf: u8[>..] = [];
+    buf.resize(16384, 0);
+    var end = -1;
+    while end < 0 {
+        let n = recv(cfd, buf);
+        guard n > 0 else { close_request(); return -1; }
+        craw.append(buf[..n]);
+        end = find(craw, "\r\n\r\n");
+    }
+    // the head: the status line and the fields
+    var headtext: u8[>..] = [];
+    headtext.append(craw[..end]);
+    var rest: u8[>..] = [];
+    rest.append(craw[end + 4..]);
+    craw.clear();
+    craw.append(rest);
+    let line_end = find(headtext, "\r\n");
+    let status_line = if line_end >= 0 { headtext[..line_end] } else { headtext[..] };
+    let sp = find(status_line, " ");
+    guard starts_with(status_line, "HTTP/") && sp > 0 else { close_request(); return -1; }
+    let code, ok = parse_int(status_line[sp + 1..min(sp + 4, status_line.len)]);
+    guard ok else { close_request(); return -1; }
+    // the fields that frame the body
+    var at = if line_end >= 0 { line_end + 2 } else { headtext.len };
+    while at < headtext.len {
+        let e = find(headtext[at..], "\r\n");
+        let field = if e >= 0 { headtext[at..at + e] } else { headtext[at..] };
+        let colon = find(field, ":");
+        if colon > 0 {
+            let name = field[..colon];
+            let value = trim(field[colon + 1..]);
+            if same_name(name, "Content-Length") { let v, vok = parse_int(value); if vok { clength = v; } }
+            if same_name(name, "Transfer-Encoding") && find(value, "chunked") >= 0 { cchunked = true; }
+        }
+        guard e >= 0 else { break; }
+        at += e + 2;
+    }
+    if method == "HEAD" || code == 204 || code == 304 || clength == 0 { cdone = true; }
+    pump();
+    return code;
+}
+
+// Moves what was received into the body, undoing the chunked coding.
+fn pump() {
+    if !cchunked {
+        cbody.append(craw);
+        craw.clear();
+        if clength >= 0 && cbody.len >= clength { cdone = true; }
+        return;
+    }
+    var at = 0;
+    loop {
+        if cdone { break; }
+        if cchunk_left > 0 {
+            let n = min(cchunk_left, craw.len - at);
+            guard n > 0 else { break; }
+            cbody.append(craw[at..at + n]);
+            at += n;
+            cchunk_left -= n;
+            if cchunk_left == 0 { cchunk_left = -2; }      // its CRLF next
+            continue;
+        }
+        let e = find(craw[at..], "\r\n");
+        guard e >= 0 else { break; }
+        if cchunk_left == -2 { at += e + 2; cchunk_left = 0; continue; }
+        // a size line, maybe with extensions
+        var size_text = craw[at..at + e];
+        let semi = find(size_text, ";");
+        if semi >= 0 { size_text = size_text[..semi]; }
+        let size, ok = parse_int(trim(size_text), 16);
+        at += e + 2;
+        guard ok else { cdone = true; break; }
+        if size == 0 { cdone = true; break; }
+        cchunk_left = size;
+    }
+    var rest: u8[>..] = [];
+    rest.append(craw[at..]);
+    craw.clear();
+    craw.append(rest);
+}
+
+// Reads more of the body, waiting at most timeout_ms: false once it is complete
+// or the connection has ended.
+fn read_more(timeout_ms: i64) -> bool {
+    guard cfd >= 0 && !cdone else { return false; }
+    if wait([cfd], timeout_ms) < 0 { return true; }
+    var buf: u8[>..] = [];
+    buf.resize(16384, 0);
+    let n = recv(cfd, buf);
+    guard n > 0 else { cdone = true; return false; }
+    craw.append(buf[..n]);
+    pump();
+    return true;
+}
+
+fn close_request() {
+    if cfd >= 0 { close(cfd); }
+    cfd = -1;
+    craw.clear();
+    cbody.clear();
+    cchunked = false;
+    cchunk_left = 0;
+    cdone = false;
+    clength = -1;
+}
+
+// A whole request: the status (-1 without an answer), and the body into out.
+fn request(host: const u8[:], port: i64, method: const u8[:], path: const u8[:], body: const u8[:], out: u8[>..]&) -> i64 {
+    let status = open_request(host, port, method, path, body, "application/json");
+    if status >= 0 {
+        while read_more(60000) {}
+        out.append(cbody);
+    }
+    close_request();
+    return status;
+}
+
+// The next "data: " line of the events of the request opened, into payload:
+// 1 for one, 0 when none came within timeout_ms, -1 at the end. The lines
+// that are not data are skipped.
+fn next_event(payload: u8[>..]&, timeout_ms: i64) -> i64 {
+    loop {
+        let nl = find(cbody, "\n");
+        if nl >= 0 {
+            var line: u8[>..] = [];
+            line.append(cbody[..nl]);
+            var rest: u8[>..] = [];
+            rest.append(cbody[nl + 1..]);
+            cbody.clear();
+            cbody.append(rest);
+            if line.len > 0 && line[line.len - 1] == '\r' { line.pop(); }
+            guard starts_with(line, "data: ") else { continue; }
+            payload.clear();
+            payload.append(line[6..]);
+            return 1;
+        }
+        guard !cdone && cfd >= 0 else { return -1; }
+        let before = cbody.len;
+        if !read_more(timeout_ms) { if cbody.len == before && find(cbody, "\n") < 0 { return -1; } continue; }
+        if cbody.len == before { return 0; }
+    }
+}

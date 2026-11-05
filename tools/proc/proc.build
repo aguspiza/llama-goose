@@ -1,0 +1,3 @@
+// The process and Ctrl+C calls behind proc.goose.
+c_sources = ["proc.c"];
+c_flags_cc = ["-O2"];
