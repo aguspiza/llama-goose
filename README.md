@@ -140,6 +140,61 @@ this server keeps every attention cell and reuses more.
 `LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
 llama.cpp's eval callback.
 
+## Results so far
+
+Measured on 2026-11-05 on the machine below, with ggml already compiled
+and cached on both sides. The C++ figures come from the `.ninja_log` of a
+CPU-only `Release` build of llama.cpp (llama-server, -completion,
+-perplexity, -simple, -tokenize and test-tokenizer-0, without the web UI).
+
+**Build time.** Each Goose program is one C file, compiled by one gcc
+process on one core:
+
+| Program | Lines of C | `-O1` | `-O3` |
+|---|---:|---:|---:|
+| `tools/server` | 384k | 47 s | 106 s |
+| `tools/completion` | 172k | 26 s | 49 s |
+| `tools/perplexity` | 37k | 11 s | 15 s |
+| `tools/simple` | 36k | 11 s | |
+| `tools/cli` | 18k | 4 s | 6 s |
+| `scripts/test.sh` (build and run every test) | | 105 s | |
+
+Goose writes the server's 16 MB of C in about 3 s; gcc takes the rest.
+llama.cpp spends about 1,600 CPU-seconds on the same tools without ggml
+(`common/`, `src/`, the server, cpp-httplib, mtmd), spread over 16 cores.
+So the Goose build costs about 15 times less CPU: about 100 s for the five
+tools one after another, on one core at a time. The comparison flatters
+Goose: the C++ side has more than a hundred architectures, argument
+parsing, downloads and multimodal, which are not ported yet.
+
+**`-O1` is the default.** Goose code compiled at `-O1` runs as fast as at
+`-O3`: the heavy work is in ggml, which stays at `-O3`. At `-O0` the Goose
+code that runs per token (parsing, sampling, grammars) slows generation by
+a third.
+
+| | `-O3` | `-O1` | `-O0` |
+|---|---:|---:|---:|
+| server, LFM3 1.7B Q4_K_M, chat, 300 tokens: prompt | 114 t/s | 115 t/s | 114 t/s |
+| server, same: generation | 22.5 t/s | 22.5 t/s | 15.0 t/s |
+| completion, LFM2.5 230M Q8_0, 300 tokens | 67.3 t/s | 67.7 t/s | |
+| perplexity, gemma-3 270M, 4 chunks of 512 | 4.6 s | 4.6 s | |
+
+The output is the same at every level (same text, same perplexity).
+
+**Binary size**, both static, without symbols:
+
+| Program | Goose | llama.cpp |
+|---|---:|---:|
+| server | 4.4 MB | 16.8 MB |
+| completion | 3.2 MB | 9.6 MB |
+| perplexity | 2.4 MB | 9.6 MB |
+| simple | 2.4 MB | 5.8 MB |
+
+Here too part of the difference is what is not ported yet.
+
+**Inference speed and memory** are llama.cpp's: the kernels, the weights
+and the KV cache are ggml's in both.
+
 The rest of this README is the feasibility study written before the port.
 
 ## Measurements
@@ -337,15 +392,16 @@ scripts/build.sh tests/ggml_smoke.goose     # GOOSE=path/to/goose.exe to pick th
 scripts/test.sh                             # build and run everything in tests/
 ```
 
-`goose build` compiles a program's C at `-O2` at most, and gcc only
-vectorizes at `-O3`, so `scripts/build.sh` runs goose build's own commands
-(from `--dry-run`) with `-O3 -march=native`. ggml gets `-O3` from its
-sidecar.
+`scripts/build.sh` runs goose build's own commands (from `--dry-run`), with
+the program's C at `-O1 -march=native` (`OPT=3` for another level). ggml
+gets `-O3` from its sidecar. It compiles only the package objects that are
+missing, so the program's C is compiled once, not twice as a `goose build`
+followed by the optimized compile would. See "Results so far" for why `-O1`.
 
 ggml's C is compiled once (about 1.5 minutes) and cached under `~/.goose`.
-After that `tools/simple` (about 7,300 lines of Goose with ggml's bindings)
-builds in about 7 seconds: 0.3 s for Goose to write 1.5 MB of C, the rest
-gcc on that one file.
+After that each program takes a few seconds to a minute ("Results so
+far"): well under a second to a few seconds for Goose to write its C, the
+rest gcc on that one file.
 
 Goose keeps arrays of up to 256 elements in static data and builds larger
 ones element by element when the program starts. gcc took 30 s to optimize
