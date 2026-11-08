@@ -29,7 +29,7 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | PEG parsers (`common/peg-parser`) | ported | `tests/peg`: test-gbnf-generation's cases and parse cases of test-basic |
 | tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 75 templates of `models/templates`; `tests/chat_peg`: all 517 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
 | `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
-| `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported with one slot (requests are served one at a time), except embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses with gemma-3 and LFM2.5 |
+| `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported with one slot (requests are generated one at a time; `/health` and CORS preflights are answered meanwhile, and a client that leaves stops its generation), except embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses with gemma-3 and LFM2.5 |
 | `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images, audio and `-hf` downloads; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
 | the rest of `common/` (args, downloads) | not yet | |
 
@@ -240,8 +240,18 @@ same bytes on all three models. Like simple-chat it runs 4 threads
 (libllama's default, not common's): ggml's flash attention splits a long
 KV cache by thread, so the thread count changes the last bits.
 
-`tools/server` is `llama-server`, over `tools/net` (sockets in C, HTTP/1.1
-in Goose) and `common/jdoc` (JSON written as nlohmann writes it). With one
+`tools/server` is `llama-server`, over [Plod](https://github.com/kaitk/plod)
+and [goose-http](https://github.com/kaitk/goose-http) (HTTP/1.1 with
+keep-alive and chunked responses, worker threads) and `common/jdoc` (JSON
+written as nlohmann writes it). Goose threads may only use flat globals, and
+the model, vocab and templates are not flat, so the program's first thread
+loads them and serves the requests one at a time, as the lane Plod's workers
+send them to. The workers answer `/health`, CORS preflights, and 503
+"Loading model" until the model is loaded; request bodies cross to the main
+thread as goose-http shared blobs, and responses come back as mail messages,
+the events of a stream as they are generated. Between tokens and prompt
+batches the main thread checks whether the client is still there, and stops
+when it is not. With one
 slot on both, `scripts/compare-server.py` sends 29 requests to it and to
 llama.cpp's `llama-server` and compares the responses, less ids, times and
 the cached-token counts: completions with and without streaming, stop
@@ -498,8 +508,11 @@ sources, which is how the sync script knows what to convert again:
 
 ## Building
 
-Goose's own compiler (not the `goose` AI agent that may be on PATH) and
-MinGW gcc. `goose build` with MSVC does not find the C headers yet.
+Goose's own compiler, v2026.4 (not the `goose` AI agent that may be on
+PATH), and MinGW gcc. `goose build` with MSVC does not find the C headers
+yet. The server's HTTP packages, goose-http and Plod, are fetched by the
+compiler at the versions `tools/server.goose` names, the first time it is
+built.
 
 ```
 scripts/build.sh tests/ggml_smoke.goose     # GOOSE=path/to/goose.exe to pick the compiler
@@ -510,7 +523,9 @@ scripts/test.sh                             # build and run everything in tests/
 the program's C at `-O1 -march=native` (`OPT=3` for another level). ggml
 gets `-O3` from its sidecar. It compiles only the package objects that are
 missing, so the program's C is compiled once, not twice as a `goose build`
-followed by the optimized compile would. See "Results so far" for why `-O1`.
+followed by the optimized compile would. v2026.4 names a package's objects
+by a hash, and only a whole `goose build` writes the response files that
+list them for the link, so `scripts/build.sh` writes those itself. See "Results so far" for why `-O1`.
 
 ggml's C is compiled once (about 1.5 minutes) and cached under `~/.goose`.
 After that each program takes a few seconds to a minute ("Results so

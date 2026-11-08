@@ -1,7 +1,10 @@
 // llama.cpp's llama-server: an HTTP server with llama.cpp's and OpenAI's
-// APIs for one model. One slot: requests are served one at a time, each on
-// its own connection, and the KV cache keeps the last prompt so the next
-// one reuses what they share.
+// APIs for one model. HTTP is goose-http's, through Plod: its worker
+// threads take the connections and answer /health and CORS preflights; the
+// main thread loads the model and serves the other requests, which the
+// workers send it as Plod jobs. One slot: they are served one at a time, and the KV cache keeps
+// the last prompt so the next one reuses what they share. A client that
+// goes away stops its generation.
 //   server -m model.gguf [--host 127.0.0.1] [--port 8080] [-c n_ctx] [-b n_batch] [-t threads]
 //          [-n n_predict] [-a alias] [--api-key key] [--jinja | --no-jinja]
 //          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
@@ -32,6 +35,9 @@ import common.chat_render;
 import common.chat_peg;
 import common.chat_apply;
 import net from "./net";
+import http from "github.com/kaitk/goose-http@v0.5.16";
+import http.shared;
+import plod from "github.com/kaitk/plod@067b57c804435ea9479d58ba55e3cc103788a151";
 
 let BUILD_INFO = "b0-goose";
 
@@ -1057,7 +1063,6 @@ var n_gen = 0;
 var n_prompt = 0;
 var stats = Stats { cache_n: 0, prompt_n: 0, prompt_ms: 0.0, predicted_n: 0, predicted_ms: 0.0 };
 var prompt_text: u8[>..] = [];      // the prompt's tokens as text, for the response
-var conn = -1;
 var streaming = false;              // the events' head is sent
 
 fn now_ms() -> f64 { clock_ns() / 1000000.0 }
@@ -1317,8 +1322,11 @@ fn chunk_tail(o: u8[>..]&, object: const u8[:]) {
     ks(o, "object", object);
 }
 
+// One event: "data: <text>\n\n".
 fn send(data: const u8[:]) {
-    if !net::send_event(conn, data) { client_gone = true; }
+    var o: u8[>..] = [];
+    format(o, "data: ", data, "\n\n");
+    if !reply_part(o, false) { client_gone = true; }
 }
 var client_gone = false;
 
@@ -1531,7 +1539,8 @@ fn generate(prompt: const i32[:]) {
     prompt_text.append(detokenize(prompt, true));
 
     if t_stream {
-        guard net::begin_events(conn) else { client_gone = true; return; }
+        reply_head(200, "text/event-stream", -1);
+        guard reply_part("", false) else { client_gone = true; return; }
         streaming = true;
     }
 
@@ -1539,6 +1548,7 @@ fn generate(prompt: const i32[:]) {
     var logits: f32[>..] = [];
     var start = n_past;
     while start < prompt.len {
+        if !http::mail_live(reply_to) { client_gone = true; return; }
         let end = min(start + n_batch, prompt.len);
         context::decode(c, m, prompt[start..end], logits);
         cached.append(prompt[start..end]);
@@ -1563,6 +1573,7 @@ fn generate(prompt: const i32[:]) {
         }
         let text = piece(tok, is_preserved(tok));
         if !process_token(tok, text) { break; }
+        if !http::mail_live(reply_to) { client_gone = true; }
         if client_gone { return; }
         context::decode(c, m, [tok], logits);
         cached.push(tok);
@@ -1608,7 +1619,7 @@ fn send_final() {
     var o: u8[>..] = [];
     if t_res_type == RES_NONE {
         final_json(o);
-        if t_stream { send(o); } else { net::respond(conn, 200, "application/json; charset=utf-8", o); }
+        if t_stream { send(o); } else { respond_with(200, "application/json; charset=utf-8", o); }
         return;
     }
     if t_res_type == RES_OAI_CMPL {
@@ -1642,7 +1653,7 @@ fn send_final() {
         k(o, "timings");
         stats_json(o);
         o.push('}');
-        if t_stream { send(o); send("[DONE]"); } else { net::respond(conn, 200, "application/json; charset=utf-8", o); }
+        if t_stream { send(o); send("[DONE]"); } else { respond_with(200, "application/json; charset=utf-8", o); }
         return;
     }
     // chat: the whole output parsed, not partial
@@ -1669,7 +1680,7 @@ fn send_final() {
         k(o, "timings");
         stats_json(o);
         o.push('}');
-        net::respond(conn, 200, "application/json; charset=utf-8", o);
+        respond_with(200, "application/json; charset=utf-8", o);
         return;
     }
     for i in list_count(deltas) {
@@ -1701,14 +1712,14 @@ fn send_final() {
 // routes
 //
 
-fn respond_json(data: const u8[:]) { net::respond(conn, 200, "application/json; charset=utf-8", data); }
+fn respond_json(data: const u8[:]) { respond_with(200, "application/json; charset=utf-8", data); }
 
 fn respond_error(kind: i64, msg: const u8[:]) {
     var o: u8[>..] = [];
     o.append("{\"error\":");
     error_json(o, kind, msg);
     o.push('}');
-    net::respond(conn, error_code(kind), "application/json; charset=utf-8", o);
+    respond_with(error_code(kind), "application/json; charset=utf-8", o);
 }
 
 // The request's body as JSON, or a 400.
@@ -1965,7 +1976,7 @@ fn serve_file(path: const u8[:]) -> bool {
     file.append(if path == "/" { "/index.html" } else { path });
     var data: u8[>..] = [];
     guard read_file(file, data) else { return false; }
-    net::respond(conn, 200, content_type_of(file), data);
+    respond_with(200, content_type_of(file), data);
     return true;
 }
 
@@ -1993,16 +2004,14 @@ fn authorized() -> bool {
     return false;
 }
 
-fn handle(fd: i64) {
-    conn = fd;
+// Serves the request in raw, its head and body, on the main thread.
+fn handle(raw: const u8[:]) {
     streaming = false;
     client_gone = false;
-    let st = net::read_request(fd);
-    if st < 0 { return; }
+    let st = net::take_request(raw);
     if st > 0 { respond_error(E_INVALID_REQUEST, net::status_text(st)); return; }
     let method = net::method();
     let path = str(net::path());
-    if method == "OPTIONS" { net::respond_options(fd); return; }
     log(str("request: ", method, " ", path));
     if !authorized() { respond_error(E_AUTHENTICATION, "Invalid API Key"); return; }
     let get = method == "GET";
@@ -2034,13 +2043,182 @@ fn handle(fd: i64) {
 }
 
 //
-// startup
+// the threads: HTTP workers and the engine
 //
 
-fn remove_at(xs: i64[>..]&, at: i64) {
-    for j in at..xs.len - 1 { xs[j] = xs[j + 1]; }
-    xs.pop();
+// The engine's one job: a request, its head and body, in a shared blob,
+// since a job must fit one mail message.
+enum Job { Request { req: http::Shared } }
+// What a request waits on: the engine, or nothing yet.
+enum Use { None, Engine }
+struct St { use: Use = Use.None }
+struct App { engine: plod::Lane<Job, Use> }
+
+let JSON_TYPE = "application/json; charset=utf-8";
+// The longest request body.
+let MAX_BODY: i64 = 256 * 1024 * 1024;
+// How long a worker waits for each piece of a response: a request may wait
+// behind others, and a long prompt takes a while before its first token.
+let WAIT_MS: i64 = 3600 * 1000;
+
+// The request the engine serves now: where its response goes, in messages
+// of at most reply_piece bytes, and its job, which the first one echoes.
+// Then the head of the response, which goes in that first message.
+var reply_to = http::MailAddress { .. };
+var reply_piece: i64 = 0;
+var reply_job = default<Job>();
+var head_msg: u8[>..] = [];
+var begun = false;
+
+// Starts the response: status, Content-Type, and the body's length, -1 for
+// one sent in pieces as it comes (events). The worker writes it.
+fn reply_head(status: i64, content_type: const u8[:], length: i64) {
+    head_msg = plod::echo_head(reply_job);
+    format(head_msg, status, " ", length, "\n", content_type, "\n");
+    begun = false;
 }
+
+// Sends data, the next part of the response's body, in messages of at most
+// a mail message's size; last ends the response. False once the client has
+// gone. A full mailbox is waited out.
+fn reply_part(data: const u8[:], last: bool) -> bool {
+    var at = 0;
+    loop {
+        var m: u8[>..] = [];
+        var tag: i32 = if begun { plod::REPLY_CONT } else { 0 };
+        if !begun { m.append(head_msg); }
+        let n = min(data.len - at, max(reply_piece - m.len, 0));
+        m.append(data[at..at + n]);
+        at += n;
+        if at < data.len || !last { tag |= plod::REPLY_MORE; }
+        loop {
+            let sent = http::mail_send(reply_to, tag, m);
+            if sent == http::SENT { break; }
+            guard sent == http::FULL else { return false; }
+            sleep_ms(1);
+        }
+        begun = true;
+        guard at < data.len else { return true; }
+    }
+}
+
+// A whole response.
+fn respond_with(status: i64, content_type: const u8[:], data: const u8[:]) {
+    reply_head(status, content_type, data.len);
+    reply_part(data, true);
+}
+
+fn run(u: Job.Request, a: plod::Asked<Job>&) {
+    var raw: u8[>..] = [];
+    http::shared_append(u.req, 0, http::shared_len(u.req), raw);
+    http::shared_release(u.req);
+    a.replied = true;
+    guard plod::still_wanted(a) else { return; }
+    reply_to = a.reply;
+    reply_piece = a.piece;
+    reply_job = a.job;
+    handle(raw);
+    if streaming { reply_part("", true); }
+}
+
+// A whole response from a worker, with the fields every response has.
+fn answer(out: http::Reply, status: i32, content_type: const u8[:], data: const u8[:]) {
+    http::begin(out, status, data.len);
+    if content_type.len > 0 { http::field(out, "Content-Type", content_type); }
+    http::field(out, "Access-Control-Allow-Origin", "*");
+    http::send(out, data);
+    http::end(out);
+}
+
+// A request's first call, on a worker: CORS preflights, /health, and every
+// request while the model loads (503) answered here, so they don't wait on
+// the engine; the rest sent to it.
+fn route(cx) {
+    let method = cx.req.method;
+    let target = cx.req.target;
+    let q = find(target, "?");
+    let path = if q >= 0 { target[..q] } else { target };
+    if method == "OPTIONS" {
+        http::begin(cx.out, 200, 0);
+        http::field(cx.out, "Access-Control-Allow-Origin", "*");
+        http::field(cx.out, "Access-Control-Allow-Credentials", "true");
+        http::field(cx.out, "Access-Control-Allow-Methods", "GET, POST");
+        http::field(cx.out, "Access-Control-Allow-Headers", "*");
+        http::end(cx.out);
+        return;
+    }
+    if net::ready() == 0 {
+        answer(cx.out, 503, JSON_TYPE, "{\"error\":{\"code\":503,\"message\":\"Loading model\",\"type\":\"unavailable_error\"}}");
+        return;
+    }
+    if method == "GET" && (path == "/health" || path == "/v1/health") {
+        answer(cx.out, 200, JSON_TYPE, "{\"status\":\"ok\"}");
+        return;
+    }
+    let body = plod::body(cx, MAX_BODY);
+    var raw: u8[>..] = [];
+    format(raw, method, " ", target, " HTTP/1.1\r\n");
+    raw.append(cx.req.fields);
+    raw.append("\r\n");
+    raw.append(body);
+    let b, err = http::shared_put(raw, 1);
+    guard err == 0 else { plod::fail(cx, 503, "unavailable"); }
+    let sent = plod::try_ask(cx, cx.app.engine, Job.Request { req: b }, WAIT_MS, 0);
+    if sent != http::SENT {
+        http::shared_release(b);
+        plod::fail(cx, 503, "unavailable");
+    }
+}
+
+fn resume(u: Use.None, cx) { plod::fail(cx, 500, "not_waiting"); }
+
+// The response's first message, from the engine: "status length\ntype\n"
+// and the body's first bytes. The rest, if any, plod::serve sends on.
+fn resume(u: Use.Engine, cx) {
+    let n = plod::echo_len(cx.reply);
+    guard n >= 0 else { plod::fail(cx, 502, "bad_reply"); }
+    let m = cx.reply[plod::ECHO_HEAD + n..];
+    let nl = find(m, "\n");
+    guard nl > 0 else { plod::fail(cx, 502, "bad_reply"); }
+    let line = m[..nl];
+    let rest = m[nl + 1..];
+    let nl2 = find(rest, "\n");
+    guard nl2 >= 0 else { plod::fail(cx, 502, "bad_reply"); }
+    let sp = find(line, " ");
+    guard sp > 0 else { plod::fail(cx, 502, "bad_reply"); }
+    let status, ok1 = parse_int(line[..sp]);
+    let length, ok2 = parse_int(line[sp + 1..]);
+    guard ok1 && ok2 else { plod::fail(cx, 502, "bad_reply"); }
+    let content_type = rest[..nl2];
+    http::begin(cx.out, status as! i32, length);
+    if content_type.len > 0 { http::field(cx.out, "Content-Type", content_type); }
+    http::field(cx.out, "Access-Control-Allow-Origin", "*");
+    if length < 0 { http::field(cx.out, "Cache-Control", "no-cache"); }
+    plod::relay_piece(cx.out, rest[nl2 + 1..], cx.more);
+}
+
+// The HTTP threads: the workers, until a signal stops them; then the
+// engine's loop ends too.
+thread_fn http_main(cfg: http::Config, app: App) {
+    http::run(cfg, app, worker);
+    plod::lane_stop(app.engine);
+}
+
+thread_fn worker(cfg: http::Config, lanes: App) {
+    var app = lanes;
+    let e = plod::serve(cfg, app, St { .. }) { cx =>
+        if plod::resumed(cx) {
+            plod::on_reply(cx) { resume(cx.state.use, cx); };
+        } else {
+            plod::route(cx) { route(cx); };
+        }
+    };
+    if e.code != 0 { http::report(e); }
+}
+
+//
+// startup
+//
 
 // llama_ftype_name
 fn ftype_of(ft: i64) -> const u8[:] {
@@ -2056,7 +2234,8 @@ fn ftype_of(ft: i64) -> const u8[:] {
     };
 }
 
-fn main() {
+// The engine's startup: the arguments, the model, its context and templates.
+fn setup() {
     let args = console::utf8_args();
     var host: u8[>..] = [];
     host.append("127.0.0.1");
@@ -2196,44 +2375,41 @@ fn main() {
     // the sources as the templates keep them: Jinja drops one newline at the end
     if ends_with(tmpl_src, "\n") { tmpl_src.pop(); }
     if ends_with(tmpl_tool_src, "\n") { tmpl_tool_src.pop(); }
+}
 
-    let srv = net::listen(host, port);
-    if srv < 0 { die(str("couldn't bind HTTP server socket, hostname: ", host, ", port: ", port)); }
-    log(str("main: server is listening on http://", host, ":", net::port_of(srv)));
-    // The connections open, served once their request arrives: a browser
-    // opens some ahead of time, and those must not hold the others up.
-    var open: i64[>..] = [];
-    var opened_at: i64[>..] = [];
-    loop {
-        var fds: i64[>..] = [];
-        fds.push(srv);
-        fds.append(open);
-        let i = net::wait(fds, 1000);
-        let now = time_ns() / 1000000000;
-        if i == 0 {
-            let fd = net::accept(srv);
-            if fd >= 0 {
-                net::set_timeout(fd, 30000);
-                open.push(fd);
-                opened_at.push(now);
-            }
-        } else if i > 0 {
-            let fd = open[i - 1];
-            remove_at(open, i - 1);
-            remove_at(opened_at, i - 1);
-            handle(fd);
-            net::close(fd);
+// The HTTP threads, started first, so that /health answers while the model
+// loads; then the engine, on this thread, since only the program's first
+// thread may hold the model's, vocab's and templates' references (spec
+// §11.2): it loads them and serves the requests the workers send its box.
+// Only --host and --port matter to the workers: setup reads every argument.
+fn main() {
+    let args = console::utf8_args();
+    var cfg = http::Config { workers: 2, mail_slots: 64, mail_size: 16384, max_waiting: 1024,
+                             max_body: MAX_BODY, max_drain: MAX_BODY, .. };
+    cfg.address.append("127.0.0.1");
+    var i = 1;
+    while i + 1 < args.len {
+        if args[i] == "--host" {
+            cfg.address.clear();
+            cfg.address.append(args[i + 1]);
+            i++;
+        } else if args[i] == "--port" {
+            let p, ok = parse_int(args[i + 1]);
+            if ok { cfg.port = p as! i32; }
+            i++;
         }
-        // the ones idle for 30 s are closed
-        var k = 0;
-        while k < open.len {
-            if now - opened_at[k] > 30 {
-                net::close(open[k]);
-                remove_at(open, k);
-                remove_at(opened_at, k);
-            } else {
-                k++;
-            }
-        }
+        i++;
     }
+    http::exit_on_error(http::stop_on_signals());
+    http::gather_budget(MAX_BODY);
+    let box, e = http::mail_open(64, 256);
+    http::exit_on_error(e);
+    let app = App { engine: plod::lane_of<Job>(box, Use.Engine) };
+    let http_thread = thread_spawn(http_main, cfg, app);
+    log(str("main: server is listening on http://", cfg.address, ":", cfg.port));
+    setup();
+    net::set_ready();
+    log("main: model loaded");
+    plod::lane(box, plod::Jobs<Job> { .. }) { u, a => run(u, a); };
+    thread_wait(http_thread);
 }

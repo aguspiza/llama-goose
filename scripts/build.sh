@@ -6,13 +6,13 @@
 # -O1 compiles the program's C about 4 times faster than -O3 and runs as
 # fast: the heavy work is in ggml, whose C gets -O3 from its sidecar and is
 # compiled once. -O0 makes the per-token Goose code slow.
-# GOOSE  the Goose compiler (default: the one in ~/coding/goose-lang; the
+# GOOSE  the Goose compiler, v2026.4 (default: ~/goose/goose.exe; the
 #        `goose` on PATH may be a different program with the same name)
 # OPT    gcc's optimization level for the program's C (default 1)
 set -euo pipefail
 
 opt=${OPT:-1}
-goose=${GOOSE:-$HOME/coding/goose-lang/tools/goose/goose-v2026.3-windows-x64/goose.exe}
+goose=${GOOSE:-$HOME/goose/goose.exe}
 export GOOSE_CC=gcc
 # MinGW: gcc spills 32-byte AVX values to the stack with aligned moves, which
 # Win64 does not align for, and the program crashes; this makes them unaligned.
@@ -35,6 +35,16 @@ for program in "$@"; do
         obj=$(grep -o -- ' -o [^ ]*' <<< "$cmd" | cut -c5- | tr -d '"')
         if [[ ! -f $obj || $src -nt $obj ]]; then eval "$cmd"; fi
     done < <(head -n -1 <<< "$cmds")
+    # each package's objects are named by a hash of their source, and the
+    # link reads them from the package's link-cc.rsp, which only a whole
+    # goose build writes: its objects are put there, its libraries kept
+    for rsp in $(grep -o '@[^ "]*link-cc\.rsp' <<< "$link" | cut -c2-); do
+        dir=$(dirname "$rsp")
+        objs=$(head -n -1 <<< "$cmds" | grep -o -- ' -o [^ ]*' | cut -c5- | tr -d '"' | grep -F "$dir/" || true)
+        [[ -n $objs ]] || continue
+        { sed 's/.*/"&"/' <<< "$objs"; grep -v '\.o"$' "$rsp" || true; } > "$rsp.new"
+        mv "$rsp.new" "$rsp"
+    done
     link=${link/ -O2 / -O$opt -march=native $avx_fix }
     eval "$link"
     echo "built ${program%.goose}.exe"

@@ -1,21 +1,24 @@
-// HTTP/1.1 over TCP, as much as llama-server and its clients need: one
-// request per connection (each response closes it), bodies by
-// Content-Length, and server-sent events. The sockets are net.c's.
+// HTTP/1.1 over TCP, as much as llama-server's clients need: one request
+// per connection (each response closes it), bodies by Content-Length, and
+// server-sent events; and the request parsing tools/server uses, its HTTP
+// being goose-http's. The sockets are net.c's.
 // port-of: tools/server/server-http.cpp
 import std;
 namespace net;
 
-extern "net_listen" fn listen(host: const u8[:], port: i64) -> i64;
-extern "net_port" fn port_of(fd: i64) -> i64;
-extern "net_accept" fn accept(fd: i64) -> i64;
-extern "net_connect" fn connect(host: const u8[:], port: i64) -> i64;
-extern "net_recv" fn recv(fd: i64, buf: u8[:]) -> i64;
-extern "net_send" fn c_send(fd: i64, data: const u8[:]) -> i64;
-extern "net_readable" fn readable(fd: i64) -> i64;
-extern "net_close" fn close(fd: i64);
+extern "lg_net_listen" fn listen(host: const u8[:], port: i64) -> i64;
+extern "lg_net_port" fn port_of(fd: i64) -> i64;
+extern "lg_net_accept" fn accept(fd: i64) -> i64;
+extern "lg_net_connect" fn connect(host: const u8[:], port: i64) -> i64;
+extern "lg_net_recv" fn recv(fd: i64, buf: u8[:]) -> i64;
+extern "lg_net_send" fn c_send(fd: i64, data: const u8[:]) -> i64;
+extern "lg_net_readable" fn readable(fd: i64) -> i64;
 // The index of the first of fds that is readable within timeout_ms, or -1.
-extern "net_wait" fn wait(fds: const i64[:], timeout_ms: i64) -> i64;
-extern "net_set_timeout" fn set_timeout(fd: i64, ms: i64);
+extern "lg_net_wait" fn wait(fds: const i64[:], timeout_ms: i64) -> i64;
+extern "lg_net_close" fn close(fd: i64);
+// Whether the server is ready, for every thread: set once its model is loaded.
+extern "lg_net_set_ready" fn set_ready();
+extern "lg_net_ready" fn ready() -> i64;
 
 fn send(fd: i64, data: const u8[:]) -> bool { c_send(fd, data) == 0 }
 
@@ -83,17 +86,8 @@ fn read_request(fd: i64) -> i64 {
         guard got.len <= MAX_HEAD || end >= 0 else { return 413; }
     }
     head.append(got[..end]);
-    // the request line: METHOD SP target SP version
-    let first = find(head, "\r\n");
-    let line = if first >= 0 { head[..first] } else { head[..] };
-    let sp1 = find(line, " ");
-    guard sp1 > 0 else { return 400; }
-    let after = line[sp1 + 1..];
-    let sp2 = find(after, " ");
-    guard sp2 > 0 else { return 400; }
-    method_end = sp1;
-    target_start = sp1 + 1;
-    target_end = sp1 + 1 + sp2;
+    let st = request_line();
+    guard st == 0 else { return st; }
 
     var length = 0;
     let cl = header("Content-Length");
@@ -114,6 +108,33 @@ fn read_request(fd: i64) -> i64 {
         body.append(buf[..min(n, length - body.len)]);
     }
     return 0;
+}
+
+// Parses the request line of head: METHOD SP target SP version. 0, or 400.
+fn request_line() -> i64 {
+    let first = find(head, "\r\n");
+    let line = if first >= 0 { head[..first] } else { head[..] };
+    let sp1 = find(line, " ");
+    guard sp1 > 0 else { return 400; }
+    let after = line[sp1 + 1..];
+    let sp2 = find(after, " ");
+    guard sp2 > 0 else { return 400; }
+    method_end = sp1;
+    target_start = sp1 + 1;
+    target_end = sp1 + 1 + sp2;
+    return 0;
+}
+
+// Takes a whole request, its head and its body, from raw into head and
+// body: 0, or 400.
+fn take_request(raw: const u8[:]) -> i64 {
+    head.clear();
+    body.clear();
+    let end = find(raw, "\r\n\r\n");
+    guard end >= 0 else { return 400; }
+    head.append(raw[..end]);
+    body.append(raw[end + 4..]);
+    return request_line();
 }
 
 fn status_text(status: i64) -> const u8[:] {
@@ -148,33 +169,6 @@ fn respond(fd: i64, status: i64, content_type: const u8[:], data: const u8[:]) -
     start_head(out, status, content_type);
     format(out, "Content-Length: ", data.len, "\r\n\r\n");
     out.append(data);
-    return send(fd, out);
-}
-
-// The answer to a CORS preflight (OPTIONS).
-fn respond_options(fd: i64) -> bool {
-    var out: u8[>..] = [];
-    start_head(out, 200, "");
-    out.append("Access-Control-Allow-Credentials: true\r\n");
-    out.append("Access-Control-Allow-Methods: GET, POST\r\n");
-    out.append("Access-Control-Allow-Headers: *\r\n");
-    out.append("Content-Length: 0\r\n\r\n");
-    return send(fd, out);
-}
-
-// The head of a stream of server-sent events; the body runs until the
-// connection closes.
-fn begin_events(fd: i64) -> bool {
-    var out: u8[>..] = [];
-    start_head(out, 200, "text/event-stream");
-    out.append("Cache-Control: no-cache\r\n\r\n");
-    return send(fd, out);
-}
-
-// One event: "data: <text>\n\n" (or what the caller gives whole).
-fn send_event(fd: i64, data: const u8[:]) -> bool {
-    var out: u8[>..] = [];
-    format(out, "data: ", data, "\n\n");
     return send(fd, out);
 }
 

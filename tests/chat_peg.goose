@@ -30,7 +30,7 @@ struct R { at: i64 = 0, len: i64 = 0 }
 struct MsgR { role: R, content: R, reasoning: R, tool_name: R, tool_call_id: R, calls_at: i64, calls_n: i64, parts_at: i64, parts_n: i64 }
 struct CallR { name: R, args: R, id: R }
 struct PartR { kind: R, text: R, name: R }
-struct ToolR { name: R, description: R, parameters: R, defer: bool }
+struct ToolR { name: R, description: R, parameters: R, defer_loading: bool }
 struct KVR { key: R, value: R }
 
 var store: u8[>..] = [];
@@ -176,7 +176,7 @@ fn main() {
                 let f = jget(json_schema::json_at(tv, i), "function");
                 var params: u8[>..] = [];
                 json_schema::json_dump(params, jget(f, "parameters"));
-                tools.push(ToolR { name: keep(jstr(jget(f, "name"))), description: keep(jstr(jget(f, "description"))), parameters: keep(params), defer: jbool(jget(f, "defer_loading")) });
+                tools.push(ToolR { name: keep(jstr(jget(f, "name"))), description: keep(jstr(jget(f, "description"))), parameters: keep(params), defer_loading: jbool(jget(f, "defer_loading")) });
             }
         }
         var kvs: KVR[>..] = [];
@@ -202,7 +202,7 @@ fn main() {
                 tool_name: s(m.tool_name), tool_call_id: s(m.tool_call_id), .. });
         }
         var mtools: chat_apply::Tool[>..] = [];
-        for t in tools { mtools.push(chat_apply::Tool { name: s(t.name), description: s(t.description), parameters: s(t.parameters), defer_loading: t.defer }); }
+        for t in tools { mtools.push(chat_apply::Tool { name: s(t.name), description: s(t.description), parameters: s(t.parameters), defer_loading: t.defer_loading }); }
         var mkv: chat_apply::KV[>..] = [];
         for kv in kvs { mkv.push(chat_apply::KV { key: s(kv.key), value: s(kv.value) }); }
         let inp = chat_apply::Inputs { messages: messages, json_schema: s(schema_r), add_generation_prompt: add_gen, continue_final_message: cont,

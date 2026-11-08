@@ -48,7 +48,7 @@ static void lg_cstr(lg_text s, char * buf, size_t size) {
 }
 
 // A socket listening on host:port, or -1.
-int64_t net_listen(lg_text host, int64_t port) {
+int64_t lg_net_listen(lg_text host, int64_t port) {
     lg_start();
     char h[256], p[16];
     lg_cstr(host, h, sizeof h);
@@ -80,7 +80,7 @@ int64_t net_listen(lg_text host, int64_t port) {
 }
 
 // The port a listening socket got (for port 0), or -1.
-int64_t net_port(int64_t fd) {
+int64_t lg_net_port(int64_t fd) {
     struct sockaddr_storage a;
     socklen_t len = sizeof a;
     if (getsockname((lg_sock) fd, (struct sockaddr *) &a, &len) != 0) return -1;
@@ -95,7 +95,7 @@ static void lg_nodelay(lg_sock s) {
 }
 
 // The next connection on a listening socket, or -1.
-int64_t net_accept(int64_t fd) {
+int64_t lg_net_accept(int64_t fd) {
     lg_sock s = accept((lg_sock) fd, NULL, NULL);
     if (s == LG_BAD) return -1;
     lg_nodelay(s);
@@ -103,7 +103,7 @@ int64_t net_accept(int64_t fd) {
 }
 
 // A connection to host:port, or -1.
-int64_t net_connect(lg_text host, int64_t port) {
+int64_t lg_net_connect(lg_text host, int64_t port) {
     lg_start();
     char h[256], p[16];
     lg_cstr(host, h, sizeof h);
@@ -128,13 +128,13 @@ int64_t net_connect(lg_text host, int64_t port) {
 }
 
 // Up to buf.len bytes into buf: how many, 0 at the end, -1 on an error.
-int64_t net_recv(int64_t fd, lg_buf buf) {
+int64_t lg_net_recv(int64_t fd, lg_buf buf) {
     int n = recv((lg_sock) fd, buf.data, (int) (buf.len > 1 << 30 ? 1 << 30 : buf.len), 0);
     return n < 0 ? -1 : n;
 }
 
 // All of data: 0, or -1 when the connection is gone.
-int64_t net_send(int64_t fd, lg_text data) {
+int64_t lg_net_send(int64_t fd, lg_text data) {
     int64_t at = 0;
     while (at < data.len) {
         int64_t left = data.len - at;
@@ -151,7 +151,7 @@ int64_t net_send(int64_t fd, lg_text data) {
 
 // Whether the peer has closed the connection (or sent more), without
 // waiting: 1 when the socket is readable, 0 when not.
-int64_t net_readable(int64_t fd) {
+int64_t lg_net_readable(int64_t fd) {
     fd_set set;
     FD_ZERO(&set);
     FD_SET((lg_sock) fd, &set);
@@ -163,7 +163,7 @@ typedef struct { const int64_t * data; int64_t len; } lg_fds;    // a const i64[
 
 // Waits up to timeout_ms for one of fds to be readable (a listening socket:
 // to have a connection): its index, or -1.
-int64_t net_wait(lg_fds fds, int64_t timeout_ms) {
+int64_t lg_net_wait(lg_fds fds, int64_t timeout_ms) {
     fd_set set;
     FD_ZERO(&set);
     int64_t top = 0;
@@ -179,18 +179,7 @@ int64_t net_wait(lg_fds fds, int64_t timeout_ms) {
     return -1;
 }
 
-// A receive timeout, so that a client that stops halfway cannot hold the server.
-void net_set_timeout(int64_t fd, int64_t ms) {
-#ifdef _WIN32
-    DWORD t = (DWORD) ms;
-    setsockopt((lg_sock) fd, SOL_SOCKET, SO_RCVTIMEO, (const char *) &t, sizeof t);
-#else
-    struct timeval tv = { (long) (ms / 1000), (long) (ms % 1000) * 1000 };
-    setsockopt((lg_sock) fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-#endif
-}
-
-void net_close(int64_t fd) {
+void lg_net_close(int64_t fd) {
     if (fd < 0) return;
 #ifdef _WIN32
     shutdown((lg_sock) fd, SD_SEND);
@@ -199,3 +188,11 @@ void net_close(int64_t fd) {
 #endif
     lg_closesocket((lg_sock) fd);
 }
+
+// Whether the server is ready (its model loaded): set by the thread that
+// loads it, read by the threads that answer /health.
+static volatile int64_t lg_ready = 0;
+
+void lg_net_set_ready(void) { __atomic_store_n(&lg_ready, 1, __ATOMIC_RELEASE); }
+
+int64_t lg_net_ready(void) { return __atomic_load_n(&lg_ready, __ATOMIC_ACQUIRE); }
