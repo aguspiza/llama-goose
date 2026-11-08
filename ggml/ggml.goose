@@ -28,112 +28,112 @@ let ROPE_TYPE_IMROPE = 40;
 
 let DEFAULT_GRAPH_SIZE = 2048;
 
-extern "ggml_free" fn free(ctx: Ctx);
-extern "ggml_tensor_overhead" fn tensor_overhead() -> i64;
-extern "ggml_graph_overhead" fn graph_overhead() -> i64;
-extern "ggml_graph_overhead_custom" fn graph_overhead_custom(size: i64, grads: bool) -> i64;
+extern fn free(ctx: Ctx) = "ggml_free";
+extern fn tensor_overhead() -> i64 = "ggml_tensor_overhead";
+extern fn graph_overhead() -> i64 = "ggml_graph_overhead";
+extern fn graph_overhead_custom(size: i64, grads: bool) -> i64 = "ggml_graph_overhead_custom";
 
 // tensors
-extern "ggml_new_tensor_1d" fn new_tensor_1d(ctx: Ctx, typ: i32, ne0: i64) -> Tensor;
-extern "ggml_new_tensor_2d" fn new_tensor_2d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64) -> Tensor;
-extern "ggml_new_tensor_3d" fn new_tensor_3d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64, ne2: i64) -> Tensor;
-extern "ggml_new_tensor_4d" fn new_tensor_4d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor;
-extern "ggml_nbytes" fn nbytes(t: Tensor) -> i64;
-extern "ggml_nelements" fn nelements(t: Tensor) -> i64;
-extern "ggml_row_size" fn row_size(typ: i32, ne: i64) -> i64;
-extern "ggml_set_input" fn set_input(t: Tensor);
-extern "ggml_set_output" fn set_output(t: Tensor);
+extern fn new_tensor_1d(ctx: Ctx, typ: i32, ne0: i64) -> Tensor = "ggml_new_tensor_1d";
+extern fn new_tensor_2d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64) -> Tensor = "ggml_new_tensor_2d";
+extern fn new_tensor_3d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64, ne2: i64) -> Tensor = "ggml_new_tensor_3d";
+extern fn new_tensor_4d(ctx: Ctx, typ: i32, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor = "ggml_new_tensor_4d";
+extern fn nbytes(t: Tensor) -> i64 = "ggml_nbytes";
+extern fn nelements(t: Tensor) -> i64 = "ggml_nelements";
+extern fn row_size(typ: i32, ne: i64) -> i64 = "ggml_row_size";
+extern fn set_input(t: Tensor) = "ggml_set_input";
+extern fn set_output(t: Tensor) = "ggml_set_output";
 
 // operations
-extern "ggml_get_rows" fn get_rows(ctx: Ctx, a: Tensor, rows: Tensor) -> Tensor;
-extern "ggml_set_rows" fn set_rows(ctx: Ctx, dst: Tensor, src: Tensor, rows: Tensor) -> Tensor;
-extern "ggml_scale" fn scale(ctx: Ctx, a: Tensor, s: f32) -> Tensor;
-extern "ggml_add" fn add(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_mul" fn mul(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_sub" fn sub(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_exp" fn exp(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_sqrt" fn sqrt(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_mean" fn mean(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_scale_bias" fn scale_bias(ctx: Ctx, a: Tensor, s: f32, b: f32) -> Tensor;
-extern "ggml_neg" fn neg(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_repeat" fn repeat(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_repeat_4d" fn repeat_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor;
-extern "ggml_l2_norm" fn l2_norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor;
-extern "ggml_mul_mat" fn mul_mat(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_rms_norm" fn rms_norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor;
-extern "ggml_norm" fn norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor;
-extern "ggml_tanh" fn tanh(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_sigmoid" fn sigmoid(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_relu" fn relu(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_sqr" fn sqr(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_silu" fn silu(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_softplus" fn softplus(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_gelu" fn gelu(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_gelu_erf" fn gelu_erf(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_geglu_split" fn geglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_swiglu" fn swiglu(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_swiglu_split" fn swiglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_soft_max" fn soft_max(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_soft_max_ext" fn soft_max_ext(ctx: Ctx, a: Tensor, mask: Tensor, scale: f32, max_bias: f32) -> Tensor;
-extern "ggml_reshape_1d" fn reshape_1d(ctx: Ctx, a: Tensor, ne0: i64) -> Tensor;
-extern "ggml_argsort_top_k" fn argsort_top_k(ctx: Ctx, a: Tensor, k: i32) -> Tensor;
-extern "ggml_sum_rows" fn sum_rows(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_clamp" fn clamp(ctx: Ctx, a: Tensor, min: f32, max: f32) -> Tensor;
-extern "ggml_div" fn div(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_mul_mat_id" fn mul_mat_id(ctx: Ctx, as_: Tensor, b: Tensor, ids: Tensor) -> Tensor;
-extern "ggml_reglu_split" fn reglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_cont" fn cont(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_cast" fn cast(ctx: Ctx, a: Tensor, typ: i32) -> Tensor;
-extern "ggml_reshape_2d" fn reshape_2d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64) -> Tensor;
-extern "ggml_reshape_3d" fn reshape_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64) -> Tensor;
-extern "ggml_reshape_4d" fn reshape_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor;
-extern "ggml_cont_2d" fn cont_2d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64) -> Tensor;
-extern "ggml_cont_3d" fn cont_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64) -> Tensor;
-extern "ggml_cont_4d" fn cont_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor;
-extern "ggml_view_2d" fn view_2d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, nb1: i64, offset: i64) -> Tensor;
-extern "ggml_view_4d" fn view_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64,
-                                 nb1: i64, nb2: i64, nb3: i64, offset: i64) -> Tensor;
-extern "ggml_view_3d" fn view_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, nb1: i64, nb2: i64, offset: i64) -> Tensor;
-extern "ggml_transpose" fn transpose(ctx: Ctx, a: Tensor) -> Tensor;
-extern "ggml_pad" fn pad_ext(ctx: Ctx, a: Tensor, p0: i32, p1: i32, p2: i32, p3: i32) -> Tensor;
-extern "ggml_concat" fn concat(ctx: Ctx, a: Tensor, b: Tensor, dim: i32) -> Tensor;
-extern "ggml_cpy" fn cpy(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
-extern "ggml_ssm_conv" fn ssm_conv(ctx: Ctx, sx: Tensor, c: Tensor) -> Tensor;
+extern fn get_rows(ctx: Ctx, a: Tensor, rows: Tensor) -> Tensor = "ggml_get_rows";
+extern fn set_rows(ctx: Ctx, dst: Tensor, src: Tensor, rows: Tensor) -> Tensor = "ggml_set_rows";
+extern fn scale(ctx: Ctx, a: Tensor, s: f32) -> Tensor = "ggml_scale";
+extern fn add(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_add";
+extern fn mul(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_mul";
+extern fn sub(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_sub";
+extern fn exp(ctx: Ctx, a: Tensor) -> Tensor = "ggml_exp";
+extern fn sqrt(ctx: Ctx, a: Tensor) -> Tensor = "ggml_sqrt";
+extern fn mean(ctx: Ctx, a: Tensor) -> Tensor = "ggml_mean";
+extern fn scale_bias(ctx: Ctx, a: Tensor, s: f32, b: f32) -> Tensor = "ggml_scale_bias";
+extern fn neg(ctx: Ctx, a: Tensor) -> Tensor = "ggml_neg";
+extern fn repeat(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_repeat";
+extern fn repeat_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor = "ggml_repeat_4d";
+extern fn l2_norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor = "ggml_l2_norm";
+extern fn mul_mat(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_mul_mat";
+extern fn rms_norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor = "ggml_rms_norm";
+extern fn norm(ctx: Ctx, a: Tensor, eps: f32) -> Tensor = "ggml_norm";
+extern fn tanh(ctx: Ctx, a: Tensor) -> Tensor = "ggml_tanh";
+extern fn sigmoid(ctx: Ctx, a: Tensor) -> Tensor = "ggml_sigmoid";
+extern fn relu(ctx: Ctx, a: Tensor) -> Tensor = "ggml_relu";
+extern fn sqr(ctx: Ctx, a: Tensor) -> Tensor = "ggml_sqr";
+extern fn silu(ctx: Ctx, a: Tensor) -> Tensor = "ggml_silu";
+extern fn softplus(ctx: Ctx, a: Tensor) -> Tensor = "ggml_softplus";
+extern fn gelu(ctx: Ctx, a: Tensor) -> Tensor = "ggml_gelu";
+extern fn gelu_erf(ctx: Ctx, a: Tensor) -> Tensor = "ggml_gelu_erf";
+extern fn geglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_geglu_split";
+extern fn swiglu(ctx: Ctx, a: Tensor) -> Tensor = "ggml_swiglu";
+extern fn swiglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_swiglu_split";
+extern fn soft_max(ctx: Ctx, a: Tensor) -> Tensor = "ggml_soft_max";
+extern fn soft_max_ext(ctx: Ctx, a: Tensor, mask: Tensor, scale: f32, max_bias: f32) -> Tensor = "ggml_soft_max_ext";
+extern fn reshape_1d(ctx: Ctx, a: Tensor, ne0: i64) -> Tensor = "ggml_reshape_1d";
+extern fn argsort_top_k(ctx: Ctx, a: Tensor, k: i32) -> Tensor = "ggml_argsort_top_k";
+extern fn sum_rows(ctx: Ctx, a: Tensor) -> Tensor = "ggml_sum_rows";
+extern fn clamp(ctx: Ctx, a: Tensor, min: f32, max: f32) -> Tensor = "ggml_clamp";
+extern fn div(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_div";
+extern fn mul_mat_id(ctx: Ctx, as_: Tensor, b: Tensor, ids: Tensor) -> Tensor = "ggml_mul_mat_id";
+extern fn reglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_reglu_split";
+extern fn cont(ctx: Ctx, a: Tensor) -> Tensor = "ggml_cont";
+extern fn cast(ctx: Ctx, a: Tensor, typ: i32) -> Tensor = "ggml_cast";
+extern fn reshape_2d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64) -> Tensor = "ggml_reshape_2d";
+extern fn reshape_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64) -> Tensor = "ggml_reshape_3d";
+extern fn reshape_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor = "ggml_reshape_4d";
+extern fn cont_2d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64) -> Tensor = "ggml_cont_2d";
+extern fn cont_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64) -> Tensor = "ggml_cont_3d";
+extern fn cont_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64) -> Tensor = "ggml_cont_4d";
+extern fn view_2d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, nb1: i64, offset: i64) -> Tensor = "ggml_view_2d";
+extern fn view_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64,
+                  nb1: i64, nb2: i64, nb3: i64, offset: i64) -> Tensor = "ggml_view_4d";
+extern fn view_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, nb1: i64, nb2: i64, offset: i64) -> Tensor = "ggml_view_3d";
+extern fn transpose(ctx: Ctx, a: Tensor) -> Tensor = "ggml_transpose";
+extern fn pad_ext(ctx: Ctx, a: Tensor, p0: i32, p1: i32, p2: i32, p3: i32) -> Tensor = "ggml_pad";
+extern fn concat(ctx: Ctx, a: Tensor, b: Tensor, dim: i32) -> Tensor = "ggml_concat";
+extern fn cpy(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_cpy";
+extern fn ssm_conv(ctx: Ctx, sx: Tensor, c: Tensor) -> Tensor = "ggml_ssm_conv";
 // the output: y [d_inner, n_seq_tokens, n_seqs], then K states
-extern "ggml_ssm_scan" fn ssm_scan(ctx: Ctx, s: Tensor, x: Tensor, dt: Tensor, a: Tensor, b: Tensor, c: Tensor,
-                                   ids: Tensor, n_states: i64) -> Tensor;
-extern "ggml_view_1d" fn view_1d(ctx: Ctx, a: Tensor, ne0: i64, offset: i64) -> Tensor;
-extern "ggml_element_size" fn element_size(t: Tensor) -> i64;
-extern "ggml_permute" fn permute(ctx: Ctx, a: Tensor, ax0: i32, ax1: i32, ax2: i32, ax3: i32) -> Tensor;
-extern "ggml_rope_ext" fn rope_ext(ctx: Ctx, a: Tensor, pos: Tensor, freqs: Tensor, n_dims: i32, mode: i32,
-                                   n_ctx_orig: i32, freq_base: f32, freq_scale: f32, ext_factor: f32,
-                                   attn_factor: f32, beta_fast: f32, beta_slow: f32) -> Tensor;
+extern fn ssm_scan(ctx: Ctx, s: Tensor, x: Tensor, dt: Tensor, a: Tensor, b: Tensor, c: Tensor,
+                   ids: Tensor, n_states: i64) -> Tensor = "ggml_ssm_scan";
+extern fn view_1d(ctx: Ctx, a: Tensor, ne0: i64, offset: i64) -> Tensor = "ggml_view_1d";
+extern fn element_size(t: Tensor) -> i64 = "ggml_element_size";
+extern fn permute(ctx: Ctx, a: Tensor, ax0: i32, ax1: i32, ax2: i32, ax3: i32) -> Tensor = "ggml_permute";
+extern fn rope_ext(ctx: Ctx, a: Tensor, pos: Tensor, freqs: Tensor, n_dims: i32, mode: i32,
+                   n_ctx_orig: i32, freq_base: f32, freq_scale: f32, ext_factor: f32,
+                   attn_factor: f32, beta_fast: f32, beta_slow: f32) -> Tensor = "ggml_rope_ext";
 // rope only dimensions n_offs.. of a rope node
-extern "ggml_rope_set_offset" fn rope_set_offset(a: Tensor, n_offs: i32) -> Tensor;
-extern "ggml_flash_attn_ext" fn flash_attn_ext(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, mask: Tensor,
-                                               scale: f32, max_bias: f32, logit_softcap: f32) -> Tensor;
+extern fn rope_set_offset(a: Tensor, n_offs: i32) -> Tensor = "ggml_rope_set_offset";
+extern fn flash_attn_ext(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, mask: Tensor,
+                         scale: f32, max_bias: f32, logit_softcap: f32) -> Tensor = "ggml_flash_attn_ext";
 // the output: the heads' values [S_v, H_v, n_tokens, n_seqs], then K states
-extern "ggml_gated_delta_net" fn gated_delta_net(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, g: Tensor, beta: Tensor,
-                                                 state: Tensor, n_states: i64) -> Tensor;
+extern fn gated_delta_net(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, g: Tensor, beta: Tensor,
+                          state: Tensor, n_states: i64) -> Tensor = "ggml_gated_delta_net";
 // RWKV's attentions: the output, then the new state
-extern "ggml_rwkv_wkv6" fn rwkv_wkv6(ctx: Ctx, k: Tensor, v: Tensor, r: Tensor, tf: Tensor, td: Tensor, state: Tensor) -> Tensor;
-extern "ggml_rwkv_wkv7" fn rwkv_wkv7(ctx: Ctx, r: Tensor, w: Tensor, k: Tensor, v: Tensor, a: Tensor, b: Tensor, state: Tensor) -> Tensor;
-extern "ggml_gated_linear_attn" fn gated_linear_attn(ctx: Ctx, k: Tensor, v: Tensor, q: Tensor, g: Tensor, state: Tensor,
-                                                     scale: f32) -> Tensor;
-extern "ggml_prec_set_acc" fn prec_set_acc(a: Tensor, prec: i32) -> bool;
+extern fn rwkv_wkv6(ctx: Ctx, k: Tensor, v: Tensor, r: Tensor, tf: Tensor, td: Tensor, state: Tensor) -> Tensor = "ggml_rwkv_wkv6";
+extern fn rwkv_wkv7(ctx: Ctx, r: Tensor, w: Tensor, k: Tensor, v: Tensor, a: Tensor, b: Tensor, state: Tensor) -> Tensor = "ggml_rwkv_wkv7";
+extern fn gated_linear_attn(ctx: Ctx, k: Tensor, v: Tensor, q: Tensor, g: Tensor, state: Tensor,
+                            scale: f32) -> Tensor = "ggml_gated_linear_attn";
+extern fn prec_set_acc(a: Tensor, prec: i32) -> bool = "ggml_prec_set_acc";
 
 // graphs
-extern "ggml_new_graph_custom" fn new_graph_custom(ctx: Ctx, size: i64, grads: bool) -> Graph;
-extern "ggml_new_graph" fn new_graph(ctx: Ctx) -> Graph;
-extern "ggml_build_forward_expand" fn build_forward_expand(g: Graph, t: Tensor);
-extern "ggml_graph_n_nodes" fn graph_n_nodes(g: Graph) -> i32;
+extern fn new_graph_custom(ctx: Ctx, size: i64, grads: bool) -> Graph = "ggml_new_graph_custom";
+extern fn new_graph(ctx: Ctx) -> Graph = "ggml_new_graph";
+extern fn build_forward_expand(g: Graph, t: Tensor) = "ggml_build_forward_expand";
+extern fn graph_n_nodes(g: Graph) -> i32 = "ggml_graph_n_nodes";
 
-extern "ggml_backend_free" fn backend_free(b: Backend);
-extern "ggml_backend_alloc_ctx_tensors" fn backend_alloc_ctx_tensors(ctx: Ctx, b: Backend) -> Buffer;
-extern "ggml_backend_buffer_clear" fn backend_buffer_clear(buf: Buffer, value: u8);
-extern "ggml_backend_buffer_free" fn backend_buffer_free(buf: Buffer);
-extern "ggml_backend_graph_compute" fn backend_graph_compute(b: Backend, g: Graph) -> i32;
-extern "ggml_gallocr_free" fn gallocr_free(g: Gallocr);
-extern "ggml_gallocr_alloc_graph" fn gallocr_alloc_graph(g: Gallocr, graph: Graph) -> bool;
+extern fn backend_free(b: Backend) = "ggml_backend_free";
+extern fn backend_alloc_ctx_tensors(ctx: Ctx, b: Backend) -> Buffer = "ggml_backend_alloc_ctx_tensors";
+extern fn backend_buffer_clear(buf: Buffer, value: u8) = "ggml_backend_buffer_clear";
+extern fn backend_buffer_free(buf: Buffer) = "ggml_backend_buffer_free";
+extern fn backend_graph_compute(b: Backend, g: Graph) -> i32 = "ggml_backend_graph_compute";
+extern fn gallocr_free(g: Gallocr) = "ggml_gallocr_free";
+extern fn gallocr_alloc_graph(g: Gallocr, graph: Graph) -> bool = "ggml_gallocr_alloc_graph";
 
 

@@ -7,8 +7,8 @@ import os;
 
 namespace console;
 
-extern "common_is_tty" fn is_tty(fd: i64) -> i64;
-extern "common_args_utf8" fn c_args_utf8(out: u8[:]) -> i64;
+extern fn is_tty(fd: i64) -> i64 = "common_is_tty";
+extern fn c_args_utf8(out: u8[:]) -> i64 = "common_args_utf8";
 
 // The program's arguments, in UTF-8 on Windows too (where llama.cpp's
 // programs get them so from their manifest).

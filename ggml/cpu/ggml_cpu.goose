@@ -4,16 +4,16 @@ import ggml_shim from "../shim";
 import ggml from "..";
 namespace ggml;
 
-extern "ggml_graph_compute_with_ctx" fn graph_compute_with_ctx(ctx: Ctx, g: Graph, n_threads: i32) -> i32;
+extern fn graph_compute_with_ctx(ctx: Ctx, g: Graph, n_threads: i32) -> i32 = "ggml_graph_compute_with_ctx";
 // backends and buffers
-extern "ggml_backend_cpu_init" fn backend_cpu_init() -> Backend;
-extern "ggml_backend_cpu_set_n_threads" fn backend_cpu_set_n_threads(b: Backend, n: i32);
+extern fn backend_cpu_init() -> Backend = "ggml_backend_cpu_init";
+extern fn backend_cpu_set_n_threads(b: Backend, n: i32) = "ggml_backend_cpu_set_n_threads";
 
 // Allocates the tensors of ctx as llama.cpp does: the ones in matmul (read
 // by mul_mat) and matmul_id (experts read by mul_mat_id, n_ids per token) in
 // the CPU's extra buffer types (CPU_REPACK) where they fit, the rest in plain
 // CPU memory. bufs gets the buffers, ending with p == 0.
-extern "lg_alloc_weights" fn alloc_weights(ctx: Ctx, matmul: const Tensor[:], matmul_id: const Tensor[:], n_ids: i64,
-                                           bufs: Buffer[:]) -> bool;
-extern "lg_default_threads" fn default_threads() -> i32;
-extern "lg_set_quiet" fn set_quiet(q: i32);
+extern fn alloc_weights(ctx: Ctx, matmul: const Tensor[:], matmul_id: const Tensor[:], n_ids: i64,
+                        bufs: Buffer[:]) -> bool = "lg_alloc_weights";
+extern fn default_threads() -> i32 = "lg_default_threads";
+extern fn set_quiet(q: i32) = "lg_set_quiet";

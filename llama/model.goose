@@ -668,7 +668,7 @@ fn load_swa_pattern(m: Model&, n_pattern_default: u32, dense_first: bool = false
         var vals: u8[>..] = [];
         vals.resize(n, 0);
         gguf::get_arr_u8(m.meta, id, vals);
-        for i in min(n, m.hp.n_layer as i64) { m.hp.is_swa[i] = vals[i] != 0; }
+        for i in min(n, m.hp.n_layer) { m.hp.is_swa[i] = vals[i] != 0; }
         return;
     }
     var n_pattern = n_pattern_default;
@@ -957,7 +957,7 @@ fn load_hparams_nanbeige(m: Model&) {
             hp.n_ff.push(hp.n_ff[i]);
             hp.is_swa.push(hp.is_swa[i]);
             hp.is_recr.push(hp.is_recr[i]);
-            hp.kv_source.push(hp.n_layer_phys as i64 * j + i);
+            hp.kv_source.push(hp.n_layer_phys * j + i);
         }
     }
     hp.n_layer = hp.n_layer_phys * hp.n_loops;
@@ -1071,7 +1071,7 @@ fn load_hparams_minicpm(m: Model&) {
     let hp .= m.hp;
     hp.f_embedding_scale = 12.0;
     hp.f_residual_scale = 1.4 / sqrt(hp.n_layer as f32);
-    hp.f_logit_scale = if hp.n_embd != 0 { 256.0 / (hp.n_embd as f32) } else { 1.0 };
+    hp.f_logit_scale = if hp.n_embd != 0 { 256.0 / hp.n_embd } else { 1.0 };
     get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
     get_f32(m, "embedding_scale", hp.f_embedding_scale, false);
     get_f32(m, "residual_scale", hp.f_residual_scale, false);

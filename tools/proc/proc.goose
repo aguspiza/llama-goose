@@ -5,15 +5,15 @@ namespace proc;
 
 // From now on a Ctrl+C is counted, not fatal; a second one before the count
 // is taken ends the program.
-extern "proc_catch_interrupts" fn catch_interrupts();
+extern fn catch_interrupts() = "proc_catch_interrupts";
 // The Ctrl+C counted since the last take; the count starts again at 0.
-extern "proc_take_interrupts" fn take_interrupts() -> i64;
-extern "proc_interrupts" fn interrupts() -> i64;
+extern fn take_interrupts() -> i64 = "proc_take_interrupts";
+extern fn interrupts() -> i64 = "proc_interrupts";
 // Starts a command line with its output discarded: a handle, 0 if it can't.
-extern "proc_spawn" fn spawn(cmdline: const u8[:]) -> i64;
-extern "proc_alive" fn c_alive(h: i64) -> i64;
-extern "proc_kill" fn kill(h: i64);
-extern "proc_exe_path" fn c_exe_path(out: u8[:]) -> i64;
+extern fn spawn(cmdline: const u8[:]) -> i64 = "proc_spawn";
+extern fn c_alive(h: i64) -> i64 = "proc_alive";
+extern fn kill(h: i64) = "proc_kill";
+extern fn c_exe_path(out: u8[:]) -> i64 = "proc_exe_path";
 
 fn alive(h: i64) -> bool { c_alive(h) != 0 }
 

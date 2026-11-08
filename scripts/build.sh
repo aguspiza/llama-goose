@@ -16,7 +16,9 @@ goose=${GOOSE:-$HOME/goose/goose.exe}
 export GOOSE_CC=gcc
 # MinGW: gcc spills 32-byte AVX values to the stack with aligned moves, which
 # Win64 does not align for, and the program crashes; this makes them unaligned.
-avx_fix=$([[ $(uname -s) == MINGW* || $(uname -s) == MSYS* ]] && echo '-Wa,-muse-unaligned-vector-move' || true)
+# Its math headers also make gcc warn, harmlessly, about each math function
+# the program's C declares ("optimization attribute ... follows definition").
+avx_fix=$([[ $(uname -s) == MINGW* || $(uname -s) == MSYS* ]] && echo '-Wa,-muse-unaligned-vector-move -Wno-attributes' || true)
 
 for program in "$@"; do
     # the dry run checks the program, reports its errors and writes its C;

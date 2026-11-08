@@ -489,7 +489,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
                 let count = count_of(ch, x.id);
                 guard count > 0 else { continue; }
                 if x.logit <= 0.0 { x.logit *= s.a; } else { x.logit /= s.a; }
-                x.logit -= (count as f32) * s.b + (if count > 0 { 1.0 } else { 0.0 }) * s.c;
+                x.logit -= count * s.b + (if count > 0 { 1.0 } else { 0.0 }) * s.c;
             }
             a.sorted = false;
         },
@@ -506,7 +506,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             var acc: f32 = 0.0;
             for x in xs {
                 // pow(float, int) is a double, and float += double adds in double
-                if x.logit != NEG_INF { acc = (acc as f64 + pow((x.logit - mean) as f64, 2.0)) as f32; }
+                if x.logit != NEG_INF { acc = (acc + pow((x.logit - mean) as f64, 2.0)) as f32; }
             }
             let sd: f32 = if valid > 0 { sqrt(acc / valid) } else { 0.0 };
             for &x in xs { if x.logit < mx - s.a * sd { x.logit = NEG_INF; } }
@@ -601,7 +601,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
                 let min_temp = max(0.0, temp - delta);
                 let max_temp = temp + delta;
                 guard a.size > 1 else { return; }
-                let max_entropy = -logf(1.0 / (a.size as f32));
+                let max_entropy = -logf(1.0 / a.size);
                 softmax_impl(c, a, true);
                 var entropy: f32 = 0.0;
                 for x in view(c, a) { if x.p > 0.0 { entropy -= x.p * logf(x.p); } }
@@ -626,7 +626,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             var sum_ti_sq: f32 = 0.0;
             var i = 0;
             while i < s.k - 1 && i < a.size - 1 {
-                let t_i = logf(((i + 2) as f32) / ((i + 1) as f32));
+                let t_i = logf(((i + 2) as f32) / (i + 1));
                 let b_i = logf(xs[i].p / xs[i + 1].p);
                 sum_ti_bi += t_i * b_i;
                 sum_ti_sq += t_i * t_i;
@@ -820,7 +820,7 @@ fn dry_apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
         var repeat_exp: i64 = max_repeat[j].n - s.k;
         if max_exponent > 0 && repeat_exp > max_exponent { repeat_exp = max_exponent; }
         // std::pow(float, int) is a double
-        let penalty = (s.a * pow(s.b as f64, repeat_exp as f64)) as f32;
+        let penalty = (s.a * pow(s.b as f64, repeat_exp)) as f32;
         x.logit -= penalty;
     }
     a.sorted = false;

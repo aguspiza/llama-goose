@@ -6,19 +6,19 @@
 import std;
 namespace net;
 
-extern "lg_net_listen" fn listen(host: const u8[:], port: i64) -> i64;
-extern "lg_net_port" fn port_of(fd: i64) -> i64;
-extern "lg_net_accept" fn accept(fd: i64) -> i64;
-extern "lg_net_connect" fn connect(host: const u8[:], port: i64) -> i64;
-extern "lg_net_recv" fn recv(fd: i64, buf: u8[:]) -> i64;
-extern "lg_net_send" fn c_send(fd: i64, data: const u8[:]) -> i64;
-extern "lg_net_readable" fn readable(fd: i64) -> i64;
+extern fn listen(host: const u8[:], port: i64) -> i64 = "lg_net_listen";
+extern fn port_of(fd: i64) -> i64 = "lg_net_port";
+extern fn accept(fd: i64) -> i64 = "lg_net_accept";
+extern fn connect(host: const u8[:], port: i64) -> i64 = "lg_net_connect";
+extern fn recv(fd: i64, buf: u8[:]) -> i64 = "lg_net_recv";
+extern fn c_send(fd: i64, data: const u8[:]) -> i64 = "lg_net_send";
+extern fn readable(fd: i64) -> i64 = "lg_net_readable";
 // The index of the first of fds that is readable within timeout_ms, or -1.
-extern "lg_net_wait" fn wait(fds: const i64[:], timeout_ms: i64) -> i64;
-extern "lg_net_close" fn close(fd: i64);
+extern fn wait(fds: const i64[:], timeout_ms: i64) -> i64 = "lg_net_wait";
+extern fn close(fd: i64) = "lg_net_close";
 // Whether the server is ready, for every thread: set once its model is loaded.
-extern "lg_net_set_ready" fn set_ready();
-extern "lg_net_ready" fn ready() -> i64;
+extern fn set_ready() = "lg_net_set_ready";
+extern fn ready() -> i64 = "lg_net_ready";
 
 fn send(fd: i64, data: const u8[:]) -> bool { c_send(fd, data) == 0 }
 

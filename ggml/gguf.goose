@@ -19,32 +19,32 @@ let UINT64 = 10;
 let INT64 = 11;
 let FLOAT64 = 12;
 
-extern "gguf_free" fn free(ctx: Ctx);
+extern fn free(ctx: Ctx) = "gguf_free";
 
-extern "gguf_get_version" fn get_version(ctx: Ctx) -> u32;
-extern "gguf_get_alignment" fn get_alignment(ctx: Ctx) -> i64;
-extern "gguf_get_data_offset" fn get_data_offset(ctx: Ctx) -> i64;
+extern fn get_version(ctx: Ctx) -> u32 = "gguf_get_version";
+extern fn get_alignment(ctx: Ctx) -> i64 = "gguf_get_alignment";
+extern fn get_data_offset(ctx: Ctx) -> i64 = "gguf_get_data_offset";
 
-extern "gguf_get_n_kv" fn get_n_kv(ctx: Ctx) -> i64;
-extern "gguf_get_kv_type" fn get_kv_type(ctx: Ctx, id: i64) -> i32;
-extern "gguf_get_arr_type" fn get_arr_type(ctx: Ctx, id: i64) -> i32;
+extern fn get_n_kv(ctx: Ctx) -> i64 = "gguf_get_n_kv";
+extern fn get_kv_type(ctx: Ctx, id: i64) -> i32 = "gguf_get_kv_type";
+extern fn get_arr_type(ctx: Ctx, id: i64) -> i32 = "gguf_get_arr_type";
 
-extern "gguf_get_val_u8" fn get_val_u8(ctx: Ctx, id: i64) -> u8;
-extern "gguf_get_val_i8" fn get_val_i8(ctx: Ctx, id: i64) -> i8;
-extern "gguf_get_val_u16" fn get_val_u16(ctx: Ctx, id: i64) -> u16;
-extern "gguf_get_val_i16" fn get_val_i16(ctx: Ctx, id: i64) -> i16;
-extern "gguf_get_val_u32" fn get_val_u32(ctx: Ctx, id: i64) -> u32;
-extern "gguf_get_val_i32" fn get_val_i32(ctx: Ctx, id: i64) -> i32;
-extern "gguf_get_val_f32" fn get_val_f32(ctx: Ctx, id: i64) -> f32;
-extern "gguf_get_val_u64" fn get_val_u64(ctx: Ctx, id: i64) -> u64;
-extern "gguf_get_val_i64" fn get_val_i64(ctx: Ctx, id: i64) -> i64;
-extern "gguf_get_val_f64" fn get_val_f64(ctx: Ctx, id: i64) -> f64;
-extern "gguf_get_val_bool" fn get_val_bool(ctx: Ctx, id: i64) -> bool;
+extern fn get_val_u8(ctx: Ctx, id: i64) -> u8 = "gguf_get_val_u8";
+extern fn get_val_i8(ctx: Ctx, id: i64) -> i8 = "gguf_get_val_i8";
+extern fn get_val_u16(ctx: Ctx, id: i64) -> u16 = "gguf_get_val_u16";
+extern fn get_val_i16(ctx: Ctx, id: i64) -> i16 = "gguf_get_val_i16";
+extern fn get_val_u32(ctx: Ctx, id: i64) -> u32 = "gguf_get_val_u32";
+extern fn get_val_i32(ctx: Ctx, id: i64) -> i32 = "gguf_get_val_i32";
+extern fn get_val_f32(ctx: Ctx, id: i64) -> f32 = "gguf_get_val_f32";
+extern fn get_val_u64(ctx: Ctx, id: i64) -> u64 = "gguf_get_val_u64";
+extern fn get_val_i64(ctx: Ctx, id: i64) -> i64 = "gguf_get_val_i64";
+extern fn get_val_f64(ctx: Ctx, id: i64) -> f64 = "gguf_get_val_f64";
+extern fn get_val_bool(ctx: Ctx, id: i64) -> bool = "gguf_get_val_bool";
 
-extern "gguf_get_arr_n" fn get_arr_n(ctx: Ctx, id: i64) -> i64;
+extern fn get_arr_n(ctx: Ctx, id: i64) -> i64 = "gguf_get_arr_n";
 
-extern "gguf_get_n_tensors" fn get_n_tensors(ctx: Ctx) -> i64;
-extern "gguf_get_tensor_offset" fn get_tensor_offset(ctx: Ctx, id: i64) -> i64;
-extern "gguf_get_tensor_type" fn get_tensor_type(ctx: Ctx, id: i64) -> i32;
-extern "gguf_get_tensor_size" fn get_tensor_size(ctx: Ctx, id: i64) -> i64;
+extern fn get_n_tensors(ctx: Ctx) -> i64 = "gguf_get_n_tensors";
+extern fn get_tensor_offset(ctx: Ctx, id: i64) -> i64 = "gguf_get_tensor_offset";
+extern fn get_tensor_type(ctx: Ctx, id: i64) -> i32 = "gguf_get_tensor_type";
+extern fn get_tensor_size(ctx: Ctx, id: i64) -> i64 = "gguf_get_tensor_size";
 

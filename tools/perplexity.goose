@@ -26,7 +26,7 @@ fn log_softmax(logits: const f32[:], tok: i32) -> f64 {
     for l in logits { max_logit = max(max_logit, l); }
     var sum_exp: f64 = 0.0;
     for l in logits { sum_exp += exp(l - max_logit); }
-    return (logits[tok] - max_logit) as f64 - log(sum_exp);
+    return (logits[tok] - max_logit) - log(sum_exp);
 }
 
 fn fixed(out: u8[>..]&, v: f64, decimals: i64) { format_flt(out, v, decimals); }

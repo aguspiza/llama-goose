@@ -6,12 +6,12 @@ import std;
 
 namespace number;
 
-extern "jinja_fmt_fixed" fn c_fmt_fixed(out: u8[:], v: f64) -> i64;
-extern "jinja_fmt_exp" fn c_fmt_exp(out: u8[:], prec: i64, v: f64) -> i64;
-extern "jinja_strtod" fn c_strtod(s: const u8[:], used: i64&) -> f64;
-extern "jinja_stoi" fn c_stoi(s: const u8[:], base: i64, ok: i64&) -> i64;
-extern "jinja_time" fn c_time() -> i64;
-extern "jinja_strftime" fn c_strftime(out: u8[:], fmt: const u8[:], t: i64) -> i64;
+extern fn c_fmt_fixed(out: u8[:], v: f64) -> i64 = "jinja_fmt_fixed";
+extern fn c_fmt_exp(out: u8[:], prec: i64, v: f64) -> i64 = "jinja_fmt_exp";
+extern fn c_strtod(s: const u8[:], used: i64&) -> f64 = "jinja_strtod";
+extern fn c_stoi(s: const u8[:], base: i64, ok: i64&) -> i64 = "jinja_stoi";
+extern fn c_time() -> i64 = "jinja_time";
+extern fn c_strftime(out: u8[:], fmt: const u8[:], t: i64) -> i64 = "jinja_strftime";
 
 // value_float_t::as_string: std::to_string's six decimals, less the
 // trailing zeros, but one.

@@ -1466,10 +1466,10 @@ fn ugm_normalize_prefix(input: const u8[:], offset: i64, out: u8[>..]&) -> i64 {
         guard i < xcda_size else { abort("Index out of array bounds in XCDA array!"); }
         return u32_at(cm, 4 + i * 4);
     }
-    fn base(i: i64) -> i64 { let p = node(i); return ((p >> 10) << ((p & (1 << 9)) >> 6)) as i64; }
+    fn base(i: i64) -> i64 { let p = node(i); return (p >> 10) << ((p & (1 << 9)) >> 6); }
     fn lcheck(i: i64) -> u32 { node(i) & ((1 << 31) | 0xff) }
     fn leaf(i: i64) -> bool { (node(i) >> 8) & 1 != 0 }
-    fn value(i: i64) -> i64 { (node(i) & ((1 << 31) - 1)) as i64 }
+    fn value(i: i64) -> i64 { node(i) & ((1 << 31) - 1) }
     if xcda_size > 0 {
         var ni: i64 = base(0);
         var p = offset;
