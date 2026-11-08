@@ -14,9 +14,10 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | ggml (C, CPU backend) | built by `goose build`, unchanged | `tests/ggml_smoke` |
 | Unicode, pre-tokenizer splits | ported | `tests/unicode_split` |
 | SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
-| WPM, UGM, RWKV, PLaMo tokenizers | load, do not tokenize yet | |
-| model loading, KV cache, decode | ported for gemma3, llama, lfm2 | `tools/simple`, `tools/perplexity` |
-| other architectures | not yet | |
+| UGM, RWKV and PLaMo2 tokenizers | ported | through `tools/simple` with T5, RWKV and PLaMo 2 models |
+| WPM, PLaMo3 tokenizers | load, do not tokenize yet | |
+| model loading, KV cache, recurrent states, decode; T5's encoder | ported for 56 architectures (see Architectures below) | `tools/simple`, `tools/perplexity` |
+| other architectures | not yet (see below) | |
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
 | JSON schema to grammar | ported | `tests/json_schema`: the 83 cases of `test-json-schema-to-grammar.cpp`, the same grammar text; `tools/completion -j`/`-jf` |
@@ -41,6 +42,101 @@ Checked the same way, all byte for byte over 150 generated tokens and three
 prompts each, at llama.cpp's speed: gemma-3 270M (Q8_0), LFM2.5 230M (Q8_0
 and Q4_K_M; lfm2 mixes attention with short convolutions that keep a
 recurrent state) and MiniCPM5 2B (llama architecture, Q4_K_M).
+
+### Architectures
+
+Each one writes, with greedy sampling, byte for byte the text llama.cpp's
+`llama-simple` writes on three prompts (`The capital of France is`,
+`def fibonacci(n):`, `Once upon a time, in a small village`), 60 to 150
+tokens each. The models are the smallest GGUFs found on Hugging Face; none
+over 4 GB in Q4.
+
+| Architecture | Model checked | Notes |
+|---|---|---|
+| afmoe | Trinity-Nano-Preview Q4_K_M | gated attention, sliding windows, experts with a selection bias |
+| arcee | AFM-4.5B Q4_K_M | YaRN, ReLU² |
+| bitnet | bitnet_b1_58-large Q4_K_M | |
+| bloom | bloomz-560m Q8_0 | ALiBi |
+| chatglm | glm-edge-1.5b-chat, glm-edge-4b-chat Q4_K_M | |
+| ernie4_5 | ERNIE-4.5-0.3B-PT Q4_K_M | |
+| exaone | EXAONE-3.5-2.4B-Instruct Q4_K_M | |
+| exaone4 | EXAONE-4.0-1.2B Q4_K_M | |
+| falcon-h1 | Falcon-H1-0.5B-Instruct Q4_K_M | attention and mamba2 side by side |
+| gemma | gemma-1.1-2b-it Q4_K_M | |
+| gemma2 | gemma-2-2b-it Q4_K_M | attention soft-capping |
+| gemma3 | gemma-3-270m-it Q8_0 | |
+| gemma3n | gemma-3n-E2B-it Q4_K_M | AltUp, Laurel, per-layer inputs, shared KV |
+| gemma4 | gemma-4-E2B-it Q4_K_M | head sizes per layer kind, shared KV |
+| gpt2 | gpt2 Q8_0 | |
+| gptneox | pythia-410m Q8_0 | |
+| granite | granite-3.1-2b-instruct Q4_K_M | |
+| granitehybrid | granite-4.0-h-350m Q4_K_M | mamba2 and attention |
+| granitemoe | granite-3.1-1b-a400m-instruct Q4_K_M | experts |
+| hunyuan-dense | Hunyuan-0.5B-Instruct Q4_K_M | |
+| internlm2 | internlm2_5-1_8b-chat Q4_K_M | |
+| jais | jais-family-590m-chat Q8_0 | ALiBi |
+| jamba | AI21-Jamba-Reasoning-3B Q4_K_M | mamba and attention |
+| lfm2 | LFM2.5-230M Q8_0/Q4_K_M, LFM2.5-1.2B-Thinking Q4_0 | |
+| lfm3 | LFM3-1.7B, LFM3-Omni-2B, LFM3-Audio-2B (text) | |
+| llama | MiniCPM5 2B, Mellum-4b Q4_K_M | |
+| maincoder | Maincoder-1B Q4_K_M | |
+| mamba | mamba-130m F16 | |
+| mamba2 | mamba2-130m Q8_0 | |
+| minicpm3 | MiniCPM3-4B Q4_K_M | low rank Q and KV |
+| mistral3 | Ministral-3-3B-Instruct-2512 Q4_K_M | YaRN, attention temperature |
+| mpt | replit-code-v1_5-3b Q4_0 | ALiBi |
+| nanbeige | Nanbeige4.2-3B Q4_K_M | layers that run twice |
+| nemotron | Nemotron-Mini-4B-Instruct Q4_K_M | |
+| nemotron_h | Nemotron3-Nano-4B Q4_K_M | mamba2, attention and feed-forward layers |
+| olmo | OLMo-1B-0724-hf Q4_K_M | |
+| olmo2 | OLMo-2-0425-1B-Instruct Q4_K_M | |
+| openelm | OpenELM-270M-Instruct Q8_0 | |
+| phi2 | phi-2 Q4_K_M | |
+| phi3 | Phi-3.5-mini-instruct Q4_K_M | long and short rope factors |
+| plamo2 | plamo-2-1b Q4_K_M | PLaMo2 tokenizer |
+| qwen | Qwen-1_8B-Chat Q4_K_M | |
+| qwen2 | Qwen2.5-0.5B-Instruct Q4_K_M | |
+| qwen2vl | Qwen2-VL-2B-Instruct Q4_K_M (text) | M-RoPE |
+| qwen3 | Qwen3-0.6B Q4_K_M | |
+| qwen35 | Agents-A1-4B Q4_K_M, Qwen3.5-4B Q4_0 | gated delta nets |
+| qwen3vl | Qwen3-VL-2B-Instruct Q4_K_M (text) | IMROPE, deepstack |
+| refact | Refact-1_6-base Q4_K_M | ALiBi |
+| rwkv6 | RWKV-v6-World-v2.1-1.6B Q4_K_M | RWKV tokenizer |
+| rwkv7 | rwkv7-g1h-1.5b Q4_K_M | |
+| smallthinker | SmallThinker-4B-A0.6B-Instruct Q4_0 | experts |
+| smollm3 | SmolLM3-3B Q4_K_M | |
+| stablelm | stablelm-2-zephyr-1_6b Q4_K_M | |
+| starcoder | tiny_starcoder_py Q8_0 | |
+| starcoder2 | starcoder2-3b Q4_K_M | |
+| t5 | flan-t5-small F16 | encoder and decoder, UGM tokenizer |
+
+Not ported yet:
+
+- The ones without a model of 4 GB or less in Q4: lfm2moe (LFM2.5-8B-A1B is
+  5.2 GB), olmoe (4.2 GB), cohere2 (command-r7b, 4.8 GB), bailingmoe and the
+  large mixtures of experts and dense models (deepseek2 and later, qwen2moe,
+  qwen3moe, qwen35moe, qwen3next, openai-moe, glm4/glm4-moe, llama4,
+  command-r, dbrx, grok, arctic, minimax, kimi, step35, seed-oss, ...). Their
+  graphs reuse much of what is ported (experts, MLA-like attention, YaRN).
+- plm: llama.cpp itself fails on PLM-1.8B (`GGML_ASSERT(a->ne[0] == b->ne[0])`
+  when it writes the 2D value tensor to the cache), so there is nothing to
+  check against.
+- Embedding and encoder-only models (bert family, t5encoder, the embedding
+  gemmas), diffusion models (dream, llada) and audio decoders: they need
+  `llama-embedding` or their own programs, not `llama-simple`.
+- The experts of gemma4 and nemotron_h, and the MTP layers some models
+  carry; they abort with "not ported yet".
+
+`tools/completion` gives the same text as `llama-completion` with these
+architectures too (checked with qwen3, gemma2, granitehybrid and phi3, text
+and conversation), given the same `-c`: without it llama-completion fits the
+context to the free memory (`common/fit`, not ported), and Phi-3.5's rope
+factors depend on the context's size.
+
+Q4_0 models crashed in ggml's 8x8 repack kernels, in this port and in
+llama.cpp's own MinGW build: gcc spills AVX values to the stack with aligned
+moves that Win64 does not align for. The CPU backend is now compiled with
+`-Wa,-muse-unaligned-vector-move`, as the programs already were.
 
 Two details matter for bit-identical results. The weights read by mul_mat
 go to the CPU's repack buffers, as llama.cpp places them. And ggml's base

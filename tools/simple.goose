@@ -80,6 +80,13 @@ fn main() {
     var logits: f32[>..] = [];
     var batch: i32[>..] = [];
     batch.append(prompt_tokens);
+    if model::has_encoder(m) {
+        context::encode(c, m, prompt_tokens);
+        var start = model::decoder_start_token(m);
+        if start == vocab::TOKEN_NULL { start = vocab::special_bos_id; }
+        batch.clear();
+        batch.push(start);
+    }
     var n_pos = 0;
     while n_pos + batch.len < n_prompt + n_predict {
         context::decode(c, m, batch, logits);

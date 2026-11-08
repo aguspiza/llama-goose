@@ -41,16 +41,32 @@ static bool lg_mul_mat_supported(struct ggml_tensor * w, ggml_backend_buffer_typ
     return ok;
 }
 
+// The same for an experts' weight read by mul_mat_id with n_ids experts per token.
+static bool lg_mul_mat_id_supported(struct ggml_tensor * w, ggml_backend_buffer_type_t buft, ggml_backend_dev_t dev, int64_t n_ids) {
+    struct ggml_init_params p = { ggml_tensor_overhead() * 8, NULL, true };
+    struct ggml_context * c = ggml_init(p);
+    struct ggml_tensor * b = ggml_new_tensor_3d(c, GGML_TYPE_F32, w->ne[0], n_ids, 512);
+    struct ggml_tensor * ids = ggml_new_tensor_2d(c, GGML_TYPE_I32, n_ids, 512);
+    struct ggml_tensor * op = ggml_mul_mat_id(c, w, b, ids);
+    w->buffer = ggml_backend_buft_alloc_buffer(buft, 0);
+    const bool ok = ggml_backend_dev_supports_op(dev, op);
+    ggml_backend_buffer_free(w->buffer);
+    w->buffer = NULL;
+    ggml_free(c);
+    return ok;
+}
+
 typedef struct { struct ggml_tensor ** data; int64_t len; } lg_tensors;
 typedef ggml_backend_buffer_type_t * (*lg_get_extra_bufts_t)(ggml_backend_dev_t);
 
 #define LG_MAX_BUFTS 8
 
-// Allocates the tensors of ctx: each one in `matmul` (read by mul_mat) in the
-// first of the CPU's extra buffer types (CPU_REPACK) that takes it, the rest
-// in the CPU buffer type, as llama.cpp does. Returns the buffers, null-ended.
+// Allocates the tensors of ctx: each one in `matmul` (read by mul_mat) or in
+// `matmul_id` (experts read by mul_mat_id, n_ids per token) in the first of
+// the CPU's extra buffer types (CPU_REPACK) that takes it, the rest in the
+// CPU buffer type, as llama.cpp does. Returns the buffers, null-ended.
 typedef struct { ggml_backend_buffer_t * data; int64_t len; } lg_buffers;
-bool lg_alloc_weights(struct ggml_context * ctx, lg_tensors matmul, lg_buffers out) {
+bool lg_alloc_weights(struct ggml_context * ctx, lg_tensors matmul, lg_tensors matmul_id, int64_t n_ids, lg_buffers out) {
     ggml_backend_buffer_t * bufs = out.data;
     const int64_t n_bufs = out.len;
     ggml_backend_dev_t dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
@@ -86,6 +102,18 @@ bool lg_alloc_weights(struct ggml_context * ctx, lg_tensors matmul, lg_buffers o
             }
             for (int b = 0; b < cpu; b++) {
                 if (lg_mul_mat_supported(t, bufts[b], dev)) {
+                    pick[i] = b;
+                    break;
+                }
+            }
+            break;
+        }
+        for (int64_t k = 0; k < matmul_id.len; k++) {
+            if (matmul_id.data[k] != t) {
+                continue;
+            }
+            for (int b = 0; b < cpu; b++) {
+                if (lg_mul_mat_id_supported(t, bufts[b], dev, n_ids)) {
                     pick[i] = b;
                     break;
                 }

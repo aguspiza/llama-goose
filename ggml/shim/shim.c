@@ -31,6 +31,8 @@ void lg_tensor_read_f32(const struct ggml_tensor * t, lg_f32s dst) {
 
 int64_t lg_tensor_ne(const struct ggml_tensor * t, int32_t i) { return t->ne[i]; }
 int32_t lg_tensor_type(const struct ggml_tensor * t) { return (int32_t) t->type; }
+// Whether the graph allocator gave the tensor memory: false for an input no node reads.
+bool lg_tensor_allocated(const struct ggml_tensor * t) { return t->buffer != NULL; }
 
 //
 // gguf: names cross as Goose slices (not NUL-terminated), strings come back
@@ -154,6 +156,17 @@ bool lg_load_tensor_data(const struct gguf_context * meta, struct ggml_context *
     free(tmp);
     fclose(f);
     return ok;
+}
+
+// ggml_rope_multi with its four sections from a Goose array.
+struct ggml_tensor * lg_rope_multi(struct ggml_context * ctx, struct ggml_tensor * a, struct ggml_tensor * pos,
+                                   struct ggml_tensor * freqs, int n_dims, lg_i32s sections, int mode,
+                                   int n_ctx_orig, float freq_base, float freq_scale, float ext_factor,
+                                   float attn_factor, float beta_fast, float beta_slow) {
+    int s[GGML_MROPE_SECTIONS] = {0};
+    for (int64_t i = 0; i < sections.len && i < GGML_MROPE_SECTIONS; i++) { s[i] = sections.data[i]; }
+    return ggml_rope_multi(ctx, a, pos, freqs, n_dims, s, mode, n_ctx_orig, freq_base, freq_scale,
+                           ext_factor, attn_factor, beta_fast, beta_slow);
 }
 
 void lg_backend_tensor_set_i32(struct ggml_tensor * t, lg_i32s src) {

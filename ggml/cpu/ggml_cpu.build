@@ -35,6 +35,10 @@ c_defines = [
 ];
 // gcc finds the instruction set with -march=native; MSVC needs it spelled out.
 c_flags_cc = ["-O3", "-march=native"];
+// MinGW: gcc spills 32-byte AVX values to the stack with aligned moves, which
+// Win64 does not align for (the q4_0 8x8 repack kernels crash); this makes
+// them unaligned. llama.cpp's MinGW build crashes there too.
+c_flags_cc_windows = ["-Wa,-muse-unaligned-vector-move"];
 c_flags_msvc = ["/O2", "/arch:AVX2", "/std:c++17", "/utf-8", "/bigobj",
                 "/DGGML_AVX2", "/DGGML_FMA", "/DGGML_F16C", "/DGGML_BMI2", "/D__BMI2__"];
 c_libs = ["stdc++"];

@@ -1,7 +1,7 @@
 // The vocabulary and the tokenizers. One vocabulary per process: a draft
 // model for speculative decoding shares its target's.
-// So far SPM and BPE tokenize; WPM, UGM, RWKV, PLaMo and the test tokenizer
-// load but abort when asked to tokenize.
+// So far SPM, BPE, UGM, RWKV and PLaMo2 tokenize; WPM, PLaMo3 and the test
+// tokenizer load but abort when asked to tokenize.
 // port-of: src/llama-vocab.cpp src/llama-vocab.h
 import std;
 import dictionary;
@@ -461,7 +461,12 @@ fn load(ctx: gguf::Ctx) {
         }
     } else if vtype == TYPE_WPM {
         linefeed_id = special_pad_id;
-    } else if vtype == TYPE_BPE {
+    } else if vtype == TYPE_RWKV {
+        var ids: i32[>..] = [];
+        tokenize("\n", false, false, ids);
+        guard ids.len > 0 else { abort("GGML_ASSERT(!ids.empty() && \"model vocab missing newline token\") failed"); }
+        linefeed_id = ids[0];
+    } else if vtype == TYPE_BPE || vtype == TYPE_PLAMO2 || vtype == TYPE_UGM {
         // (llama.cpp tokenizes "\n" for the other types too, which are not ported yet)
         var ids: i32[>..] = [];
         tokenize("\n", false, false, ids);
@@ -549,7 +554,10 @@ fn load_tokens(ctx: gguf::Ctx) {
 
 fn init_tokenizer() {
     match vtype {
-        TYPE_SPM, TYPE_WPM, TYPE_UGM, TYPE_RWKV, TYPE_PLAMO2, TYPE_PLAMO3, TYPE_TEST => {},
+        TYPE_SPM, TYPE_WPM, TYPE_PLAMO3, TYPE_TEST => {},
+        TYPE_UGM => ugm_build(),
+        TYPE_RWKV => rwkv_build(),
+        TYPE_PLAMO2 => plamo_build(),
         TYPE_BPE => {
             let regexes, byte_encode = pre_regexes(pre_type);
             bpe_regexes = regexes;
@@ -1240,6 +1248,46 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
                 }
             }
         },
+        TYPE_UGM => {
+            if add_special && add_bos {
+                assert(special_bos_id != TOKEN_NULL);
+                out.push(special_bos_id);
+            }
+            for f in frags {
+                if f.token == -1 { ugm_tokenize(raw_text[f.offset..f.offset + f.length], out); }
+                else { out.push(f.token); }
+            }
+            if add_special && add_bos && out.len - first_out >= 2 && out[first_out + 1] == special_bos_id {
+                log(str("tokenize: Added a BOS token to the prompt as specified by the model but the prompt also starts with a BOS token. So now the final prompt starts with 2 BOS tokens. Are you sure this is what you want?"));
+            }
+            if add_special && add_eos {
+                assert(special_eos_id != TOKEN_NULL);
+                out.push(special_eos_id);
+            }
+        },
+        TYPE_RWKV => {
+            for f in frags {
+                if f.token == -1 { rwkv_tokenize(raw_text[f.offset..f.offset + f.length], out); }
+                else { out.push(f.token); }
+            }
+        },
+        TYPE_PLAMO2 => {
+            if add_special && add_bos {
+                assert(special_bos_id != TOKEN_NULL);
+                out.push(special_bos_id);
+            }
+            for f in frags {
+                if f.token == -1 { plamo_tokenize(raw_text[f.offset..f.offset + f.length], out); }
+                else { out.push(f.token); }
+            }
+            if add_special && add_bos && out.len - first_out >= 2 && out[first_out + 1] == special_bos_id {
+                log(str("tokenize: Added a BOS token to the prompt as specified by the model but the prompt also starts with a BOS token. So now the final prompt starts with 2 BOS tokens. Are you sure this is what you want?"));
+            }
+            if add_special && add_eos {
+                assert(special_eos_id != TOKEN_NULL);
+                out.push(special_eos_id);
+            }
+        },
         TYPE_NONE => { abort("fatal error"); },
         _ => { abort(str(type_name(), " tokenizer: not ported yet")); },
     }
@@ -1321,12 +1369,570 @@ fn token_to_piece(token: i32, out: u8[>..]&, lstrip: i64, special: bool, use_cac
             out.append(t);
             return finish();
         },
-        TYPE_RWKV => { abort("RWKV tokenizer: not ported yet"); },
+        TYPE_RWKV => {
+            // no lstrip
+            let n0 = out.len;
+            rwkv_unescape(t, out);
+            return out.len - n0;
+        },
         _ => { abort("fatal error"); },
     }
     return 0;
 }
 
+//
+// UGM (T5): the best scoring segmentation of the normalized text, by
+// Viterbi over a trie of the tokens (llm_tokenizer_ugm)
+//
+
+// the tokens' trie (normal, user defined and unused tokens) and the user
+// defined tokens' trie; node 0 is the root of each
+var ugm_child = dictionary<i64, i32> {};
+var ugm_value: i32[>..];
+var ugm_ud_child = dictionary<i64, i32> {};
+var ugm_ud_nodes: i64 = 0;
+var ugm_unknown_score: f32 = 0.0;
+
+fn trie_insert(child: dictionary<i64, i32>&, n_nodes: i64&, text: const u8[:]) -> i64 {
+    var node: i64 = 0;
+    for c in text {
+        let key = node * 256 + c;
+        let next = child.get(key);
+        if next {
+            node = next;
+        } else {
+            n_nodes += 1;
+            child.insert(key, n_nodes as i32);
+            node = n_nodes;
+        }
+    }
+    return node;
+}
+
+fn ugm_build() {
+    ugm_child.clear();
+    ugm_value.clear();
+    ugm_value.push(-1);
+    ugm_ud_child.clear();
+    ugm_ud_nodes = 0;
+    var min_score: f32 = 3.4028234663852886e38;
+    var n_nodes: i64 = 0;
+    for id in n_tokens() {
+        if is_normal(id) { min_score = min(min_score, scores[id]); }
+        if is_normal(id) || is_user_defined(id) || is_unused(id) {
+            let node = trie_insert(ugm_child, n_nodes, token_text(id));
+            while ugm_value.len <= n_nodes { ugm_value.push(-1); }
+            ugm_value[node] = id as i32;
+        }
+        if is_user_defined(id) { trie_insert(ugm_ud_child, ugm_ud_nodes, token_text(id)); }
+    }
+    ugm_unknown_score = min_score - 10.0;
+}
+
+fn u32_at(b: const u8[:], i: i64) -> u32 {
+    let b0: u32 = b[i];
+    return b0 | (b[i + 1] as u32) << 8 | (b[i + 2] as u32) << 16 | (b[i + 3] as u32) << 24;
+}
+
+// The normalized text of input[offset..]'s longest normalizable prefix, and
+// how much of input it consumes (normalize_prefix).
+fn ugm_normalize_prefix(input: const u8[:], offset: i64, out: u8[>..]&) -> i64 {
+    if offset == input.len { return 0; }
+    // a user defined token stays as it is
+    {
+        var node: i64 = 0;
+        var o = offset;
+        while o < input.len {
+            let next = ugm_ud_child.get(node * 256 + input[o]);
+            if !next { break; }
+            node = next;
+            o += 1;
+        }
+        if o > offset { out.append(input[offset..o]); return o - offset; }
+    }
+    // the precompiled charsmap: an XOR-compressed double array of replacements
+    var longest_len: i64 = 0;
+    var longest_offset: i64 = 0;
+    let cm = precompiled_charsmap;
+    var xcda_size: i64 = 0;
+    var repl_start: i64 = 0;
+    if cm.len > 0 {
+        let blob = u32_at(cm, 0) as i64;
+        xcda_size = blob / 4;
+        repl_start = 4 + blob;
+    }
+    fn node(i: i64) -> u32 {
+        guard i < xcda_size else { abort("Index out of array bounds in XCDA array!"); }
+        return u32_at(cm, 4 + i * 4);
+    }
+    fn base(i: i64) -> i64 { let p = node(i); return ((p >> 10) << ((p & (1 << 9)) >> 6)) as i64; }
+    fn lcheck(i: i64) -> u32 { node(i) & ((1 << 31) | 0xff) }
+    fn leaf(i: i64) -> bool { (node(i) >> 8) & 1 != 0 }
+    fn value(i: i64) -> i64 { (node(i) & ((1 << 31) - 1)) as i64 }
+    if xcda_size > 0 {
+        var ni: i64 = base(0);
+        var p = offset;
+        while p < input.len {
+            let c = input[p];
+            if c == 0 { break; }
+            ni ^= c;
+            if lcheck(ni) != c { break; }
+            let is_leaf = leaf(ni);
+            ni ^= base(ni);
+            if is_leaf {
+                longest_len = p - offset + 1;
+                longest_offset = value(ni);
+            }
+            p += 1;
+        }
+    }
+    if longest_len > 0 {
+        let repl_size = cm.len - repl_start;
+        guard longest_offset < repl_size else { abort("Index out of array bounds in precompiled charsmap!"); }
+        var n: i64 = 0;
+        while n < repl_size - longest_offset && cm[repl_start + longest_offset + n] != 0 { n += 1; }
+        guard n < repl_size - longest_offset else { abort("Unterminated string in precompiled charsmap!"); }
+        out.append(cm[repl_start + longest_offset..repl_start + longest_offset + n]);
+        return longest_len;
+    }
+    let cpt, next, ok = unicode::cpt_from_utf8(input, offset);
+    if ok { out.append(input[offset..next]); return next - offset; }
+    out.append("\xEF\xBF\xBD");
+    return 1;
+}
+
+fn ugm_normalize(input: const u8[:], normalized: u8[>..]&) {
+    normalized.clear();
+    let space = if escape_whitespaces { "\xE2\x96\x81" } else { " " };
+    let shall_prepend_space = !treat_whitespace_as_suffix && add_space_prefix;
+    let shall_append_space = treat_whitespace_as_suffix && add_space_prefix;
+    let shall_merge_spaces = remove_extra_whitespaces;
+    var is_space_prepended = false;
+    var processing_non_ws = false;
+    var piece: u8[>..] = [];
+    var offset: i64 = 0;
+    while offset < input.len {
+        piece.clear();
+        let consumed = ugm_normalize_prefix(input, offset, piece);
+        for c in piece {
+            if c != ' ' {
+                if !processing_non_ws {
+                    processing_non_ws = true;
+                    if (shall_prepend_space && !is_space_prepended) || shall_merge_spaces {
+                        normalized.append(space);
+                        is_space_prepended = true;
+                    }
+                }
+                normalized.push(c);
+            } else {
+                if processing_non_ws { processing_non_ws = false; }
+                if !shall_merge_spaces { normalized.append(space); }
+            }
+        }
+        offset += consumed;
+    }
+    if shall_append_space { normalized.append(space); }
+}
+
+fn ugm_tokenize(text: const u8[:], out: i32[>..]&) {
+    let first = out.len;
+    var normalized: u8[>..] = [];
+    var valid = true;
+    {
+        var o: i64 = 0;
+        while o < text.len {
+            let cpt, next, ok = unicode::cpt_from_utf8(text, o);
+            if !ok { valid = false; break; }
+            o = next;
+        }
+    }
+    if normalizer_nfc && valid {
+        var canonical: u8[>..] = [];
+        unicode::cpts_to_utf8(canonical, unicode::normalize_nfc(unicode::cpts_from_utf8(text)));
+        ugm_normalize(canonical, normalized);
+    } else {
+        ugm_normalize(text, normalized);
+    }
+    let n = normalized.len;
+    if n == 0 { return; }
+
+    // the best tokenization ending at each offset: its last token, where that starts, its score
+    var best_id: i32[>..] = [];
+    var best_start: i64[>..] = [];
+    var best_score: f64[>..] = [];
+    best_id.resize(n + 1, special_unk_id);
+    best_start.resize(n + 1, 0);
+    best_score.resize(n + 1, -1.7976931348623157e308);
+    best_score[0] = 0.0;
+    var offset: i64 = 0;
+    while offset < n {
+        let n_units = min(unicode::len_utf8(normalized[offset]), n - offset);
+        var single_found = false;
+        let cur_score = best_score[offset];
+        var prefix = offset;
+        var node: i64 = -1;
+        {
+            let nx = ugm_child.get(normalized[prefix]);
+            node = if nx { nx } else { -1 };
+            prefix += 1;
+        }
+        while prefix <= n && node >= 0 {
+            if ugm_value[node] >= 0 {
+                if prefix - offset == n_units { single_found = true; }
+                let id = ugm_value[node];
+                let token_score: f64 = if is_user_defined(id) { 0.0 } else { scores[id] };
+                let challenger = cur_score + token_score;
+                if challenger > best_score[prefix] {
+                    best_id[prefix] = id;
+                    best_start[prefix] = offset;
+                    best_score[prefix] = challenger;
+                }
+            }
+            if prefix >= n { break; }
+            let nx = ugm_child.get(node * 256 + normalized[prefix]);
+            node = if nx { nx } else { -1 };
+            prefix += 1;
+        }
+        if !single_found {
+            let challenger = cur_score + ugm_unknown_score;
+            let p = offset + n_units;
+            if challenger > best_score[p] {
+                best_id[p] = special_unk_id;
+                best_start[p] = offset;
+                best_score[p] = challenger;
+            }
+        }
+        offset += n_units;
+    }
+    // back from the end
+    var is_prev_unknown = false;
+    var at = n;
+    while true {
+        let is_unknown = best_id[at] == special_unk_id;
+        if !(is_prev_unknown && is_unknown) { out.push(best_id[at]); }
+        if best_start[at] == 0 { break; }
+        is_prev_unknown = is_unknown;
+        at = best_start[at];
+    }
+    var i = first;
+    var j = out.len - 1;
+    while i < j {
+        let t = out[i];
+        out[i] = out[j];
+        out[j] = t;
+        i += 1;
+        j -= 1;
+    }
+}
+
+//
+// RWKV: the longest token at each position, from a trie of the unescaped
+// token texts (llm_tokenizer_rwkv)
+//
+
+// rwkv_child[node * 256 + byte]: the node a byte leads to; node 0 is the root.
+var rwkv_child = dictionary<i64, i32> {};
+var rwkv_value: i32[>..];     // a node's token, or -1
+
+// A token's text with RWKV's escapes undone: \t \n \r \xHH and \<c> (llama_unescape_rwkv_token).
+fn rwkv_unescape(escaped: const u8[:], out: u8[>..]&) {
+    var escaping = false;
+    var hex_remaining = 0;
+    var hex_acc: i64 = 0;
+    for c in escaped {
+        if hex_remaining != 0 {
+            let value: i64 = if c >= 'a' { c as i64 - 'a' + 10 } else { c as i64 - '0' };    // as uint8_t
+            hex_acc = ((hex_acc << 4) + value) & 255;
+            hex_remaining -= 1;
+            if hex_remaining == 0 {
+                out.push(hex_acc as! u8);
+                hex_acc = 0;
+            }
+            continue;
+        }
+        if escaping {
+            if c == 't' { out.push('\t'); }
+            else if c == 'n' { out.push('\n'); }
+            else if c == 'r' { out.push('\r'); }
+            else if c == 'x' { hex_remaining = 2; }
+            else { out.push(c); }
+            escaping = false;
+            continue;
+        }
+        if c == '\\' { escaping = true; continue; }
+        out.push(c);
+    }
+}
+
+fn rwkv_build() {
+    rwkv_child.clear();
+    rwkv_value.clear();
+    rwkv_value.push(-1);
+    var text: u8[>..] = [];
+    for id in n_tokens() {
+        text.clear();
+        rwkv_unescape(token_text(id), text);
+        var node: i64 = 0;
+        for c in text {
+            let key = node * 256 + c;
+            let next = rwkv_child.get(key);
+            if next {
+                node = next;
+            } else {
+                rwkv_child.insert(key, rwkv_value.len as i32);
+                node = rwkv_value.len;
+                rwkv_value.push(-1);
+            }
+        }
+        rwkv_value[node] = id as i32;    // a repeated text: its last id
+    }
+}
+
+fn rwkv_tokenize(text: const u8[:], out: i32[>..]&) {
+    fn child(node: i64, c: u8) -> i64 {
+        let next = rwkv_child.get(node * 256 + c);
+        return if next { next } else { -1 };
+    }
+    var position: i64 = 0;
+    while position < text.len {
+        var node = child(0, text[position]);
+        if node < 0 {
+            // no matching token: the unknown token
+            out.push(special_unk_id);
+            position += 1;
+            continue;
+        }
+        // the longest matching token
+        var token_id: i32 = 0;
+        var token_length: i64 = 0;
+        while node >= 0 {
+            if rwkv_value[node] >= 0 {
+                token_id = rwkv_value[node];
+                token_length = position + 1;
+            }
+            if position + 1 >= text.len { break; }
+            position += 1;
+            node = child(node, text[position]);
+        }
+        out.push(token_id);
+        position = token_length;
+    }
+}
+
+//
+// PLaMo2: the best scoring segmentation by dynamic programming over a table
+// of every token's suffixes (llm_tokenizer_plamo2)
+//
+
+let PLAMO_INVALID_SCORE: i32 = -20000000;
+let PLAMO_UNKNOWN_SCORE: i32 = -10000000;
+
+var plamo_bytes: i32[>..];                          // the byte tokens <0xXX>
+var plamo_to_suffix_id = dictionary<i64, i32> {};   // (first codepoint << 32 | rest's piece id) -> suffix id
+var plamo_table: i32[>..];                          // rows of [piece length, token id, score, piece id]
+var plamo_suffix_buf: u8[>..];                      // the suffixes' texts
+
+fn plamo_build() {
+    plamo_bytes.clear();
+    plamo_bytes.resize(256, 0);
+    plamo_to_suffix_id.clear();
+    plamo_table.clear();
+    plamo_suffix_buf.clear();
+
+    // every token's text and its suffixes (codepoint by codepoint, re-encoded
+    // as llama.cpp does), in order: (start, end, is the token itself)
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    var whole: i32[>..] = [];       // the token id, or -1 for a suffix
+    for id in n_tokens() {
+        let t = token_text(id);
+        if is_byte(id) {
+            if t.len == 6 && starts_with(t, "<0x") && t[5] == '>' && hex_value(t[3]) >= 0 && hex_value(t[4]) >= 0 {
+                plamo_bytes[hex_value(t[3]) * 16 + hex_value(t[4])] = id as i32;
+            }
+            continue;
+        }
+        let cpts = unicode::cpts_from_utf8(t);
+        for i in cpts.len {
+            starts.push(plamo_suffix_buf.len);
+            unicode::cpts_to_utf8(plamo_suffix_buf, cpts[i..]);
+            ends.push(plamo_suffix_buf.len);
+            whole.push(if i == 0 { id as i32 } else { -1 });
+        }
+    }
+    for b in 256 {
+        if plamo_bytes[b] == 0 { abort(str("Byte token for <0x", b, "> is not set")); }
+    }
+
+    // suffix -> score: a token's own score, NaN for a suffix that is no token
+    let nan: f32 = 0.0 / 0.0;
+    var suffix_to_score = dictionary<const u8[:], f32> {};
+    for k in starts.len {
+        let s = plamo_suffix_buf[starts[k]..ends[k]];
+        if whole[k] >= 0 { suffix_to_score.insert(s, scores[whole[k]]); }
+        else if !suffix_to_score.contains(s) { suffix_to_score.insert(s, nan); }
+    }
+
+    // the suffixes, and "", in the order of their reversed texts
+    var suffixes: (const u8[:])[>..] = [];
+    suffix_to_score.each() { key, val => suffixes.push(key); };
+    suffixes.push("");
+    sort(suffixes) { a, b =>
+        var i: i64 = 1;
+        var r = a.len < b.len;
+        while i <= min(a.len, b.len) {
+            let ca = a[a.len - i];
+            let cb = b[b.len - i];
+            if ca != cb { r = ca < cb; break; }
+            i += 1;
+        }
+        r
+    };
+
+    // each piece's id, and how its first codepoint extends a shorter suffix
+    fn cpt_offsets(s: const u8[:]) -> i64[>..] {     // where each codepoint starts, and s.len
+        var offs: i64[>..] = [];
+        var o: i64 = 0;
+        while o < s.len {
+            offs.push(o);
+            let cpt, next, ok = unicode::cpt_from_utf8(s, o);
+            o = if ok { next } else { o + 1 };
+        }
+        offs.push(s.len);
+        return offs;
+    }
+    var suffix_to_id = dictionary<const u8[:], i32> {};
+    var num_pieces: i32 = 0;
+    for suffix in suffixes {
+        suffix_to_id.insert(suffix, num_pieces);
+        if suffix.len > 0 {
+            let offs = cpt_offsets(suffix);
+            let first, next, ok = unicode::cpt_from_utf8(suffix, 0);
+            let rest_id = suffix_to_id.get(suffix[offs[1]..]);
+            let piece_code = (first as i64) << 32 | (if rest_id { rest_id as i64 } else { 0 });
+            plamo_to_suffix_id.insert(piece_code, num_pieces);
+            var pieces: i32 = 1;    // the sentinel row
+            for n in 1..offs.len {
+                if suffix_to_score.contains(suffix[0..offs[n]]) { pieces += 1; }
+            }
+            num_pieces += pieces;
+        } else {
+            num_pieces += 1;        // the empty suffix: its sentinel row
+        }
+    }
+
+    // the table: each suffix's prefixes that are pieces, longest first, then a sentinel row
+    for suffix in suffixes {
+        let offs = cpt_offsets(suffix);
+        var n = offs.len - 1;
+        while n > 0 {
+            let piece = suffix[0..offs[n]];
+            let score = suffix_to_score.get(piece);
+            if score {
+                let id = token_to_id.get(piece);
+                let sid = suffix_to_id.get(piece);
+                let sc: f32 = score;
+                let finite = sc == sc && sc - sc == 0.0;
+                var scaled: i32 = PLAMO_INVALID_SCORE;
+                if finite {
+                    let d: f64 = sc as f64 * 1e4;
+                    scaled = (if d >= 0.0 { floor(d + 0.5) } else { -floor(-d + 0.5) }) as i32;    // std::round
+                }
+                plamo_table.push(n as i32);
+                plamo_table.push(if id { id } else { -1 });
+                plamo_table.push(scaled);
+                plamo_table.push(if sid { sid } else { 0 });
+            }
+            n -= 1;
+        }
+        plamo_table.push(1);
+        plamo_table.push(-1);
+        plamo_table.push(PLAMO_UNKNOWN_SCORE);
+        plamo_table.push(0);
+    }
+}
+
+// The bytes past the first of c's UTF-8.
+fn utf8_extra(c: u32) -> i64 { (if c >= 0x80 { 1 } else { 0 }) + (if c >= 0x800 { 1 } else { 0 }) + (if c >= 0x10000 { 1 } else { 0 }) }
+
+fn plamo_encode_cpts(cpts: const u32[:], out: i32[>..]&) {
+    if cpts.len == 0 { return; }
+    let n = cpts.len;
+    let n_rows = plamo_table.len / 4;
+    fn row(p: i64, k: i64) -> i32 { plamo_table[p * 4 + k] }
+    var scores_dp: i64[>..] = [];
+    scores_dp.resize(n + 1, 1 << 60);
+    scores_dp[n] = 0;
+    var path_len: i32[>..] = [];       // [token length, token id, number of tokens] per position
+    var path_id: i32[>..] = [];
+    var path_num: i32[>..] = [];
+    path_len.resize(n + 1, 0);
+    path_id.resize(n + 1, 0);
+    path_num.resize(n + 1, 0);
+
+    var suffix_id: i64 = 0;
+    var i = n - 1;
+    while i >= 0 {
+        let c = cpts[i];
+        // the next suffix id
+        for p in suffix_id..n_rows {
+            let code = (c as i64) << 32 | row(p, 3);
+            let s = plamo_to_suffix_id.get(code);
+            suffix_id = if s { s } else { 0 };
+            if suffix_id > 0 || row(p, 2) == PLAMO_UNKNOWN_SCORE { break; }
+        }
+        // the best path from here
+        for p in suffix_id..n_rows {
+            let score = row(p, 2);
+            if score > PLAMO_INVALID_SCORE {
+                let piece_length = row(p, 0) as i64;
+                let s = scores_dp[i + piece_length] - score;
+                if s < scores_dp[i] {
+                    scores_dp[i] = s;
+                    path_len[i] = piece_length as i32;
+                    path_id[i] = row(p, 1);
+                    path_num[i] = path_num[i + piece_length] + 1;
+                    if score == PLAMO_UNKNOWN_SCORE {
+                        // the UTF-8 bytes it falls back to
+                        path_num[i] += utf8_extra(c) as i32;
+                    }
+                }
+            }
+            if score == PLAMO_UNKNOWN_SCORE { break; }
+        }
+        i -= 1;
+    }
+
+    // the best path's tokens
+    var pos: i64 = 0;
+    while pos < n {
+        if path_id[pos] >= 0 {
+            out.push(path_id[pos]);
+        } else {
+            // byte tokens
+            let c = cpts[pos];
+            let s = 1 + utf8_extra(c);
+            for k in s {
+                var b: i64 = 0;
+                if s == 1 { b = c; }
+                else if k == 0 { b = (0xF00 >> s) & 0xFF; }
+                else { b = 0x80; }
+                out.push(plamo_bytes[b | ((c as i64 >> ((s - k - 1) * 6)) & 0x3F)]);
+            }
+        }
+        assert(path_len[pos] > 0);
+        pos += path_len[pos];
+    }
+}
+
+fn plamo_tokenize(text: const u8[:], out: i32[>..]&) {
+    var cpts = unicode::cpts_from_utf8(text);
+    // PLaMo-2: a leading U+FEFF is dropped
+    if cpts.len > 0 && cpts[0] == 0xFEFF { plamo_encode_cpts(cpts[1..], out); return; }
+    plamo_encode_cpts(cpts, out);
+}
+
+// The text of tokens: appends
 // Appends the text of tokens.
 fn detokenize(tokens: const i32[:], remove_special: bool, unparse_special: bool, out: u8[>..]&) {
     if vtype == TYPE_NONE { return; }
