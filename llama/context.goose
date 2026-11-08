@@ -9,7 +9,7 @@
 // port-of: src/models/mamba.cpp src/models/mamba2.cpp src/models/mamba-base.cpp
 // port-of: src/models/falcon-h1.cpp src/models/granite-hybrid.cpp src/models/jamba.cpp src/models/plamo2.cpp
 // port-of: src/models/rwkv6.cpp src/models/rwkv6-base.cpp src/models/rwkv7.cpp src/models/rwkv7-base.cpp src/models/minicpm3.cpp
-// port-of: src/models/qwen2vl.cpp src/models/qwen3vl.cpp src/models/nemotron-h.cpp src/models/afmoe.cpp src/models/gemma3n.cpp src/models/gemma4.cpp src/models/t5.cpp
+// port-of: src/models/qwen2vl.cpp src/models/qwen3vl.cpp src/models/nemotron-h.cpp src/models/afmoe.cpp src/models/gemma3n.cpp src/models/gemma4.cpp src/models/t5.cpp src/models/minicpm.cpp src/models/plamo3.cpp src/models/cohere2.cpp src/models/pangu-embed.cpp src/models/limite.cpp src/models/hrm-text.cpp src/models/spark2-5.cpp src/models/k2-horizon.cpp src/models/glm4.cpp
 // port-of: src/models/maincoder.cpp src/models/nanbeige.cpp src/models/bitnet.cpp src/models/chatglm.cpp
 // port-of: src/models/gemma.cpp src/models/olmo.cpp src/models/qwen.cpp src/models/refact.cpp src/models/mpt.cpp src/models/jais.cpp src/models/nemotron.cpp
 // port-of: src/models/gpt2.cpp src/models/starcoder.cpp src/models/gptneox.cpp src/models/starcoder2.cpp src/models/bloom.cpp src/models/openelm.cpp
@@ -750,7 +750,7 @@ fn build_smollm3_granite(b: Build&, m: model::Model&, c: Context&) -> ggml::Tens
     let n_embd_head = hp.n_embd_head_v as i64;
     assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
     let n_layer = hp.n_layer as i64;
-    let granite = hp.arch == model::ARCH_GRANITE || hp.arch == model::ARCH_GRANITE_MOE;
+    let granite = hp.arch == model::ARCH_GRANITE || hp.arch == model::ARCH_GRANITE_MOE || hp.arch == model::ARCH_MINICPM;
     let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
 
     var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
@@ -1949,6 +1949,387 @@ fn build_nemotron_h(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     return ggml::mul_mat(ctx, m.output, cur);
 }
 
+// models/plamo3.cpp
+fn build_plamo3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let attn_scale = 1.0 / sqrt(hp.n_embd_head_k as f32);
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var residual = inpL;
+        let swa = hp.swa_type != model::SWA_NONE && hp.is_swa[il];
+        let freq_base = if swa { hp.rope_freq_base_train_swa } else { hp.rope_freq_base_train };
+        let freq_scale = if swa { hp.rope_freq_scale_train_swa } else { hp.rope_freq_scale_train };
+        var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
+        var q, k, v = build_qkv(b, m, ly, cur, il);
+        q = build_norm_rms(b, m, q, ly.attn_q_norm);
+        k = build_norm_rms(b, m, k, ly.attn_k_norm);
+        q = rope(b, m, q, freq_base, freq_scale);
+        k = rope(b, m, k, freq_base, freq_scale);
+        cur = build_attn(b, m, c, il, ly.wo, ggml::NONE, q, k, v, attn_scale);
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            residual = ggml::get_rows(ctx, residual, b.inp.out_ids);
+        }
+        cur = build_norm_rms(b, m, cur, ly.attn_post_norm);
+        cur = ggml::add(ctx, cur, residual);
+        residual = cur;
+        cur = build_norm_rms(b, m, cur, ly.ffn_norm);
+        cur = ggml::mul_mat(ctx, ly.ffn_down, ggml::swiglu(ctx, ggml::mul_mat(ctx, ly.ffn_up, cur)));
+        cur = build_norm_rms(b, m, cur, ly.ffn_post_norm);
+        inpL = ggml::add(ctx, cur, residual);
+    }
+    let cur = build_norm_rms(b, m, inpL, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
+// models/cohere2.cpp: attention and feed-forward side by side, both on the
+// normed input
+fn build_cohere2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd_head = hp.n_embd_head_v as i64;
+    assert(n_embd_head == hp.n_embd_head_k);
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var cur = build_norm_ln(b, m, inpL, ly.attn_norm, ggml::NONE);
+        var ffn_inp = cur;
+        var q, k, v = build_qkv(b, m, ly, cur, il);
+        if hp.is_swa[il] {
+            let factors = rope_factors(m, c, ly);
+            q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train, factors);
+            k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train, factors);
+        }
+        cur = build_attn(b, m, c, il, ly.wo, ly.bo, q, k, v, 1.0 / sqrt(n_embd_head as f32));
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            inpL = ggml::get_rows(ctx, inpL, b.inp.out_ids);
+            ffn_inp = ggml::get_rows(ctx, ffn_inp, b.inp.out_ids);
+        }
+        let attn_out = cur;
+        cur = build_ffn_swiglu(b, ly, ffn_inp);
+        cur = ggml::add(ctx, cur, inpL);
+        inpL = ggml::add(ctx, cur, attn_out);
+    }
+    var cur = build_norm_ln(b, m, inpL, m.output_norm, ggml::NONE);
+    cur = ggml::mul_mat(ctx, m.output, cur);
+    if hp.f_logit_scale != 0.0 { cur = ggml::scale(ctx, cur, hp.f_logit_scale); }
+    return cur;
+}
+
+// models/pangu-embed.cpp
+fn build_pangu_embed(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd_head = hp.n_embd_head_v as i64;
+    assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var inpSA = inpL;
+        var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
+        var q, k, v = build_qkv(b, m, ly, cur, il);
+        q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+        k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+        cur = build_attn(b, m, c, il, ly.wo, ly.bo, q, k, v, 1.0 / sqrt(n_embd_head as f32));
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            inpSA = ggml::get_rows(ctx, inpSA, b.inp.out_ids);
+        }
+        let ffn_inp = ggml::add(ctx, cur, inpSA);
+        cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
+        cur = build_ffn_swiglu(b, ly, cur);
+        inpL = ggml::add(ctx, cur, ffn_inp);
+    }
+    let cur = build_norm_rms(b, m, inpL, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
+// models/limite.cpp
+fn build_limite(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd = hp.n_embd as i64;
+    let n_embd_head = hp.n_embd_head_k as i64;
+    let n_taps = hp.n_mudd_taps as i64;
+    let n_tokens = b.n_tokens;
+    assert(n_embd_head == hp.n_embd_head_v);
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    // value embeddings, looked up by token
+    let n_head_kv0 = hp.n_head_kv[0] as i64;
+    let inp_ve = ggml::reshape_3d(ctx, ggml::get_rows(ctx, m.value_embd, b.inp.tokens), n_embd_head, n_head_kv0, n_tokens);
+    inpL = build_norm_rms(b, m, inpL, ggml::NONE);
+
+    // hist[il]: the input of layer il, read by the dense connections
+    var hist: ggml::Tensor[>..] = [];
+    for il in n_layer {
+        let ly = m.layers[il];
+        let n_head = hp.n_head[il] as i64;
+        let n_head_kv = hp.n_head_kv[il] as i64;
+        hist.push(inpL);
+        var resid = inpL;
+        var cur = inpL;
+        if ly.mudd_up.p != 0 {
+            if n_taps == 4 { abort("limite with four taps (dsv4_hc_pre): not ported yet"); }
+            var w = build_norm_rms(b, m, inpL, ggml::NONE);
+            w = ggml::gelu_erf(ctx, ggml::mul_mat(ctx, ly.mudd_down, w));
+            w = ggml::add(ctx, ggml::mul_mat(ctx, ly.mudd_up, w), ly.mudd_up_b);
+            var stack = ggml::NONE;
+            for j in n_taps {
+                let tap = hp.mudd_tap_idx[il * n_taps + j] as i64;
+                assert(tap >= 0 && tap <= il);
+                let h = ggml::reshape_3d(ctx, hist[tap], n_embd, 1, n_tokens);
+                stack = if stack.p != 0 { ggml::concat(ctx, stack, h, 1) } else { h };
+            }
+            fn mix(offset: i64) -> ggml::Tensor {
+                let wj = ggml::view_3d(ctx, w, 1, n_taps, n_tokens, ggml::nb(w, 0), ggml::nb(w, 1), offset);
+                let mt = ggml::cont(ctx, ggml::permute(ctx, ggml::mul(ctx, stack, wj), 1, 0, 2, 3));
+                return ggml::reshape_2d(ctx, ggml::sum_rows(ctx, mt), n_embd, n_tokens);
+            }
+            cur = mix(0);
+            resid = mix(n_taps * ggml::nb(w, 0));
+        }
+        let attn_in = build_norm_rms(b, m, cur, ggml::NONE);
+        var q, k, v = build_qkv(b, m, ly, attn_in, il);
+        if ly.attn_ve_gate.p != 0 {
+            var gate = ggml::sigmoid(ctx, ggml::mul_mat(ctx, ly.attn_ve_gate, attn_in));
+            gate = ggml::reshape_3d(ctx, gate, 1, n_head_kv, n_tokens);
+            v = ggml::add(ctx, v, ggml::mul(ctx, inp_ve, gate));
+        }
+        q = ggml::rms_norm(ctx, q, hp.f_norm_rms_eps);
+        k = ggml::rms_norm(ctx, k, hp.f_norm_rms_eps);
+        // the full attention layers have no positions
+        if hp.is_swa[il] {
+            q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+            k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+        }
+        cur = build_kqv(b, m, c, il, q, k, v, hp.f_attention_scale);
+        if ly.attn_xsa_alpha.p != 0 {
+            // each head's output loses its projection on the token's own value
+            let n_group = n_head / n_head_kv;
+            let y = ggml::reshape_4d(ctx, cur, n_embd_head, n_group, n_head_kv, n_tokens);
+            var vn = ggml::l2_norm(ctx, v, hp.f_xsa_eps);
+            vn = ggml::reshape_4d(ctx, vn, n_embd_head, 1, n_head_kv, n_tokens);
+            vn = ggml::repeat(ctx, vn, y);
+            var proj = ggml::sum_rows(ctx, ggml::mul(ctx, y, vn));
+            proj = ggml::mul(ctx, proj, ggml::reshape_4d(ctx, ly.attn_xsa_alpha, 1, n_group, n_head_kv, 1));
+            cur = ggml::sub(ctx, y, ggml::mul(ctx, vn, proj));
+        }
+        cur = ggml::reshape_3d(ctx, cur, n_embd_head, n_head, n_tokens);
+        if ly.attn_gate.p != 0 {
+            let gate = ggml::sigmoid(ctx, ggml::mul_mat(ctx, ly.attn_gate, attn_in));
+            cur = ggml::mul(ctx, cur, ggml::reshape_3d(ctx, gate, 1, n_head, n_tokens));
+        }
+        cur = ggml::reshape_2d(ctx, cur, n_embd_head * n_head, n_tokens);
+        cur = ggml::mul_mat(ctx, ly.wo, cur);
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            resid = ggml::get_rows(ctx, resid, b.inp.out_ids);
+        }
+        cur = ggml::add(ctx, ggml::mul(ctx, resid, ly.attn_resid_scale), cur);
+        let ffn_inp = cur;
+        cur = build_norm_rms(b, m, cur, ggml::NONE);
+        cur = build_ffn_swiglu(b, ly, cur);
+        inpL = ggml::add(ctx, ggml::mul(ctx, ffn_inp, ly.ffn_resid_scale), cur);
+    }
+    var cur = build_norm_rms(b, m, inpL, ggml::NONE);
+    cur = ggml::mul_mat(ctx, m.output, cur);
+    // scale * sigmoid((x + shift) / temperature)
+    let cap = hp.final_logit_sigmoid_capping;
+    if cap[0] != 0.0 && cap[2] != 0.0 {
+        cur = ggml::scale_bias(ctx, cur, 1.0 / cap[2], cap[1] / cap[2]);
+        cur = ggml::sigmoid(ctx, cur);
+        cur = ggml::scale(ctx, cur, cap[0]);
+    }
+    return cur;
+}
+
+// models/hrm-text.cpp
+fn build_hrm_text(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let lps = hp.n_hrm_layers_per_stack as i64;
+    let n_l = hp.n_hrm_l_cycles as i64;
+    let kq_scale = 1.0 / sqrt(hp.n_embd_head_k as f32);
+
+    // one pass of a stack: lps pre-norm layers, then a norm without weight
+    fn stack(x: ggml::Tensor, slot_base: i64) -> ggml::Tensor {
+        var cur = x;
+        for il in lps {
+            let s = slot_base + il;
+            let ly = m.layers[s];
+            var inpSA = cur;
+            cur = build_norm_rms(b, m, cur, ggml::NONE);
+            var gate = ggml::mul_mat(ctx, ly.attn_gate, cur);
+            var q, k, v = build_qkv(b, m, ly, cur, s);
+            q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+            k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+            cur = build_kqv(b, m, c, s, q, k, v, kq_scale);
+            gate = ggml::sigmoid(ctx, gate);
+            cur = ggml::mul(ctx, cur, gate);
+            cur = ggml::mul_mat(ctx, ly.wo, cur);
+            cur = ggml::add(ctx, cur, inpSA);
+            inpSA = cur;
+            cur = build_norm_rms(b, m, cur, ggml::NONE);
+            cur = build_ffn_swiglu(b, ly, cur);
+            cur = ggml::add(ctx, cur, inpSA);
+        }
+        return build_norm_rms(b, m, cur, ggml::NONE);
+    }
+
+    var zH = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    if hp.f_embedding_scale != 0.0 { zH = ggml::scale(ctx, zH, hp.f_embedding_scale); }
+    // the low state starts as [n_embd], broadcast over the tokens
+    var zL = m.hrm_z_l_init;
+    for h in hp.n_hrm_h_cycles as i64 {
+        for l in n_l { zL = stack(ggml::add(ctx, zH, zL), (h * (n_l + 1) + l) * lps); }
+        zH = stack(ggml::add(ctx, zH, zL), (h * (n_l + 1) + n_l) * lps);
+    }
+    let cur = ggml::get_rows(ctx, zH, b.inp.out_ids);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
+// models/spark2-5.cpp
+fn build_spark2_5(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd_head = hp.n_embd_head_v as i64;
+    assert(n_embd_head == hp.n_embd_head_k && hp.swa_type == model::SWA_STANDARD);
+    let kq_scale = 1.0 / sqrt(n_embd_head as f32);
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var inpSA = inpL;
+        var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
+        let n_head = hp.n_head[il] as i64;
+        let swa = hp.is_swa[il];
+        let freq_base = if swa { hp.rope_freq_base_train_swa } else { hp.rope_freq_base_train };
+        let freq_scale = if swa { hp.rope_freq_scale_train_swa } else { hp.rope_freq_scale_train };
+        let attn_inp = cur;
+        var q, k, v = build_qkv(b, m, ly, cur, il);
+        q = rope(b, m, q, freq_base, freq_scale, ggml::NONE, model::rot(hp, il));
+        k = rope(b, m, k, freq_base, freq_scale, ggml::NONE, model::rot(hp, il));
+        cur = build_kqv(b, m, c, il, q, k, v, kq_scale);
+        var gate = ggml::sigmoid(ctx, ggml::mul_mat(ctx, ly.attn_gate, attn_inp));
+        let n_tokens = ggml::ne(cur, 1);
+        cur = ggml::reshape_3d(ctx, cur, n_embd_head, n_head, n_tokens);
+        gate = ggml::reshape_3d(ctx, gate, 1, n_head, n_tokens);
+        cur = ggml::mul(ctx, cur, gate);
+        cur = ggml::reshape_2d(ctx, cur, n_embd_head * n_head, n_tokens);
+        cur = ggml::mul_mat(ctx, ly.wo, cur);
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            inpSA = ggml::get_rows(ctx, inpSA, b.inp.out_ids);
+        }
+        let ffn_inp = ggml::add(ctx, cur, inpSA);
+        cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
+        let up = ggml::mul_mat(ctx, ly.ffn_up, cur);
+        let gate_ffn = ggml::mul_mat(ctx, ly.ffn_gate, cur);
+        cur = ggml::mul_mat(ctx, ly.ffn_down, ggml::geglu_split(ctx, gate_ffn, up));
+        inpL = ggml::add(ctx, cur, ffn_inp);
+    }
+    let cur = build_norm_rms(b, m, inpL, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
+// models/k2-horizon.cpp
+fn build_k2_horizon(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd_head = hp.n_embd_head_v as i64;
+    assert(n_embd_head == hp.n_embd_head_k);
+    let n_tokens = b.n_tokens;
+    let kq_scale = 1.0 / sqrt(n_embd_head as f32);
+
+    // RMS norm over n_groups equal slices of a row, then one full-width weight
+    fn group_rms_norm(x: ggml::Tensor, w: ggml::Tensor) -> ggml::Tensor {
+        let n_groups = hp.n_norm_groups as i64;
+        let n = ggml::ne(x, 0);
+        let nt = ggml::ne(x, 1);
+        assert(n_groups > 0 && n % n_groups == 0);
+        var cur = ggml::reshape_3d(ctx, x, n / n_groups, n_groups, nt);
+        cur = ggml::rms_norm(ctx, cur, hp.f_norm_rms_eps);
+        cur = ggml::reshape_2d(ctx, cur, n, nt);
+        return if w.p != 0 { ggml::mul(ctx, cur, w) } else { cur };
+    }
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    for il in n_layer {
+        let ly = m.layers[il];
+        let n_head = hp.n_head[il] as i64;
+        let n_head_kv = hp.n_head_kv[il] as i64;
+        var inpSA = inpL;
+        var cur = group_rms_norm(inpL, ly.attn_norm);
+        var q = ggml::reshape_3d(ctx, ggml::mul_mat(ctx, ly.wq, cur), n_embd_head, n_head, n_tokens);
+        var k = ggml::reshape_3d(ctx, ggml::mul_mat(ctx, ly.wk, cur), n_embd_head, n_head_kv, n_tokens);
+        let v = ggml::reshape_3d(ctx, ggml::mul_mat(ctx, ly.wv, cur), n_embd_head, n_head_kv, n_tokens);
+        q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+        k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+        cur = build_attn(b, m, c, il, ly.wo, ggml::NONE, q, k, v, kq_scale);
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            inpSA = ggml::get_rows(ctx, inpSA, b.inp.out_ids);
+        }
+        let ffn_inp = ggml::add(ctx, cur, inpSA);
+        cur = group_rms_norm(ffn_inp, ly.ffn_norm);
+        cur = build_ffn_swiglu(b, ly, cur);
+        inpL = ggml::add(ctx, cur, ffn_inp);
+    }
+    let cur = group_rms_norm(inpL, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
+// models/glm4.cpp
+fn build_glm4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
+    let hp .= m.hp;
+    let ctx = b.ctx;
+    let n_layer = hp.n_layer as i64;
+    let n_embd_head = hp.n_embd_head_v as i64;
+    assert(n_embd_head == hp.n_embd_head_k);
+    let use_mrope = hp.rope_type == ggml::ROPE_TYPE_MROPE;
+
+    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    for il in n_layer {
+        let ly = m.layers[il];
+        var inpSA = inpL;
+        var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
+        var q, k, v = build_qkv(b, m, ly, cur, il);
+        if use_mrope {
+            q = rope_multi(b, m, q);
+            k = rope_multi(b, m, k);
+        } else {
+            q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+            k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train);
+        }
+        cur = build_attn(b, m, c, il, ly.wo, ggml::NONE, q, k, v, 1.0 / sqrt(n_embd_head as f32));
+        if il == n_layer - 1 {
+            cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
+            inpSA = ggml::get_rows(ctx, inpSA, b.inp.out_ids);
+        }
+        cur = build_norm_rms(b, m, cur, ly.attn_post_norm);
+        let ffn_inp = ggml::add(ctx, cur, inpSA);
+        cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
+        cur = ggml::mul_mat(ctx, ly.ffn_down, ggml::swiglu(ctx, ggml::mul_mat(ctx, ly.ffn_up, cur)));
+        cur = build_norm_rms(b, m, cur, ly.ffn_post_norm);
+        inpL = ggml::add(ctx, cur, ffn_inp);
+    }
+    let cur = build_norm_rms(b, m, inpL, m.output_norm);
+    return ggml::mul_mat(ctx, m.output, cur);
+}
+
 // models/afmoe.cpp
 fn build_afmoe(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let hp .= m.hp;
@@ -2706,7 +3087,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         model::ARCH_PHI2 => build_phi2(b, m, c),
         model::ARCH_PHI3 => build_phi3(b, m, c),
         model::ARCH_STABLELM => build_stablelm(b, m, c),
-        model::ARCH_SMOLLM3, model::ARCH_GRANITE, model::ARCH_GRANITE_MOE => build_smollm3_granite(b, m, c),
+        model::ARCH_SMOLLM3, model::ARCH_GRANITE, model::ARCH_GRANITE_MOE, model::ARCH_MINICPM => build_smollm3_granite(b, m, c),
         model::ARCH_SMALLTHINKER => build_smallthinker(b, m, c),
         model::ARCH_GEMMA => build_gemma(b, m, c),
         model::ARCH_OLMO, model::ARCH_REFACT => build_olmo_refact(b, m, c),
@@ -2727,6 +3108,14 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         model::ARCH_GEMMA3N => build_gemma3n(b, m, c),
         model::ARCH_GEMMA4 => build_gemma4(b, m, c),
         model::ARCH_T5 => build_t5_dec(b, m, c),
+        model::ARCH_PLAMO3 => build_plamo3(b, m, c),
+        model::ARCH_COHERE2 => build_cohere2(b, m, c),
+        model::ARCH_PANGU_EMBED => build_pangu_embed(b, m, c),
+        model::ARCH_LIMITE => build_limite(b, m, c),
+        model::ARCH_HRM_TEXT => build_hrm_text(b, m, c),
+        model::ARCH_SPARK2_5 => build_spark2_5(b, m, c),
+        model::ARCH_K2_HORIZON => build_k2_horizon(b, m, c),
+        model::ARCH_GLM4 => build_glm4(b, m, c),
         model::ARCH_INTERNLM2, model::ARCH_EXAONE, model::ARCH_ERNIE4_5, model::ARCH_MISTRAL3 => build_llama(b, m, c),
         model::ARCH_ARCEE => build_arcee(b, m, c),
         model::ARCH_OLMO2, model::ARCH_EXAONE4 => build_post_norm(b, m, c),

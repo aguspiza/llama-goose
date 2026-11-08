@@ -1,8 +1,8 @@
 // A model: its hyperparameters and its weights, loaded from a GGUF file.
-// So far: afmoe, arcee, bitnet, bloom, chatglm, ernie4_5, falcon-h1, gemma3n, gemma4, exaone, exaone4, gemma, gemma2, gemma3, gpt2,
-// gptneox, granite, granitehybrid, granitemoe, hunyuan-dense, jamba, internlm2, jais, llama, mistral3,
-// maincoder, mamba, mamba2, minicpm3, nemotron_h, mpt, nanbeige, nemotron, olmo, olmo2, openelm, phi2, qwen, refact,
-// phi3, plamo2, qwen2vl, qwen3vl, rwkv6, rwkv7, smallthinker, t5, smollm3, stablelm, starcoder, starcoder2, lfm2 (attention and short convolutions), lfm3, qwen2, qwen3 and qwen35
+// So far: afmoe, arcee, bitnet, bloom, chatglm, cohere2, ernie4_5, falcon-h1, gemma3n, gemma4, exaone, exaone4, gemma, gemma2, gemma3, glm4, gpt2,
+// gptneox, granite, granitehybrid, granitemoe, hrm_text, hunyuan-dense, jamba, internlm2, jais, k2-horizon, limite, llama, mistral3,
+// maincoder, mamba, mamba2, minicpm, minicpm3, nemotron_h, mpt, nanbeige, nemotron, olmo, olmo2, openelm, pangu-embedded, phi2, qwen, refact,
+// phi3, plamo2, plamo3, qwen2vl, qwen3vl, rwkv6, rwkv7, smallthinker, spark2_5, t5, smollm3, stablelm, starcoder, starcoder2, lfm2 (attention and short convolutions), lfm3, qwen2, qwen3 and qwen35
 // (attention and gated delta nets).
 // port-of: src/llama-model.cpp src/llama-hparams.cpp src/llama-hparams.h src/llama-model-loader.cpp src/models/lfm3.cpp src/models/qwen2.cpp src/models/qwen3.cpp src/models/qwen35.cpp src/models/gemma2.cpp
 // port-of: src/models/phi2.cpp src/models/phi3.cpp src/models/stablelm.cpp src/models/smollm3.cpp src/models/granite.cpp
@@ -16,6 +16,7 @@
 // port-of: src/models/falcon-h1.cpp src/models/granite-hybrid.cpp src/models/jamba.cpp src/models/plamo2.cpp
 // port-of: src/models/rwkv6.cpp src/models/rwkv6-base.cpp src/models/rwkv7.cpp src/models/rwkv7-base.cpp src/models/minicpm3.cpp
 // port-of: src/models/qwen2vl.cpp src/models/qwen3vl.cpp src/models/nemotron-h.cpp src/models/afmoe.cpp src/models/gemma3n.cpp src/models/gemma4.cpp src/models/t5.cpp
+// port-of: src/models/minicpm.cpp src/models/plamo3.cpp src/models/cohere2.cpp src/models/pangu-embed.cpp src/models/limite.cpp src/models/hrm-text.cpp src/models/spark2-5.cpp src/models/k2-horizon.cpp src/models/glm4.cpp
 import std;
 import math;
 import ggml from "../ggml";
@@ -93,6 +94,15 @@ let ARCH_AFMOE = 53;
 let ARCH_GEMMA3N = 54;
 let ARCH_GEMMA4 = 55;
 let ARCH_T5 = 56;
+let ARCH_MINICPM = 57;
+let ARCH_PLAMO3 = 58;
+let ARCH_COHERE2 = 59;
+let ARCH_PANGU_EMBED = 60;
+let ARCH_LIMITE = 61;
+let ARCH_HRM_TEXT = 62;
+let ARCH_SPARK2_5 = 63;
+let ARCH_K2_HORIZON = 64;
+let ARCH_GLM4 = 65;
 
 struct HParams {
     arch: i64,
@@ -177,6 +187,15 @@ struct HParams {
     use_par_res: bool,           // gptneox: attention and feed-forward in parallel
     f_attn_logit_softcapping: f32 = 50.0,
     f_final_logit_softcapping: f32,
+    f_xsa_eps: f32,                          // limite: exclusive self attention's,
+    final_logit_sigmoid_capping: f32[3],     // the logits' scale * sigmoid((x + shift) / temperature),
+    n_mudd_ff: u32,                          // and the dense connections across layers:
+    n_mudd_taps: u32,                        // each layer mixes this many earlier inputs,
+    mudd_tap_idx: i32[..512],                // [n_layer][n_mudd_taps], -1: none
+    n_hrm_layers_per_stack: u32,             // hrm_text: a low and a high stack of this many layers,
+    n_hrm_h_cycles: u32,                     // the high one run this many times,
+    n_hrm_l_cycles: u32,                     // the low one this many times before each
+    n_norm_groups: u32,                      // k2-horizon: RMS norms over this many slices
 }
 
 // A layer's head and rope sizes: the sliding window ones on such layers.
@@ -331,6 +350,13 @@ struct Layer {
     ssm_alpha: ggml::Tensor,
     ssm_norm: ggml::Tensor,
     ssm_out: ggml::Tensor,
+    attn_ve_gate: ggml::Tensor,      // limite
+    attn_xsa_alpha: ggml::Tensor,
+    attn_resid_scale: ggml::Tensor,
+    ffn_resid_scale: ggml::Tensor,
+    mudd_down: ggml::Tensor,
+    mudd_up: ggml::Tensor,
+    mudd_up_b: ggml::Tensor,
 }
 
 struct Model {
@@ -353,6 +379,8 @@ struct Model {
     output_norm_b: ggml::Tensor,
     output: ggml::Tensor,
     output_b: ggml::Tensor,
+    value_embd: ggml::Tensor,    // limite
+    hrm_z_l_init: ggml::Tensor,  // hrm_text: the low stack's first state
     layers: Layer[..512],
 }
 
@@ -369,7 +397,7 @@ fn arch_name_of(arch: i64) -> const u8[:] {
             ARCH_GRANITE_MOE => "granitemoe", ARCH_SMALLTHINKER => "smallthinker",
             ARCH_GEMMA => "gemma", ARCH_OLMO => "olmo", ARCH_QWEN => "qwen", ARCH_REFACT => "refact", ARCH_MPT => "mpt", ARCH_JAIS => "jais", ARCH_NEMOTRON => "nemotron",
             ARCH_MAINCODER => "maincoder", ARCH_NANBEIGE => "nanbeige", ARCH_BITNET => "bitnet", ARCH_CHATGLM => "chatglm", ARCH_MAMBA => "mamba", ARCH_MAMBA2 => "mamba2",
-            ARCH_FALCON_H1 => "falcon-h1", ARCH_GRANITE_HYBRID => "granitehybrid", ARCH_JAMBA => "jamba", ARCH_PLAMO2 => "plamo2", ARCH_RWKV6 => "rwkv6", ARCH_RWKV7 => "rwkv7", ARCH_MINICPM3 => "minicpm3", ARCH_QWEN2VL => "qwen2vl", ARCH_QWEN3VL => "qwen3vl", ARCH_NEMOTRON_H => "nemotron_h", ARCH_AFMOE => "afmoe", ARCH_GEMMA3N => "gemma3n", ARCH_GEMMA4 => "gemma4", ARCH_T5 => "t5", _ => "unknown" }
+            ARCH_FALCON_H1 => "falcon-h1", ARCH_GRANITE_HYBRID => "granitehybrid", ARCH_JAMBA => "jamba", ARCH_PLAMO2 => "plamo2", ARCH_RWKV6 => "rwkv6", ARCH_RWKV7 => "rwkv7", ARCH_MINICPM3 => "minicpm3", ARCH_QWEN2VL => "qwen2vl", ARCH_QWEN3VL => "qwen3vl", ARCH_NEMOTRON_H => "nemotron_h", ARCH_AFMOE => "afmoe", ARCH_GEMMA3N => "gemma3n", ARCH_GEMMA4 => "gemma4", ARCH_T5 => "t5", ARCH_MINICPM => "minicpm", ARCH_PLAMO3 => "plamo3", ARCH_COHERE2 => "cohere2", ARCH_PANGU_EMBED => "pangu-embedded", ARCH_LIMITE => "limite", ARCH_HRM_TEXT => "hrm_text", ARCH_SPARK2_5 => "spark2_5", ARCH_K2_HORIZON => "k2-horizon", ARCH_GLM4 => "glm4", _ => "unknown" }
 }
 
 fn arch_from_name(name: const u8[:]) -> i64 {
@@ -429,6 +457,15 @@ fn arch_from_name(name: const u8[:]) -> i64 {
     if name == "gemma3n" { return ARCH_GEMMA3N; }
     if name == "gemma4" { return ARCH_GEMMA4; }
     if name == "t5" { return ARCH_T5; }
+    if name == "minicpm" { return ARCH_MINICPM; }
+    if name == "plamo3" { return ARCH_PLAMO3; }
+    if name == "cohere2" { return ARCH_COHERE2; }
+    if name == "pangu-embedded" { return ARCH_PANGU_EMBED; }
+    if name == "limite" { return ARCH_LIMITE; }
+    if name == "hrm_text" { return ARCH_HRM_TEXT; }
+    if name == "spark2_5" { return ARCH_SPARK2_5; }
+    if name == "k2-horizon" { return ARCH_K2_HORIZON; }
+    if name == "glm4" { return ARCH_GLM4; }
     return ARCH_UNKNOWN;
 }
 
@@ -582,6 +619,15 @@ fn load_hparams(m: Model&) {
         ARCH_GEMMA3N => load_hparams_gemma3n(m),
         ARCH_GEMMA4 => load_hparams_gemma4(m),
         ARCH_T5 => load_hparams_t5(m),
+        ARCH_MINICPM => load_hparams_minicpm(m),
+        ARCH_PLAMO3 => load_hparams_plamo3(m),
+        ARCH_COHERE2 => load_hparams_cohere2(m),
+        ARCH_PANGU_EMBED => load_hparams_pangu_embed(m),
+        ARCH_LIMITE => load_hparams_limite(m),
+        ARCH_HRM_TEXT => load_hparams_hrm_text(m),
+        ARCH_SPARK2_5 => load_hparams_spark2_5(m),
+        ARCH_K2_HORIZON => load_hparams_k2_horizon(m),
+        ARCH_GLM4 => load_hparams_glm4(m),
         _ => abort("unknown architecture"),
     }
     resolve_rope(hp);
@@ -1020,6 +1066,150 @@ fn load_hparams_granite(m: Model&) {
     hp.rope_type = ggml::ROPE_TYPE_NORMAL;
 }
 
+// models/minicpm.cpp: granite's graph, with defaults for the older GGUFs
+fn load_hparams_minicpm(m: Model&) {
+    let hp .= m.hp;
+    hp.f_embedding_scale = 12.0;
+    hp.f_residual_scale = 1.4 / sqrt(hp.n_layer as f32);
+    hp.f_logit_scale = if hp.n_embd != 0 { 256.0 / (hp.n_embd as f32) } else { 1.0 };
+    get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
+    get_f32(m, "embedding_scale", hp.f_embedding_scale, false);
+    get_f32(m, "residual_scale", hp.f_residual_scale, false);
+    get_f32(m, "logit_scale", hp.f_logit_scale, false);
+    hp.rope_finetuned = true;
+    hp.rope_type = ggml::ROPE_TYPE_NORMAL;
+}
+
+// models/plamo3.cpp
+fn load_hparams_plamo3(m: Model&) {
+    let hp .= m.hp;
+    get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
+    if get_u32(m, "attention.sliding_window", hp.n_swa, false) && hp.n_swa > 0 {
+        hp.swa_type = SWA_STANDARD;
+        get_f32(m, "rope.freq_base_swa", hp.rope_freq_base_train_swa, false);
+        load_swa_pattern(m, 8);
+    } else {
+        hp.swa_type = SWA_NONE;
+    }
+    hp.rope_type = ggml::ROPE_TYPE_NEOX;
+}
+
+// models/cohere2.cpp: sliding windows; only their layers have rope
+fn load_hparams_cohere2(m: Model&) {
+    let hp .= m.hp;
+    hp.swa_type = SWA_STANDARD;
+    load_swa_pattern(m, 4);
+    hp.rope_freq_base_train_swa = hp.rope_freq_base_train;
+    hp.rope_freq_scale_train_swa = hp.rope_freq_scale_train;
+    get_f32(m, "rope.freq_base_swa", hp.rope_freq_base_train_swa, false);
+    get_u32(m, "attention.sliding_window", hp.n_swa);
+    get_f32(m, "logit_scale", hp.f_logit_scale);
+    get_f32(m, "attention.layer_norm_epsilon", hp.f_norm_eps);
+    hp.rope_type = ggml::ROPE_TYPE_NORMAL;
+}
+
+// models/pangu-embed.cpp
+fn load_hparams_pangu_embed(m: Model&) {
+    get_f32(m, "attention.layer_norm_rms_epsilon", m.hp.f_norm_rms_eps);
+    m.hp.rope_type = ggml::ROPE_TYPE_NEOX;
+}
+
+// models/limite.cpp: value embeddings, exclusive self attention, gates per
+// head, learned residual scales, dense (MUDD) connections across layers.
+fn load_hparams_limite(m: Model&) {
+    let hp .= m.hp;
+    get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
+    get_f32(m, "attention.scale", hp.f_attention_scale);
+    get_f32(m, "attention.xsa_epsilon", hp.f_xsa_eps, false);
+    let kc = akey(m, "final_logit_sigmoid_capping");
+    let idc = gguf::find_key(m.meta, kc);
+    if idc >= 0 {
+        let n = gguf::get_arr_n(m.meta, idc);
+        guard n <= 3 else { abort(str("array length ", n, " for key ", kc, " > 3")); }
+        var vals: f32[>..] = [];
+        vals.resize(n, 0.0);
+        gguf::get_arr_f32(m.meta, idc, vals);
+        for i in n { hp.final_logit_sigmoid_capping[i] = vals[i]; }
+    }
+    hp.swa_type = SWA_STANDARD;
+    get_u32(m, "attention.sliding_window", hp.n_swa);
+    load_swa_pattern(m, 4);
+    get_u32(m, "mudd.tap_count", hp.n_mudd_taps, false);
+    if hp.n_mudd_taps > 0 {
+        get_u32(m, "mudd.feed_forward_length", hp.n_mudd_ff);
+        let k = akey(m, "mudd.tap_indices");
+        let id = gguf::find_key(m.meta, k);
+        guard id >= 0 else { abort(str("key not found in model: ", k)); }
+        let n = gguf::get_arr_n(m.meta, id);
+        guard n <= 512 else { abort(str("array length ", n, " for key ", k, " > 512")); }
+        var vals: i32[>..] = [];
+        vals.resize(n, 0);
+        gguf::get_arr_i32(m.meta, id, vals);
+        for i in 512 { hp.mudd_tap_idx.push(if i < n { vals[i] } else { -1 }); }
+    }
+    hp.rope_type = ggml::ROPE_TYPE_NORMAL;
+}
+
+// models/hrm-text.cpp: a low and a high stack of layers, alternated over
+// the same tokens. Each pass has its own cache slots: block_count of them.
+fn load_hparams_hrm_text(m: Model&) {
+    let hp .= m.hp;
+    get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
+    get_f32(m, "embedding_scale", hp.f_embedding_scale, false);
+    get_u32(m, "hrm.layers_per_stack", hp.n_hrm_layers_per_stack);
+    get_u32(m, "hrm.h_cycles", hp.n_hrm_h_cycles);
+    get_u32(m, "hrm.l_cycles", hp.n_hrm_l_cycles);
+    assert(hp.n_hrm_layers_per_stack > 0 && hp.n_hrm_h_cycles > 0 && hp.n_hrm_l_cycles > 0);
+    assert(hp.n_layer == hp.n_hrm_layers_per_stack * hp.n_hrm_h_cycles * (hp.n_hrm_l_cycles + 1));
+    hp.rope_type = ggml::ROPE_TYPE_NEOX;
+}
+
+// models/spark2-5.cpp: sliding windows with their own rope, a gate per head
+fn load_hparams_spark2_5(m: Model&) {
+    let hp .= m.hp;
+    get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
+    get_u32(m, "attention.sliding_window", hp.n_swa);
+    hp.swa_type = SWA_STANDARD;
+    let k = akey(m, "attention.sliding_window_pattern");
+    let id = gguf::find_key(m.meta, k);
+    guard id >= 0 && gguf::get_kv_type(m.meta, id) == gguf::ARRAY else { abort(str("key not found in model: ", k)); }
+    load_swa_pattern(m, 0);
+    hp.rope_freq_base_train_swa = hp.rope_freq_base_train;
+    hp.rope_freq_scale_train_swa = hp.rope_freq_scale_train;
+    get_f32(m, "rope.freq_base_swa", hp.rope_freq_base_train_swa, false);
+    hp.rope_type = ggml::ROPE_TYPE_NEOX;
+}
+
+// models/k2-horizon.cpp: the dense models without Q/K norms or an output
+// gate (the others, and the MoE and MoVA ones, are not ported yet).
+fn load_hparams_k2_horizon(m: Model&) {
+    let hp .= m.hp;
+    get_f32(m, "rope.scaling.yarn_beta_fast", hp.yarn_beta_fast, false);
+    get_f32(m, "rope.scaling.yarn_beta_slow", hp.yarn_beta_slow, false);
+    get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
+    get_u32(m, "attention.group_norm_groups", hp.n_norm_groups, false);
+    if hp.n_norm_groups == 0 { hp.n_norm_groups = 1; }
+    if hp.n_expert > 0 { abort("k2-horizon with experts: not ported yet"); }
+    var n_value_expert: u32 = 0;
+    get_u32(m, "attention.value_expert_count", n_value_expert, false);
+    if n_value_expert > 0 { abort("k2-horizon with value experts (MoVA): not ported yet"); }
+    hp.rope_type = ggml::ROPE_TYPE_NEOX;
+}
+
+// models/glm4.cpp: M-RoPE when the file has rope sections (GLM-OCR). The
+// NextN (MTP) layers at the end are not run, nor loaded.
+fn load_hparams_glm4(m: Model&) {
+    let hp .= m.hp;
+    get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
+    if gguf::find_key(m.meta, akey(m, "rope.dimension_sections")) >= 0 { load_rope_sections(m); }
+    var n_nextn: u32 = 0;
+    get_u32(m, "nextn_predict_layers", n_nextn, false);
+    assert(n_nextn <= hp.n_layer);
+    hp.n_layer -= n_nextn;
+    let use_mrope = hp.rope_sections[0] > 0 && hp.rope_sections[1] > 0;
+    hp.rope_type = if use_mrope { ggml::ROPE_TYPE_MROPE } else { ggml::ROPE_TYPE_NORMAL };
+}
+
 // models/gemma2.cpp
 fn load_hparams_gemma2(m: Model&) {
     let hp .= m.hp;
@@ -1352,7 +1542,7 @@ fn load_tensors_smollm3_granite(m: Model&) {
     m.output_norm = tensor(m, "output_norm.weight");
     m.output = tensor(m, "output.weight", false);
     if m.output.p == 0 { m.output = m.tok_embd; }
-    let granite = m.hp.arch == ARCH_GRANITE || m.hp.arch == ARCH_GRANITE_MOE;
+    let granite = m.hp.arch == ARCH_GRANITE || m.hp.arch == ARCH_GRANITE_MOE || m.hp.arch == ARCH_MINICPM;
     var rope_freqs = ggml::NONE;
     var rope_long = ggml::NONE;
     var rope_short = ggml::NONE;
@@ -1823,6 +2013,182 @@ fn load_tensors_nemotron_h(m: Model&) {
     }
 }
 
+// models/plamo3.cpp
+fn load_tensors_plamo3(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        ly.wqkv = layer_tensor(m, il, "attn_qkv");
+        ly.attn_q_norm = layer_tensor(m, il, "attn_q_norm");
+        ly.attn_k_norm = layer_tensor(m, il, "attn_k_norm");
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.attn_post_norm = tensor(m, str("blk.", il, ".post_attention_norm"));    // no ".weight"
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        ly.ffn_post_norm = tensor(m, str("blk.", il, ".post_ffw_norm"));
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        m.layers.push(ly);
+    }
+}
+
+// models/cohere2.cpp
+fn load_tensors_cohere2(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = m.tok_embd;
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        load_qkv(m, il, ly);
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        m.layers.push(ly);
+    }
+}
+
+// models/pangu-embed.cpp: llama's layers, biased attention
+fn load_tensors_pangu_embed(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        load_qkv(m, il, ly);
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.bo = layer_tensor(m, il, "attn_output", true, "bias");
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        m.layers.push(ly);
+    }
+}
+
+// models/limite.cpp
+fn load_tensors_limite(m: Model&) {
+    let hp .= m.hp;
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.value_embd = tensor(m, "value_embd.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    let n_taps = hp.n_mudd_taps as i64;
+    for il in hp.n_layer as i64 {
+        var ly = Layer { .. };
+        load_qkv(m, il, ly);
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.attn_gate = layer_tensor(m, il, "attn_gate", false);
+        ly.attn_ve_gate = layer_tensor(m, il, "attn_ve_gate", false);
+        ly.attn_xsa_alpha = layer_tensor(m, il, "attn_xsa_alpha", false);
+        ly.attn_resid_scale = layer_tensor(m, il, "attn_resid_scale");
+        ly.ffn_resid_scale = layer_tensor(m, il, "ffn_resid_scale");
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        if n_taps > 0 && hp.mudd_tap_idx[il * n_taps] >= 0 {
+            // rows [0, n_taps) mix the attention's input, rows [n_taps, 2 * n_taps) the residual
+            ly.mudd_down = layer_tensor(m, il, "mudd_down");
+            ly.mudd_up = layer_tensor(m, il, "mudd_up");
+            ly.mudd_up_b = layer_tensor(m, il, "mudd_up", true, "bias");
+        }
+        m.layers.push(ly);
+    }
+}
+
+// models/hrm-text.cpp: blocks [0, lps) are the low stack, [lps, 2 lps) the
+// high one; every pass's slots alias them.
+fn load_tensors_hrm_text(m: Model&) {
+    let hp .= m.hp;
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    m.hrm_z_l_init = tensor(m, "hrm.z_l_init");
+    let lps = hp.n_hrm_layers_per_stack as i64;
+    let n_l = hp.n_hrm_l_cycles as i64;
+    var stacks: Layer[>..] = [];
+    for bid in 2 * lps {
+        var ly = Layer { .. };
+        load_qkv(m, bid, ly);
+        ly.attn_gate = layer_tensor(m, bid, "attn_gate");
+        ly.wo = layer_tensor(m, bid, "attn_output");
+        ly.ffn_gate = layer_tensor(m, bid, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, bid, "ffn_down");
+        ly.ffn_up = layer_tensor(m, bid, "ffn_up");
+        stacks.push(ly);
+    }
+    for h in hp.n_hrm_h_cycles as i64 {
+        for l in n_l + 1 {
+            let base = if l == n_l { lps } else { 0 };
+            for il in lps { m.layers.push(stacks[base + il]); }
+        }
+    }
+}
+
+// models/spark2-5.cpp
+fn load_tensors_spark2_5(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        load_qkv(m, il, ly);
+        ly.attn_gate = layer_tensor(m, il, "attn_gate");
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        m.layers.push(ly);
+    }
+}
+
+// models/k2-horizon.cpp
+fn load_tensors_k2_horizon(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        ly.wq = layer_tensor(m, il, "attn_q");
+        ly.wk = layer_tensor(m, il, "attn_k");
+        ly.wv = layer_tensor(m, il, "attn_v");
+        if layer_tensor(m, il, "attn_q_norm", false).p != 0 || layer_tensor(m, il, "attn_gate", false).p != 0 {
+            abort("k2-horizon with Q/K norms or an output gate: not ported yet");
+        }
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        m.layers.push(ly);
+    }
+}
+
+// models/glm4.cpp
+fn load_tensors_glm4(m: Model&) {
+    m.tok_embd = tensor(m, "token_embd.weight");
+    m.output_norm = tensor(m, "output_norm.weight");
+    m.output = tensor(m, "output.weight", false);
+    if m.output.p == 0 { m.output = m.tok_embd; }
+    for il in m.hp.n_layer as i64 {
+        var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
+        load_qkv(m, il, ly);
+        ly.wo = layer_tensor(m, il, "attn_output");
+        ly.attn_post_norm = layer_tensor(m, il, "post_attention_norm");
+        ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
+        ly.ffn_down = layer_tensor(m, il, "ffn_down");
+        ly.ffn_up = layer_tensor(m, il, "ffn_up");
+        ly.ffn_post_norm = layer_tensor(m, il, "post_ffw_norm");
+        m.layers.push(ly);
+    }
+}
+
 // models/afmoe.cpp
 fn load_tensors_afmoe(m: Model&) {
     m.tok_embd = tensor(m, "token_embd.weight");
@@ -2171,6 +2537,7 @@ fn matmul_weights(m: Model&) -> ggml::Tensor[>..] {
         add(ly.ffn_gate); add(ly.ffn_up); add(ly.ffn_down);
         add(ly.shortconv_in_proj); add(ly.shortconv_out_proj); add(ly.attn_gate);
         add(ly.ssm_beta); add(ly.ssm_alpha); add(ly.ssm_out);
+        add(ly.attn_ve_gate); add(ly.mudd_down); add(ly.mudd_up);
         add(ly.ssm_in); add(ly.ssm_x); add(ly.ssm_dt);
         add(ly.wq_a); add(ly.wq_b); add(ly.wkv_a_mqa); add(ly.wkv_b);
         add(ly.wq_enc); add(ly.wk_enc); add(ly.wv_enc); add(ly.wo_enc); add(ly.ffn_gate_enc); add(ly.ffn_down_enc); add(ly.ffn_up_enc);
@@ -2223,7 +2590,7 @@ fn load(m: Model&, path: const u8[:]) {
         ARCH_PHI2 => load_tensors_phi2(m),
         ARCH_PHI3 => load_tensors_phi3(m),
         ARCH_STABLELM => load_tensors_stablelm(m),
-        ARCH_SMOLLM3, ARCH_GRANITE, ARCH_GRANITE_MOE => load_tensors_smollm3_granite(m),
+        ARCH_SMOLLM3, ARCH_GRANITE, ARCH_GRANITE_MOE, ARCH_MINICPM => load_tensors_smollm3_granite(m),
         ARCH_SMALLTHINKER => load_tensors_smallthinker(m),
         ARCH_GEMMA => load_tensors_gemma(m),
         ARCH_OLMO => load_tensors_olmo(m),
@@ -2245,6 +2612,14 @@ fn load(m: Model&, path: const u8[:]) {
         ARCH_GEMMA3N => load_tensors_gemma3n(m),
         ARCH_GEMMA4 => load_tensors_gemma4(m),
         ARCH_T5 => load_tensors_t5(m),
+        ARCH_PLAMO3 => load_tensors_plamo3(m),
+        ARCH_COHERE2 => load_tensors_cohere2(m),
+        ARCH_PANGU_EMBED => load_tensors_pangu_embed(m),
+        ARCH_LIMITE => load_tensors_limite(m),
+        ARCH_HRM_TEXT => load_tensors_hrm_text(m),
+        ARCH_SPARK2_5 => load_tensors_spark2_5(m),
+        ARCH_K2_HORIZON => load_tensors_k2_horizon(m),
+        ARCH_GLM4 => load_tensors_glm4(m),
         ARCH_INTERNLM2, ARCH_EXAONE, ARCH_ERNIE4_5, ARCH_MISTRAL3 => load_tensors_llama(m),
         ARCH_ARCEE => load_tensors_arcee(m),
         ARCH_OLMO2, ARCH_EXAONE4 => load_tensors_post_norm(m),

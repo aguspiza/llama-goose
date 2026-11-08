@@ -4,6 +4,7 @@
 // tokenizer load but abort when asked to tokenize.
 // port-of: src/llama-vocab.cpp src/llama-vocab.h
 import std;
+import math;
 import dictionary;
 import os;
 import ggml from "../ggml";
@@ -466,7 +467,7 @@ fn load(ctx: gguf::Ctx) {
         tokenize("\n", false, false, ids);
         guard ids.len > 0 else { abort("GGML_ASSERT(!ids.empty() && \"model vocab missing newline token\") failed"); }
         linefeed_id = ids[0];
-    } else if vtype == TYPE_BPE || vtype == TYPE_PLAMO2 || vtype == TYPE_UGM {
+    } else if vtype == TYPE_BPE || vtype == TYPE_PLAMO2 || vtype == TYPE_PLAMO3 || vtype == TYPE_UGM {
         // (llama.cpp tokenizes "\n" for the other types too, which are not ported yet)
         var ids: i32[>..] = [];
         tokenize("\n", false, false, ids);
@@ -554,10 +555,10 @@ fn load_tokens(ctx: gguf::Ctx) {
 
 fn init_tokenizer() {
     match vtype {
-        TYPE_SPM, TYPE_WPM, TYPE_PLAMO3, TYPE_TEST => {},
+        TYPE_SPM, TYPE_WPM, TYPE_TEST => {},
         TYPE_UGM => ugm_build(),
         TYPE_RWKV => rwkv_build(),
-        TYPE_PLAMO2 => plamo_build(),
+        TYPE_PLAMO2, TYPE_PLAMO3 => plamo_build(),
         TYPE_BPE => {
             let regexes, byte_encode = pre_regexes(pre_type);
             bpe_regexes = regexes;
@@ -1271,7 +1272,7 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
                 else { out.push(f.token); }
             }
         },
-        TYPE_PLAMO2 => {
+        TYPE_PLAMO2, TYPE_PLAMO3 => {
             if add_special && add_bos {
                 assert(special_bos_id != TOKEN_NULL);
                 out.push(special_bos_id);
@@ -1927,9 +1928,60 @@ fn plamo_encode_cpts(cpts: const u32[:], out: i32[>..]&) {
 
 fn plamo_tokenize(text: const u8[:], out: i32[>..]&) {
     var cpts = unicode::cpts_from_utf8(text);
+    if vtype == TYPE_PLAMO3 { plamo3_tokenize(cpts, out); return; }
     // PLaMo-2: a leading U+FEFF is dropped
     if cpts.len > 0 && cpts[0] == 0xFEFF { plamo_encode_cpts(cpts[1..], out); return; }
     plamo_encode_cpts(cpts, out);
+}
+
+// PLaMo-3 cuts the text first: around <|plamo:...|> tags, runs of four or
+// more of a character (but newlines) and of two or more spaces, and at
+// U+EE00 (dropped); each segment is encoded alone.
+fn plamo3_tokenize(cpts: const u32[:], out: i32[>..]&) {
+    let prefix: u32[8] = ['<', '|', 'p', 'l', 'a', 'm', 'o', ':'];
+    let n = cpts.len;
+    var cut: bool[>..] = [];
+    cut.resize(n + 1, false);
+    // pass 1: <|plamo:...|>
+    var i: i64 = 0;
+    while i + 8 <= n {
+        var matches = true;
+        for k in 8 { if cpts[i + k] != prefix[k] { matches = false; break; } }
+        if !matches { i += 1; continue; }
+        // an empty body is valid; U+001C..U+001F count as whitespace (Python's \s)
+        var j = i + 8;
+        while j < n && j - (i + 8) < 64 && cpts[j] != '|' && (cpts[j] < 0x1C || cpts[j] > 0x1F) &&
+              !unicode::is(unicode::flags(cpts[j]), unicode::WHITESPACE) {
+            j += 1;
+        }
+        if j + 1 < n && cpts[j] == '|' && cpts[j + 1] == '>' {
+            cut[i] = true;
+            cut[j + 2] = true;
+            i = j + 2;
+        } else {
+            i += 1;
+        }
+    }
+    // pass 2: runs of repeated characters or spaces, never across a cut of pass 1
+    i = 0;
+    while i < n {
+        let c = cpts[i];
+        var run: i64 = 1;
+        while i + run < n && cpts[i + run] == c && !cut[i + run] { run += 1; }
+        if (c != '\n' && run >= 4) || (c == ' ' && run >= 2) {
+            cut[i] = true;
+            cut[i + run] = true;
+        }
+        i += run;
+    }
+    var seg_start: i64 = 0;
+    for seg_end in n + 1 {
+        let is_boundary = seg_end < n && cpts[seg_end] == 0xEE00;
+        if seg_end == n || cut[seg_end] || is_boundary {
+            if seg_start < seg_end { plamo_encode_cpts(cpts[seg_start..seg_end], out); }
+            seg_start = seg_end + (if is_boundary { 1 } else { 0 });
+        }
+    }
 }
 
 // The text of tokens: appends

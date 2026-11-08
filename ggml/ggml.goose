@@ -69,6 +69,7 @@ extern "ggml_sqr" fn sqr(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_silu" fn silu(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_softplus" fn softplus(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_gelu" fn gelu(ctx: Ctx, a: Tensor) -> Tensor;
+extern "ggml_gelu_erf" fn gelu_erf(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_geglu_split" fn geglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;
 extern "ggml_swiglu" fn swiglu(ctx: Ctx, a: Tensor) -> Tensor;
 extern "ggml_swiglu_split" fn swiglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor;

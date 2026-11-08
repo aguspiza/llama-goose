@@ -14,9 +14,9 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | ggml (C, CPU backend) | built by `goose build`, unchanged | `tests/ggml_smoke` |
 | Unicode, pre-tokenizer splits | ported | `tests/unicode_split` |
 | SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
-| UGM, RWKV and PLaMo2 tokenizers | ported | through `tools/simple` with T5, RWKV and PLaMo 2 models |
-| WPM, PLaMo3 tokenizers | load, do not tokenize yet | |
-| model loading, KV cache, recurrent states, decode; T5's encoder | ported for 56 architectures (see Architectures below) | `tools/simple`, `tools/perplexity` |
+| UGM, RWKV, PLaMo2 and PLaMo3 tokenizers | ported | through `tools/simple` with T5, RWKV and PLaMo 2 and 3 models |
+| WPM tokenizer | loads, does not tokenize yet | |
+| model loading, KV cache, recurrent states, decode; T5's encoder | ported for 65 architectures (see Architectures below) | `tools/simple`, `tools/perplexity` |
 | other architectures | not yet (see below) | |
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
@@ -58,6 +58,7 @@ over 4 GB in Q4.
 | bitnet | bitnet_b1_58-large Q4_K_M | |
 | bloom | bloomz-560m Q8_0 | ALiBi |
 | chatglm | glm-edge-1.5b-chat, glm-edge-4b-chat Q4_K_M | |
+| cohere2 | tiny-aya-global Q4_K_M | sliding windows; attention and feed-forward side by side |
 | ernie4_5 | ERNIE-4.5-0.3B-PT Q4_K_M | |
 | exaone | EXAONE-3.5-2.4B-Instruct Q4_K_M | |
 | exaone4 | EXAONE-4.0-1.2B Q4_K_M | |
@@ -67,21 +68,26 @@ over 4 GB in Q4.
 | gemma3 | gemma-3-270m-it Q8_0 | |
 | gemma3n | gemma-3n-E2B-it Q4_K_M | AltUp, Laurel, per-layer inputs, shared KV |
 | gemma4 | gemma-4-E2B-it Q4_K_M | head sizes per layer kind, shared KV |
+| glm4 | GLM-OCR Q8_0 (text) | M-RoPE; the NextN layer is not run |
 | gpt2 | gpt2 Q8_0 | |
 | gptneox | pythia-410m Q8_0 | |
 | granite | granite-3.1-2b-instruct Q4_K_M | |
 | granitehybrid | granite-4.0-h-350m Q4_K_M | mamba2 and attention |
 | granitemoe | granite-3.1-1b-a400m-instruct Q4_K_M | experts |
+| hrm_text | DFM-Mimir-v1.5 Q4_K_M | a low and a high stack run in cycles, each pass with its own cache |
 | hunyuan-dense | Hunyuan-0.5B-Instruct Q4_K_M | |
 | internlm2 | internlm2_5-1_8b-chat Q4_K_M | |
 | jais | jais-family-590m-chat Q8_0 | ALiBi |
 | jamba | AI21-Jamba-Reasoning-3B Q4_K_M | mamba and attention |
+| k2-horizon | K2-Horizon-1B, K2-Horizon-4B Q4_K_M | RMS norms over groups |
 | lfm2 | LFM2.5-230M Q8_0/Q4_K_M, LFM2.5-1.2B-Thinking Q4_0 | |
 | lfm3 | LFM3-1.7B, LFM3-Omni-2B, LFM3-Audio-2B (text) | |
+| limite | limite-1b-violetto Q4_K_M | value embeddings, exclusive self attention, dense connections across layers |
 | llama | MiniCPM5 2B, Mellum-4b Q4_K_M | |
 | maincoder | Maincoder-1B Q4_K_M | |
 | mamba | mamba-130m F16 | |
 | mamba2 | mamba2-130m Q8_0 | |
+| minicpm | MiniCPM-2B-sft Q4_K_M | granite's graph |
 | minicpm3 | MiniCPM3-4B Q4_K_M | low rank Q and KV |
 | mistral3 | Ministral-3-3B-Instruct-2512 Q4_K_M | YaRN, attention temperature |
 | mpt | replit-code-v1_5-3b Q4_0 | ALiBi |
@@ -91,9 +97,11 @@ over 4 GB in Q4.
 | olmo | OLMo-1B-0724-hf Q4_K_M | |
 | olmo2 | OLMo-2-0425-1B-Instruct Q4_K_M | |
 | openelm | OpenELM-270M-Instruct Q8_0 | |
+| pangu-embedded | openPangu-Embedded-1B-V1.1 Q4_K_M | |
 | phi2 | phi-2 Q4_K_M | |
 | phi3 | Phi-3.5-mini-instruct Q4_K_M | long and short rope factors |
 | plamo2 | plamo-2-1b Q4_K_M | PLaMo2 tokenizer |
+| plamo3 | plamo-3-translate-0.8b Q4_K_M | PLaMo3 tokenizer, sliding windows |
 | qwen | Qwen-1_8B-Chat Q4_K_M | |
 | qwen2 | Qwen2.5-0.5B-Instruct Q4_K_M | |
 | qwen2vl | Qwen2-VL-2B-Instruct Q4_K_M (text) | M-RoPE |
@@ -105,6 +113,7 @@ over 4 GB in Q4.
 | rwkv7 | rwkv7-g1h-1.5b Q4_K_M | |
 | smallthinker | SmallThinker-4B-A0.6B-Instruct Q4_0 | experts |
 | smollm3 | SmolLM3-3B Q4_K_M | |
+| spark2_5 | Spark-X2.5-1.7B Q4_K_M | a gate per head, rope sizes per layer kind |
 | stablelm | stablelm-2-zephyr-1_6b Q4_K_M | |
 | starcoder | tiny_starcoder_py Q8_0 | |
 | starcoder2 | starcoder2-3b Q4_K_M | |
@@ -113,19 +122,28 @@ over 4 GB in Q4.
 Not ported yet:
 
 - The ones without a model of 4 GB or less in Q4: lfm2moe (LFM2.5-8B-A1B is
-  5.2 GB), olmoe (4.2 GB), cohere2 (command-r7b, 4.8 GB), bailingmoe and the
-  large mixtures of experts and dense models (deepseek2 and later, qwen2moe,
-  qwen3moe, qwen35moe, qwen3next, openai-moe, glm4/glm4-moe, llama4,
-  command-r, dbrx, grok, arctic, minimax, kimi, step35, seed-oss, ...). Their
-  graphs reuse much of what is ported (experts, MLA-like attention, YaRN).
+  5.2 GB), olmoe (4.2 GB), beam/bailingmoe3 (Moon-Beam-8B-A1B, 4.9 GB),
+  apertus, jais2, maple, mellum, the 7B and larger dense models (baichuan,
+  xverse, orion, codeshell, deci, falcon, plamo, chameleon, ...) and the
+  large mixtures of experts (deepseek2 and later, qwen2moe, qwen3moe,
+  qwen35moe, qwen3next, openai-moe, glm4-moe, llama4, command-r, dbrx, grok,
+  arctic, minimax, kimi, step35, seed-oss, flint, laguna, kolibri1, ...).
+  Their graphs reuse much of what is ported (experts, MLA-like attention,
+  YaRN).
+- granite_swa: the only small GGUF (granite-swash-3b-a600m) does not load in
+  llama.cpp (its shared expert is not fused). graniteswitch: only a BF16
+  preview, and its adapter router is not ported. qwen4exp: only a
+  random-weight test file, on which llama.cpp asserts. gptj: llama.cpp has
+  the name but no graph.
 - plm: llama.cpp itself fails on PLM-1.8B (`GGML_ASSERT(a->ne[0] == b->ne[0])`
   when it writes the 2D value tensor to the cache), so there is nothing to
   check against.
 - Embedding and encoder-only models (bert family, t5encoder, the embedding
   gemmas), diffusion models (dream, llada) and audio decoders: they need
   `llama-embedding` or their own programs, not `llama-simple`.
-- The experts of gemma4 and nemotron_h, and the MTP layers some models
-  carry; they abort with "not ported yet".
+- The experts of gemma4 and nemotron_h, k2-horizon's experts, value experts,
+  Q/K norms and output gate, limite with four taps, and the MTP layers some
+  models carry; they abort with "not ported yet".
 
 `tools/completion` gives the same text as `llama-completion` with these
 architectures too (checked with qwen3, gemma2, granitehybrid and phi3, text
