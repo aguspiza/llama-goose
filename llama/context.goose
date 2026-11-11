@@ -1,6 +1,8 @@
 // A context: a model's KV cache, and the decoding of batches of tokens
-// through the model's graph. One sequence; flash attention, as llama.cpp
-// picks on the CPU. The graph of each architecture follows llama.cpp's
+// through the model's graph; flash attention, as llama.cpp picks on the
+// CPU. The cache holds several sequences when the model has attention only
+// (not recurrent layers, not T5's decoder), one cache unified for all of
+// them. The graph of each architecture follows llama.cpp's
 // src/models/<arch>.cpp operation by operation.
 // port-of: src/llama-context.cpp src/llama-graph.cpp src/llama-kv-cache.cpp src/models/gemma3.cpp src/models/llama.cpp
 // port-of: src/models/lfm2.cpp src/models/lfm-base.cpp src/llama-memory-recurrent.cpp src/models/lfm3.cpp
@@ -33,7 +35,8 @@ struct Context {
     v: ggml::Tensor[..512],
     r: ggml::Tensor[..512],      // per recurrent layer: its convolution's state, [n_embd_r, 1], f32
     s: ggml::Tensor[..512],      // and a gated delta net's, [n_embd_s, 1], f32
-    n_past: i64,                 // the cells in use: cell i holds position i
+    n_past: i64,                 // sequence 0's next position: its last + 1
+    unified: bool = false,       // several sequences: each attends to its own cells' rows (kv_unified, fused_kv_rows)
     n_enc: i64,
     galloc: ggml::Gallocr,
     embd_enc: f32[>..],          // t5: the encoder's output, [n_embd, n_enc]
@@ -76,7 +79,20 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     ggml::backend_buffer_clear(c.kv_buf, 0);
     c.galloc = ggml::gallocr_new(m.backend);
     c.n_past = 0;
+    cell_pos.clear();
+    cell_pos.resize(c.n_ctx, -1);
+    cell_seqs.clear();
+    cell_seqs.resize(c.n_ctx, 0);
+    head = 0;
+    n_used = 0;
 }
+
+// The cache's cells (llama_kv_cells), for the one context of a program: the
+// position each holds, -1 when empty, and its sequences, a bit each.
+var cell_pos: i64[>..] = [];
+var cell_seqs: u64[>..] = [];
+var head = 0;                    // where the search for free cells starts
+var n_used = 0;                  // the cells not empty
 
 // The inputs of one graph, set after it is allocated.
 struct Inputs {
@@ -91,6 +107,8 @@ struct Inputs {
     pos_bucket: ggml::Tensor,    // t5: [n_kv, n_tokens], the relative position buckets
     cross_embd: ggml::Tensor,    // t5: the encoder's output
     cross_mask: ggml::Tensor,    // t5: [n_enc, n_tokens]
+    rows: ggml::Tensor,          // unified: [n_kv_rows, n_slices], the cells each slice of tokens attends to
+    rows_swa: ggml::Tensor,
 }
 
 // Per graph: what the graph builders read.
@@ -336,13 +354,20 @@ fn build_kqv(b: Build&, m: model::Model&, c: Context&, il: i64,
                           ggml::row_size(tv, hv), ggml::row_size(tv, n_embd_v),
                           ggml::row_size(tv, n_embd_v * c.n_ctx), 0);
 
-    let qp = ggml::permute(ctx, q, 0, 2, 1, 3);
+    let rows = if hp.is_swa[il] { b.inp.rows_swa } else { b.inp.rows };
+    // with rows, the tokens split into slices, each attending to its own cells
+    let n_slices = if rows.p != 0 { ggml::ne(rows, 1) } else { 1 };
+    let n_tps = ggml::ne(q, 2) / n_slices;
+    let qs = ggml::view_4d(ctx, q, ggml::ne(q, 0), ggml::ne(q, 1), n_tps, n_slices,
+                           ggml::nb(q, 1), ggml::nb(q, 2), ggml::nb(q, 2) * n_tps, 0);
+    let qp = ggml::permute(ctx, qs, 0, 2, 1, 3);
     let kp = ggml::permute(ctx, k, 0, 2, 1, 3);
     let vp = ggml::permute(ctx, v, 0, 2, 1, 3);
     let mask = if hp.is_swa[il] { b.inp.mask_swa } else { b.inp.mask };
     if kq_b.p != 0 { return build_attn_mha_no_fa(b, m, qp, kp, vp, kq_b, mask, kq_scale); }
     let softcap: f32 = if hp.attn_soft_cap { hp.f_attn_logit_softcapping } else { 0.0 };
-    var cur = ggml::flash_attn_ext(ctx, qp, kp, vp, mask, kq_scale, hp.f_max_alibi_bias, softcap);
+    var cur = if rows.p != 0 { ggml::flash_attn_ext_rows(ctx, qp, kp, vp, mask, rows, kq_scale, hp.f_max_alibi_bias, softcap) }
+              else { ggml::flash_attn_ext(ctx, qp, kp, vp, mask, kq_scale, hp.f_max_alibi_bias, softcap) };
     ggml::prec_set_acc(cur, ggml::PREC_F32);
     cur = ggml::reshape_2d(ctx, cur, ggml::ne(cur, 0) * ggml::ne(cur, 1), ggml::ne(cur, 2) * ggml::ne(cur, 3));
     if il == 0 { trace(b, "kqv_out-0", cur); if v_cur.p != 0 { trace(b, "Vcur-0", v_cur); } }
@@ -547,6 +572,8 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
             pos_bucket: ggml::new_tensor_2d(gctx, ggml::TYPE_I32, n_tokens, n_tokens),
             cross_embd: ggml::NONE,
             cross_mask: ggml::NONE,
+            rows: ggml::NONE,
+            rows_swa: ggml::NONE,
         },
         tracing: false,
         traced: [],
@@ -2979,16 +3006,56 @@ fn build_lfm3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
 
 let NEG_INF: f32 = -1.0 / 0.0;
 
-// mask[t][j] for token t (at position pos0 + t) and cell j: 0, or -inf when
-// the cell is in the token's future, unused, or (swa) out of its window.
-// With ALiBi the kept cells hold minus their distance to the token.
-fn fill_mask(mask: f32[>..]&, n_kv: i64, n_tokens: i64, pos0: i64, n_used: i64, swa: u32, alibi: bool = false) {
+// The lowest sequence of a token's bits: its seq_id[0].
+fn first_seq(bits: u64) -> u64 {
+    var s: u64 = 0;
+    while (bits >> s) & 1 == 0 { s++; }
+    return s;
+}
+
+fn n_bits(bits: u64) -> i64 {
+    var n = 0;
+    var x = bits;
+    while x != 0 { x &= x - 1; n++; }
+    return n;
+}
+
+// One past the last cell in use (used_max_p1).
+fn used_max_p1() -> i64 {
+    var i = cell_pos.len;
+    while i > 0 && cell_pos[i - 1] < 0 { i--; }
+    return i;
+}
+
+// The last position of sequence s in the cache, or -1 (llama_memory_seq_pos_max).
+fn seq_pos_max(s: i64) -> i64 {
+    let bit: u64 = 1 << s;
+    var p = -1;
+    for q, i in cell_pos { if cell_seqs[i] & bit != 0 && q > p { p = q; } }
+    return p;
+}
+
+// mask[t][col] for token t, at pos[t] of the first of its sequences, and the
+// cell of column col (rows[slice][col] with rows, else col itself): 0, or
+// -inf when the cell is empty, of another sequence, in the token's future,
+// or (swa) out of its window. With ALiBi the kept cells hold minus their
+// distance to the token (set_input_attn_mask).
+fn fill_mask(mask: f32[>..]&, n_cols: i64, pos: const i64[:], seqs: const u64[:], rows: const i32[:],
+             n_slices: i64, swa: u32, alibi: bool = false) {
     mask.clear();
-    for t in n_tokens {
-        let p1 = pos0 + t;
-        for j in n_kv {
-            let masked = j >= n_used || j > p1 || (swa > 0 && p1 - j >= swa);
-            mask.push(if masked { NEG_INF } else if alibi { -abs(p1 - j) as f32 } else { 0.0 });
+    let n_tps = pos.len / n_slices;
+    for t in pos.len {
+        let p1 = pos[t];
+        let bit: u64 = 1 << first_seq(seqs[t]);
+        let base = (t / n_tps) * n_cols;
+        for col in n_cols {
+            let j: i64 = if rows.len > 0 { rows[base + col] } else { col };
+            var keep = j >= 0 && cell_pos[j] >= 0 && cell_seqs[j] & bit != 0;
+            if keep {
+                let p0 = cell_pos[j];
+                keep = p0 <= p1 && !(swa > 0 && p1 - p0 >= swa);
+            }
+            mask.push(if !keep { NEG_INF } else if alibi { -abs(p1 - cell_pos[j]) as f32 } else { 0.0 });
         }
     }
 }
@@ -3004,26 +3071,197 @@ fn any_recurrent(m: model::Model&) -> bool {
 fn clear(c: Context&) {
     ggml::backend_buffer_clear(c.kv_buf, 0);
     c.n_past = 0;
+    for i in cell_pos.len { cell_pos[i] = -1; cell_seqs[i] = 0; }
+    head = 0;
+    n_used = 0;
 }
 
-// Keeps the first n cells, forgets the rest: llama_memory_seq_rm(mem, 0, n,
-// -1). A recurrent state cannot go back, so it is cleared unless n keeps
-// all of it; the cells kept: n or 0.
-fn keep_first(c: Context&, m: model::Model&, n: i64) -> i64 {
-    if n >= c.n_past { return c.n_past; }
+// Forgets the positions p0..p1 (p1 < 0: all from p0) of sequence s:
+// llama_memory_seq_rm. A cell no sequence holds any more is free, and the
+// search for free cells starts at the first such cell if it is before the head.
+fn seq_rm(c: Context&, s: i64, p0: i64, p1: i64) {
+    let bit: u64 = 1 << s;
+    let lo = max(p0, 0);
+    var new_head = -1;
+    for q, i in cell_pos {
+        guard q >= lo && (p1 < 0 || q < p1) && cell_seqs[i] & bit != 0 else { continue; }
+        cell_seqs[i] &= ~bit;
+        if cell_seqs[i] == 0 {
+            cell_pos[i] = -1;
+            n_used--;
+            if new_head < 0 { new_head = i; }
+        }
+    }
+    if new_head >= 0 && new_head < head { head = new_head; }
+    if s == 0 { c.n_past = seq_pos_max(0) + 1; }
+}
+
+// Puts the positions p0..p1 (p1 < 0: all from p0) of sequence src in
+// sequence dst too, in the same cells: llama_memory_seq_cp.
+fn seq_cp(c: Context&, src: i64, dst: i64, p0: i64, p1: i64) {
+    let from: u64 = 1 << src;
+    let to: u64 = 1 << dst;
+    let lo = max(p0, 0);
+    for q, i in cell_pos {
+        if q >= lo && (p1 < 0 || q < p1) && cell_seqs[i] & from != 0 { cell_seqs[i] |= to; }
+    }
+    if dst == 0 { c.n_past = seq_pos_max(0) + 1; }
+}
+
+// Keeps the first n positions of sequence s, forgets the rest:
+// llama_memory_seq_rm(mem, s, n, -1). A recurrent state cannot go back, so
+// it is cleared unless n keeps all of it; the positions kept: n or 0.
+fn keep_first(c: Context&, m: model::Model&, s: i64, n: i64) -> i64 {
+    let have = seq_pos_max(s) + 1;
+    if n >= have { return have; }
     if any_recurrent(m) { clear(c); return 0; }
-    c.n_past = n;
+    seq_rm(c, s, n, -1);
     return n;
 }
 
-// Runs tokens, at positions n_past.., through the model; writes the logits
-// of the last one to logits. With `outputs` (indices into tokens, in
-// order), the logits of those tokens instead, one row of n_vocab after another.
+// The cells no sequence holds: a batch of more tokens does not fit.
+fn n_free() -> i64 { cell_pos.len - n_used }
+
+// The cells for n tokens (find_slot, not contiguous): free cells from the
+// head on, or from the start when enough cells before the head are free.
+fn find_slot(n: i64, idxs: i64[>..]&) {
+    let size = cell_pos.len;
+    guard n <= size else { abort("decode: the context is full"); }
+    idxs.clear();
+    var head_cur = if head > n_used + 2 * n { 0 } else { head };
+    var n_tested = 0;
+    loop {
+        if head_cur + 1 > size {
+            n_tested += size - head_cur;
+            head_cur = 0;
+            continue;
+        }
+        let idx = head_cur;
+        head_cur++;
+        n_tested++;
+        if cell_pos[idx] < 0 { idxs.push(idx); }
+        if idxs.len == n { break; }
+        guard n_tested < size else { abort("decode: the context is full"); }
+    }
+}
+
+// The slices of a ubatch (get_n_kv_slices): one per sequence when the
+// tokens are runs of equal length with one sequence each, else one.
+fn n_slices_of(seqs: const u64[:]) -> i64 {
+    var all: u64 = 0;
+    for s in seqs { all |= s; }
+    let n_unq = n_bits(all);
+    if n_unq == 1 { return 1; }
+    if seqs.len % n_unq == 0 {
+        let n_tps = seqs.len / n_unq;
+        var runs = true;
+        for s, i in seqs {
+            if n_bits(s) != 1 || s != seqs[i - i % n_tps] { runs = false; break; }
+        }
+        if runs { return n_unq; }
+    }
+    return 1;
+}
+
+// The cells each slice attends to (get_kv_rows_slices, get_n_kv_rows,
+// get_seq_cells): in cell order, those of the slice's sequences, and (swa)
+// at a position from the slice's first one's window on; padded with -1 to
+// the longest list, padded to 256.
+fn kv_rows(pos: const i64[:], seqs: const u64[:], n_slices: i64, swa: u32, rows: i32[>..]&) -> i64 {
+    let n_tps = pos.len / n_slices;
+    let used = used_max_p1();
+    var masks: u64[>..] = [];
+    var p_mins: i64[>..] = [];
+    for s in n_slices {
+        var bits: u64 = 0;
+        if n_slices == 1 { for x in seqs { bits |= x; } } else { bits = seqs[s * n_tps]; }
+        masks.push(bits);
+        var p_min = -1;
+        if swa > 0 {
+            var p = pos[s * n_tps];
+            for i in 1..n_tps { p = min(p, pos[s * n_tps + i]); }
+            p_min = p - swa + 1;
+        }
+        p_mins.push(p_min);
+    }
+    // the longest list: a cell of several of the slice's sequences counted once for each
+    var n_max = 0;
+    for s in n_slices {
+        var n = 0;
+        for q, i in cell_pos {
+            if q >= 0 && q >= p_mins[s] { n += n_bits(cell_seqs[i] & masks[s]); }
+        }
+        n_max = max(n_max, min(n, used));
+    }
+    let n_rows = min(pad_to(n_max, 256), cell_pos.len);
+    rows.clear();
+    for s in n_slices {
+        let start = rows.len;
+        for i in used {
+            if cell_pos[i] >= 0 && cell_seqs[i] & masks[s] != 0 && cell_pos[i] >= p_mins[s] { rows.push(i as i32); }
+        }
+        guard rows.len - start <= n_rows else { abort("decode: kv rows overflow"); }
+        while rows.len - start < n_rows { rows.push(-1); }
+    }
+    return n_rows;
+}
+
+// Runs tokens, at positions n_past.., through the model as sequence 0;
+// writes the logits of the last one to logits. With `outputs` (indices into
+// tokens, in order), the logits of those tokens instead, one row of n_vocab
+// after another.
 fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&, outputs: const i32[:] = []) {
+    var pos: i64[>..] = [];
+    var seqs: u64[>..] = [];
+    for t in tokens.len { pos.push(c.n_past + t); seqs.push(1); }
+    decode_seqs(c, m, tokens, pos, seqs, logits, outputs, tokens.len);
+}
+
+// Runs a batch of tokens of several sequences through the model
+// (llama_decode): token i at position pos[i], in the sequences whose bits
+// seqs[i] holds, in ubatches of at most n_ubatch tokens. Writes the logits
+// of the tokens `outputs` names (indices into tokens, in order), one row of
+// n_vocab after another; with no outputs, those of the last token.
+fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i64[:], seqs: const u64[:],
+               logits: f32[>..]&, outputs: const i32[:] = [], n_ubatch: i64 = 512) {
+    guard tokens.len > 0 else { abort("decode: no tokens"); }
+    if any_recurrent(m) || m.hp.arch == model::ARCH_T5 {
+        for s in seqs { guard s == 1 else { abort("decode: this model's cache holds one sequence"); } }
+    }
+    logits.clear();
+    var row: f32[>..] = [];
+    var outs: i32[>..] = [];
+    var start = 0;
+    var k0 = 0;
+    while start < tokens.len {
+        let end = min(start + n_ubatch, tokens.len);
+        outs.clear();
+        while k0 < outputs.len && outputs[k0] < end { outs.push(outputs[k0] - start as i32); k0++; }
+        // a ubatch whose logits are not asked for: those of its last token, dropped
+        let wanted = outs.len > 0 || (outputs.len == 0 && end == tokens.len);
+        if outs.len == 0 { outs.push((end - start - 1) as i32); }
+        decode_ubatch(c, m, tokens[start..end], pos[start..end], seqs[start..end], outs, row);
+        if wanted { logits.append(row); }
+        start = end;
+    }
+    c.n_past = seq_pos_max(0) + 1;
+}
+
+// One ubatch: its tokens placed in free cells, then run.
+fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i64[:], seqs: const u64[:],
+                 outputs: const i32[:], logits: f32[>..]&) {
     let n_tokens = tokens.len;
-    let n_outputs = if outputs.len > 0 { outputs.len } else { 1 };
-    guard n_tokens > 0 && c.n_past + n_tokens <= c.n_ctx else { abort("decode: the context is full"); }
-    let pos0 = c.n_past;
+    let n_outputs = outputs.len;
+
+    // the cells (find_slot, apply_ubatch)
+    var idxs: i64[>..] = [];
+    find_slot(n_tokens, idxs);
+    for idx, i in idxs {
+        cell_pos[idx] = pos[i];
+        cell_seqs[idx] = seqs[i];
+        n_used++;
+    }
+    head = idxs[idxs.len - 1] + 1;
 
     let gctx = ggml::init(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false), true);
     var b = Build {
@@ -3031,7 +3269,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         gf: ggml::new_graph_custom(gctx, MAX_NODES, false),
         n_tokens: n_tokens,
         // llama.cpp's get_n_kv: the cells in use, padded to 256
-        n_kv: min(c.n_ctx, max(256, pad_to(c.n_past + n_tokens, 256))),
+        n_kv: min(c.n_ctx, max(256, pad_to(used_max_p1(), 256))),
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             pos: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens * n_pos_per_embd(m)),
@@ -3044,6 +3282,8 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
             pos_bucket: ggml::NONE,
             cross_embd: ggml::NONE,
             cross_mask: ggml::NONE,
+            rows: ggml::NONE,
+            rows_swa: ggml::NONE,
         },
         tracing: false,
         traced: [],
@@ -3053,8 +3293,29 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         b.tracing = env("LLAMA_GOOSE_TRACE", flag) && flag == "1";
     }
     let has_swa = m.hp.swa_type != model::SWA_NONE;
-    b.inp.mask = ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens);
-    b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens) } else { b.inp.mask };
+    // unified: each slice of tokens attends to the rows of its sequences' cells
+    let use_rows = c.unified && m.hp.arch != model::ARCH_T5;
+    let n_slices = if use_rows { n_slices_of(seqs) } else { 1 };
+    var rows: i32[>..] = [];
+    var rows_swa: i32[>..] = [];
+    if use_rows {
+        let n_rows = kv_rows(pos, seqs, n_slices, 0, rows);
+        b.inp.rows = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, n_rows, n_slices);
+        b.inp.mask = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, n_rows, n_tokens / n_slices, 1, n_slices);
+        ggml::set_input(b.inp.rows);
+        if has_swa {
+            let n_rows_swa = kv_rows(pos, seqs, n_slices, m.hp.n_swa, rows_swa);
+            b.inp.rows_swa = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, n_rows_swa, n_slices);
+            b.inp.mask_swa = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, n_rows_swa, n_tokens / n_slices, 1, n_slices);
+            ggml::set_input(b.inp.rows_swa);
+        } else {
+            b.inp.rows_swa = b.inp.rows;
+            b.inp.mask_swa = b.inp.mask;
+        }
+    } else {
+        b.inp.mask = ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens);
+        b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens) } else { b.inp.mask };
+    }
     ggml::set_input(b.inp.tokens);
     ggml::set_input(b.inp.pos);
     ggml::set_input(b.inp.out_ids);
@@ -3128,17 +3389,14 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     ggml::build_forward_expand(b.gf, out);
     guard ggml::gallocr_alloc_graph(c.galloc, b.gf) else { abort("decode: failed to allocate the graph"); }
 
-    var pos: i32[>..] = [];
-    var idxs: i64[>..] = [];
-    for t in n_tokens { idxs.push(pos0 + t); }
+    var pos32: i32[>..] = [];
     // M-RoPE: a token's position p is [p, p, p, 0], section after section
     for j in n_pos_per_embd(m) {
-        for t in n_tokens { pos.push(if j < 3 { (pos0 + t) as i32 } else { 0 }); }
+        for t in n_tokens { pos32.push(if j < 3 { pos[t] as i32 } else { 0 }); }
     }
     ggml::backend_set_i32(b.inp.tokens, tokens);
-    if ggml::allocated(b.inp.pos) { ggml::backend_set_i32(b.inp.pos, pos); }   // bloom reads no positions
-    if outputs.len > 0 { ggml::backend_set_i32(b.inp.out_ids, outputs); }
-    else { ggml::backend_set_i32(b.inp.out_ids, [(n_tokens - 1) as i32]); }
+    if ggml::allocated(b.inp.pos) { ggml::backend_set_i32(b.inp.pos, pos32); }   // bloom reads no positions
+    ggml::backend_set_i32(b.inp.out_ids, outputs);
     if ggml::allocated(b.inp.kv_idxs) { ggml::backend_set_i64(b.inp.kv_idxs, idxs); }   // no attention: no cache cells
     if any_recurrent(m) { ggml::backend_set_i32(b.inp.s_copy, [0]); }
     if b.inp.pos_bucket.p != 0 {
@@ -3146,8 +3404,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         var buckets: i32[>..] = [];
         for t in n_tokens {
             for j in b.n_kv {
-                let p0: i64 = if j < pos0 + n_tokens { j } else { -1 };
-                buckets.push(relative_position_bucket(p0, pos0 + t, m.hp.n_rel_attn_bkts, false));
+                buckets.push(relative_position_bucket(cell_pos[j], pos[t], m.hp.n_rel_attn_bkts, false));
             }
         }
         ggml::backend_set_i32(b.inp.pos_bucket, buckets);
@@ -3160,18 +3417,30 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
         // llm_graph_input_attn_temp: log(floor(pos / floor_scale) + 1) * scale + 1
         var scales: f32[>..] = [];
         for t in n_tokens {
-            let p: f32 = pos0 + t;
+            let p: f32 = pos[t];
             let fl: f32 = floor(p / m.hp.n_attn_temp_floor_scale);
             scales.push((log(fl as f64 + 1.0) * m.hp.f_attn_temp_scale + 1.0) as f32);
         }
         ggml::backend_set_f32(b.inp.attn_scale, scales);
     }
     var mask: f32[>..] = [];
-    fill_mask(mask, b.n_kv, n_tokens, pos0, pos0 + n_tokens, 0, m.hp.f_max_alibi_bias > 0.0);
-    if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
-    if has_swa {
-        fill_mask(mask, b.n_kv, n_tokens, pos0, pos0 + n_tokens, m.hp.n_swa);
-        ggml::backend_set_f16(b.inp.mask_swa, mask);
+    let alibi = m.hp.f_max_alibi_bias > 0.0;
+    if use_rows {
+        ggml::backend_set_i32(b.inp.rows, rows);
+        fill_mask(mask, ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, 0, alibi);
+        if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
+        if has_swa {
+            ggml::backend_set_i32(b.inp.rows_swa, rows_swa);
+            fill_mask(mask, ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices, m.hp.n_swa);
+            ggml::backend_set_f16(b.inp.mask_swa, mask);
+        }
+    } else {
+        fill_mask(mask, b.n_kv, pos, seqs, [], 1, 0, alibi);
+        if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
+        if has_swa {
+            fill_mask(mask, b.n_kv, pos, seqs, [], 1, m.hp.n_swa);
+            ggml::backend_set_f16(b.inp.mask_swa, mask);
+        }
     }
 
     ggml::backend_cpu_set_n_threads(m.backend, c.n_threads);
@@ -3182,5 +3451,4 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     logits.resize(ggml::nelements(out), 0.0);
     ggml::backend_get_f32(out, logits, 0);
     ggml::free(gctx);
-    c.n_past += n_tokens;
 }

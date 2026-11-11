@@ -2,10 +2,14 @@
 // APIs for one model. HTTP is goose-http's, through Plod: its worker
 // threads take the connections and answer /health and CORS preflights; the
 // main thread loads the model and serves the other requests, which the
-// workers send it as Plod jobs. One slot: they are served one at a time, and the KV cache keeps
-// the last prompt so the next one reuses what they share. A client that
-// goes away stops its generation.
-//   server -m model.gguf [--host 127.0.0.1] [--port 8080] [-c n_ctx] [-b n_batch] [-t threads]
+// workers send it as Plod jobs. Those that generate each take a slot, 4 by
+// default: the main thread runs the slots at work together, their tokens in
+// one batch after another, in one KV cache they share, and keeps each
+// request's state while it works on another's. The cache keeps each slot's
+// last prompt, so that a request that starts as one of them reuses it. A
+// client that goes away stops its generation. A model whose cache holds one
+// sequence (a recurrent one, T5) has one slot.
+//   server -m model.gguf [--host 127.0.0.1] [--port 8080] [-c n_ctx] [-b n_batch] [-t threads] [-np slots]
 //          [-n n_predict] [-a alias] [--api-key key] [--jinja | --no-jinja]
 //          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
 //          [-s seed] [--temp t] [--top-k k] [--top-p p] [--min-p p] [...the sampling flags of completion]
@@ -16,6 +20,7 @@
 import std;
 import os;
 import exception;
+import slice_pool;
 import ggml from "../ggml";
 import ggml_cpu from "../ggml/cpu";
 import ggml_shim from "../ggml/shim";
@@ -28,6 +33,7 @@ import llama.sampler;
 import llama.grammar;
 import common from "../common";
 import common.jinja;
+import common.peg;
 import common.console;
 import common.jdoc;
 import common.json_schema;
@@ -35,6 +41,7 @@ import common.chat_render;
 import common.chat_peg;
 import common.chat_apply;
 import net from "./net";
+import stash from "./stash";
 import http from "github.com/kaitk/goose-http@v0.5.16";
 import http.shared;
 import plod from "github.com/kaitk/plod@067b57c804435ea9479d58ba55e3cc103788a151";
@@ -99,8 +106,24 @@ var ftype_name: u8[>..] = [];
 var n_params = 0;
 var model_size = 0;
 
-// The tokens in the KV cache, cell by cell (the slot's prompt).
-var cached: i32[>..] = [];
+// A slot: one of the requests served together, and the tokens it leaves in
+// the KV cache, as the sequence of the slot's number, for the next request
+// that starts as they do.
+struct Slot {
+    busy: bool = false,             // serving a request
+    generating: bool = false,       // its prompt is in the cache: it samples
+    n: i64 = 0,                     // its tokens, in slot_tokens: the prompt, then those generated
+    n_kv: i64 = 0,                  // how many of them the cache has
+    used_at: i64 = -1,              // when its last request ended
+    out: i64 = -1,                  // in a step: the batch's token whose logits it samples from
+    reply: http::MailAddress = http::MailAddress { .. },    // its client, to see whether it is still there
+    state_at: i64 = 0,              // its request's state in states, while another's is in the globals
+    state_len: i64 = 0,
+}
+var slots: Slot[>..] = [];
+var slot_tokens: i32[>..] = [];     // room for c.n_ctx tokens for each slot
+
+fn tokens_of(s: i64) -> const i32[:] { slot_tokens[s * c.n_ctx..s * c.n_ctx + slots[s].n] }
 
 //
 // errors: what a request fails with, thrown to the route's handler
@@ -1063,7 +1086,7 @@ var n_gen = 0;
 var n_prompt = 0;
 var stats = Stats { cache_n: 0, prompt_n: 0, prompt_ms: 0.0, predicted_n: 0, predicted_ms: 0.0 };
 var prompt_text: u8[>..] = [];      // the prompt's tokens as text, for the response
-var streaming = false;              // the events' head is sent
+var streaming = false;              // the response is events, and has begun
 
 fn now_ms() -> f64 { clock_ns() / 1000000.0 }
 
@@ -1324,6 +1347,10 @@ fn chunk_tail(o: u8[>..]&, object: const u8[:]) {
 
 // One event: "data: <text>\n\n".
 fn send(data: const u8[:]) {
+    if !streaming {
+        reply_head(200, "text/event-stream", -1);
+        streaming = true;
+    }
     var o: u8[>..] = [];
     format(o, "data: ", data, "\n\n");
     if !reply_part(o, false) { client_gone = true; }
@@ -1437,7 +1464,7 @@ fn process_token(tok: i32, piece0: const u8[:]) -> bool {
         if t_stream { send_partial(tok, text_to_send); }
         if find(text_to_send, "\n") >= 0 { has_new_line_now = true; }
     }
-    if cached.len + 1 >= c.n_ctx {
+    if slots[loaded].n + 1 >= c.n_ctx {
         truncated = true;
         stop_type = STOP_LIMIT;
         has_next = false;
@@ -1477,9 +1504,192 @@ fn process_token(tok: i32, piece0: const u8[:]) -> bool {
 var has_new_line_now = false;
 var last_nl_pos = 0;
 
-// The tokens of the prompt run (with the cache's common prefix reused),
-// then tokens generated until a stop; the results sent as they come.
-fn generate(prompt: const i32[:]) {
+//
+// the slots: each request's state, kept while the globals hold another's
+//
+
+// What a slot's request keeps from one token to the next, here and in the
+// modules its generation uses: all of it, in one list.
+fn slot_state(st: stash::Stash&) {
+    // the task
+    stash::keep_value(st, t_res_type);
+    stash::keep_value(st, t_stream);
+    stash::keep_value(st, t_include_usage);
+    stash::keep_value(st, t_timings_per_token);
+    stash::keep_value(st, t_return_tokens);
+    stash::keep_value(st, t_cache_prompt);
+    stash::keep_value(st, t_n_predict);
+    stash::keep_value(st, t_n_keep);
+    stash::keep_value(st, t_n_indent);
+    stash::keep_value(st, t_max_predict_ms);
+    stash::keep_value(st, t_sp);
+    stash::keep_value(st, t_ignore_eos);
+    stash::keep(st, t_stops);
+    stash::keep(st, t_logit_bias);
+    stash::keep(st, t_grammar);
+    stash::keep_value(st, t_grammar_lazy);
+    stash::keep_value(st, t_grammar_user);
+    stash::keep(st, t_trig_types);
+    stash::keep(st, t_trig_values);
+    stash::keep(st, t_trig_tokens);
+    stash::keep(st, t_preserved);
+    stash::keep_value(st, t_chat);
+    stash::keep_value(st, t_chat_format);
+    stash::keep_value(st, t_reasoning_format);
+    stash::keep(st, t_gen_prompt);
+    stash::keep(st, t_cmpl_id);
+    // the generation
+    stash::keep(st, generated);
+    stash::keep(st, gen_tokens);
+    stash::keep(st, fed);
+    stash::keep_value(st, n_sent);
+    stash::keep_value(st, stop_type);
+    stash::keep(st, stopping_word);
+    stash::keep_value(st, has_new_line);
+    stash::keep_value(st, has_new_line_now);
+    stash::keep_value(st, last_nl_pos);
+    stash::keep_value(st, truncated);
+    stash::keep_value(st, n_gen);
+    stash::keep_value(st, n_prompt);
+    stash::keep_value(st, stats);
+    stash::keep(st, prompt_text);
+    stash::keep_value(st, t_prompt_start);
+    stash::keep_value(st, t_gen_start);
+    stash::keep_value(st, t_last);
+    // the chat message so far
+    stash::keep(st, prev_content);
+    stash::keep(st, prev_reasoning);
+    stash::keep(st, prev_calls);
+    stash::keep(st, call_ids);
+    stash::keep_value(st, n_prev_calls);
+    // the response
+    stash::keep_value(st, streaming);
+    stash::keep_value(st, client_gone);
+    stash::keep_value(st, reply_to);
+    stash::keep_value(st, reply_piece);
+    stash::keep_value(st, reply_job);
+    stash::keep(st, head_msg);
+    stash::keep_value(st, begun);
+    // the sampler, and its grammar
+    stash::keep_value(st, ch);
+    stash::keep(st, sampler::dry_heads);
+    stash::keep(st, sampler::dry_tails);
+    stash::keep(st, grammar::elems);
+    stash::keep(st, grammar::rule_at);
+    stash::keep_value(st, grammar::partial);
+    stash::keep(st, grammar::sdata);
+    stash::keep(st, grammar::sets);
+    stash::keep_value(st, grammar::cur_n);
+    stash::keep_value(st, grammar::awaiting);
+    stash::keep(st, grammar::tbuf);
+    stash::keep(st, grammar::tpos);
+    stash::keep(st, grammar::ttokens);
+    stash::keep(st, grammar::twords);
+    stash::keep(st, grammar::tword_at);
+    // the chat format's parser
+    stash::keep(st, peg::pt);
+    stash::keep(st, peg::ps);
+    stash::keep(st, peg::kids);
+    stash::keep(st, peg::delims);
+    stash::keep(st, peg::ranges);
+    stash::keep(st, peg::rules);
+    stash::keep(st, peg::arenas);
+    stash::keep_value(st, peg::cur);
+    stash::keep_value(st, chat_render::format);
+    stash::keep(st, chat_render::gen_prompt);
+    stash::keep_value(st, chat_render::parser);
+    stash::keep_value(st, chat_apply::content_only);
+}
+
+// The slot whose request's state the globals hold, or -1; the other slots
+// at work have theirs in states.
+var loaded = -1;
+var states = slice_pool<u8> {};
+
+fn state_of(s: i64) -> u8[:] { states.items[slots[s].state_at..slots[s].state_at + slots[s].state_len] }
+
+// Puts the globals' state away, for a request of another slot or of none.
+fn unload() {
+    guard loaded >= 0 else { return; }
+    var st = stash::Stash { .. };
+    slot_state(st);
+    let run = states.alloc_copy(st.bytes);
+    slots[loaded].state_at = states.items.range_index(run);
+    slots[loaded].state_len = run.len;
+    loaded = -1;
+}
+
+// Brings the state of slot s, which is at work, back to the globals.
+fn load(s: i64) {
+    guard loaded != s else { return; }
+    unload();
+    var st = stash::Stash { loading: true, .. };
+    st.bytes.append(state_of(s));
+    states.free_slice(state_of(s));
+    slot_state(st);
+    loaded = s;
+}
+
+// The slot's request is over (release): the slot is free for another.
+fn release(s: i64) {
+    if loaded == s { loaded = -1; } else { states.free_slice(state_of(s)); }
+    slots[s].busy = false;
+    slots[s].generating = false;
+    slots[s].out = -1;
+    slots[s].used_at = clock_ns();
+}
+
+// The end of the response of slot s, whose state is loaded.
+fn finish(s: i64) {
+    if streaming { reply_part("", true); }
+    release(s);
+}
+
+// prompt_clear: the slot's tokens forgotten, their cells free.
+fn forget(s: i64) {
+    context::keep_first(c, m, s, 0);
+    slots[s].n = 0;
+    slots[s].n_kv = 0;
+}
+
+fn any_busy() -> bool {
+    for sl in slots { if sl.busy { return true; } }
+    return false;
+}
+
+fn any_free() -> bool {
+    for sl in slots { if !sl.busy { return true; } }
+    return false;
+}
+
+// get_available_slot: of the slots free, the one whose tokens start most
+// like the prompt, if more than a tenth of it; else one with no tokens, or
+// the one used longest ago.
+fn pick_slot(prompt: const i32[:]) -> i64 {
+    var ret = -1;
+    var sim_best: f32 = 0.0;
+    let sim_min: f32 = 0.1;
+    for sl, s in slots {
+        guard !sl.busy && sl.n > 0 else { continue; }
+        let have = tokens_of(s);
+        var lcp = 0;
+        while lcp < have.len && lcp < prompt.len && have[lcp] == prompt[lcp] { lcp++; }
+        let sim = lcp as f32 / prompt.len;
+        if sim > sim_best && sim > sim_min { sim_best = sim; ret = s; }
+    }
+    if ret >= 0 { return ret; }
+    for sl, s in slots {
+        guard !sl.busy else { continue; }
+        if ret < 0 || (sl.n == 0 && slots[ret].n > 0) ||
+           ((sl.n == 0) == (slots[ret].n == 0) && sl.used_at < slots[ret].used_at) { ret = s; }
+    }
+    return ret;
+}
+
+// launch_slot_with_task: the request, its prompt's tokens, takes a slot,
+// which the steps to come run: what the slot's cache lacks of the prompt,
+// then a token at a time until a stop. Its state stays in the globals.
+fn start(prompt: const i32[:]) {
     generated.clear();
     gen_tokens.clear();
     fed.clear();
@@ -1496,9 +1706,6 @@ fn generate(prompt: const i32[:]) {
     if t_cmpl_id.len == 0 { t_cmpl_id.append("chatcmpl-"); t_cmpl_id.append(random_string()); }
 
     if prompt.len == 0 { fail(E_INVALID_REQUEST, "\"prompt\" must not be empty"); }
-    if prompt.len >= c.n_ctx {
-        fail(E_EXCEED_CONTEXT, str("request (", prompt.len, " tokens) exceeds the available context size (", c.n_ctx, " tokens), try increasing it"));
-    }
     // the sampler (common_sampler_init) and the grammar
     sampler::init(ch, t_sp);
     ch.has_grammar = false;
@@ -1525,61 +1732,164 @@ fn generate(prompt: const i32[:]) {
         }
     }
 
+    let s = pick_slot(prompt);
+    if prompt.len >= c.n_ctx {
+        slots[s].used_at = clock_ns();      // the slot took the request, and released it
+        fail(E_EXCEED_CONTEXT, str("request (", prompt.len, " tokens) exceeds the available context size (", c.n_ctx, " tokens), try increasing it"));
+    }
     // the cache: the common prefix kept, at least one token to evaluate
     var n_past = 0;
     if t_cache_prompt {
-        while n_past < cached.len && n_past < prompt.len && cached[n_past] == prompt[n_past] { n_past++; }
+        let have = tokens_of(s);
+        while n_past < have.len && n_past < prompt.len && have[n_past] == prompt[n_past] { n_past++; }
     }
     if n_past == prompt.len && n_past > 0 { n_past--; }
-    n_past = context::keep_first(c, m, n_past);
-    if c.n_past != n_past { context::clear(c); n_past = 0; }
-    cached.resize(n_past);
+    n_past = context::keep_first(c, m, s, n_past);
+    for t, i in prompt { slot_tokens[s * c.n_ctx + i] = t; }
+    slots[s].n = prompt.len;
+    slots[s].n_kv = n_past;
+    slots[s].generating = false;
+    slots[s].reply = reply_to;
+    slots[s].busy = true;
+    loaded = s;
     stats = Stats { cache_n: n_past, prompt_n: prompt.len - n_past, prompt_ms: 0.0, predicted_n: 0, predicted_ms: 0.0 };
     prompt_text.clear();
     prompt_text.append(detokenize(prompt, true));
-
-    if t_stream {
-        reply_head(200, "text/event-stream", -1);
-        guard reply_part("", false) else { client_gone = true; return; }
-        streaming = true;
-    }
-
     t_prompt_start = now_ms();
-    var logits: f32[>..] = [];
-    var start = n_past;
-    while start < prompt.len {
-        if !http::mail_live(reply_to) { client_gone = true; return; }
-        let end = min(start + n_batch, prompt.len);
-        context::decode(c, m, prompt[start..end], logits);
-        cached.append(prompt[start..end]);
-        start = end;
-    }
-    // init_sampler: the prompt's tokens into the penalties' windows
-    sampler::reset(ch);
-    for t in cached { sampler::accept(ch, t); }
+}
 
-    var cands: sampler::Cand[>..] = [];
-    loop {
-        for lb in t_logit_bias { logits[lb.token] += lb.bias; }
-        if t_ignore_eos {
-            for id in vocab::n_tokens() { if vocab::is_eog(id as! i32) { logits[id] = -F_INF; } }
+// update_slots: one batch for the slots at work, decoded: the token each
+// generating one sampled last, then the prompts' next tokens, up to n_batch
+// in all; and a token sampled for each slot whose logits the batch gives. A
+// slot whose client has gone stops first.
+fn step() {
+    for s in slots.len {
+        if slots[s].busy && !http::mail_live(slots[s].reply) {
+            slots[s].n = slots[s].n_kv;
+            release(s);
         }
-        let tok = sampler::sample(ch, cands, logits);
-        n_gen++;
-        t_last = now_ms();
-        if n_gen == 1 {
-            t_gen_start = t_last;
-            stats.prompt_ms = t_last - t_prompt_start;
-        }
-        let text = piece(tok, is_preserved(tok));
-        if !process_token(tok, text) { break; }
-        if !http::mail_live(reply_to) { client_gone = true; }
-        if client_gone { return; }
-        context::decode(c, m, [tok], logits);
-        cached.push(tok);
     }
-    finish_stats();
-    send_final();
+    var tokens: i32[>..] = [];
+    var pos: i64[>..] = [];
+    var seqs: u64[>..] = [];
+    var want: i64[>..] = [];        // the slots to sample for, in the batch's order
+    for s in slots.len {
+        guard slots[s].busy && slots[s].generating else { continue; }
+        let bit: u64 = 1 << s;
+        slots[s].out = tokens.len;
+        want.push(s);
+        tokens.push(slot_tokens[s * c.n_ctx + slots[s].n_kv]);
+        pos.push(slots[s].n_kv);
+        seqs.push(bit);
+        slots[s].n_kv++;
+    }
+    for s in slots.len {
+        if slots[s].busy && !slots[s].generating {
+            let bit: u64 = 1 << s;
+            while slots[s].n_kv < slots[s].n && tokens.len < n_batch {
+                tokens.push(slot_tokens[s * c.n_ctx + slots[s].n_kv]);
+                pos.push(slots[s].n_kv);
+                seqs.push(bit);
+                slots[s].n_kv++;
+            }
+            if slots[s].n_kv == slots[s].n {
+                slots[s].out = tokens.len - 1;
+                want.push(s);
+            }
+        }
+        if tokens.len >= n_batch { break; }
+    }
+
+    let n_vocab = vocab::n_tokens();
+    var logits: f32[>..] = [];
+    var outs: i32[>..] = [];
+    var whose: i64[>..] = [];
+    var nb = n_batch;
+    var i = 0;
+    while i < tokens.len {
+        let n = min(nb, tokens.len - i);
+        if context::n_free() < n {
+            // llama_decode's 1: no room. A slot not at work gives up its cells; else a smaller part is tried
+            if nb == 1 { fail_all("Context size has been exceeded."); return; }
+            if !purge_idle_slot() { nb /= 2; }
+            continue;
+        }
+        outs.clear();
+        whose.clear();
+        for s in want {
+            if slots[s].out >= i && slots[s].out < i + n {
+                outs.push((slots[s].out - i) as! i32);
+                whose.push(s);
+            }
+        }
+        context::decode_seqs(c, m, tokens[i..i + n], pos[i..i + n], seqs[i..i + n], logits, outs);
+        for s, k in whose {
+            slots[s].out = -1;
+            sample_slot(s, logits[k * n_vocab..(k + 1) * n_vocab]);
+        }
+        i += n;
+        nb = n_batch;
+    }
+}
+
+// The next token of slot s, sampled from its logits, and what it brings:
+// a part of the response, or its end.
+fn sample_slot(s: i64, row: const f32[:]) {
+    load(s);
+    if !slots[s].generating {
+        // init_sampler: the prompt's tokens into the penalties' windows
+        sampler::reset(ch);
+        for t in tokens_of(s) { sampler::accept(ch, t); }
+        slots[s].generating = true;
+    }
+    var logits: f32[>..] = [];
+    logits.append(row);
+    for lb in t_logit_bias { logits[lb.token] += lb.bias; }
+    if t_ignore_eos {
+        for id in vocab::n_tokens() { if vocab::is_eog(id as! i32) { logits[id] = -F_INF; } }
+    }
+    var cands: sampler::Cand[>..] = [];
+    let tok = sampler::sample(ch, cands, logits);
+    n_gen++;
+    t_last = now_ms();
+    if n_gen == 1 {
+        t_gen_start = t_last;
+        stats.prompt_ms = t_last - t_prompt_start;
+    }
+    let text = piece(tok, is_preserved(tok));
+    var more = false;
+    fn body() {
+        more = process_token(tok, text);
+        if !more { finish_stats(); send_final(); }
+    }
+    exception::try<Fail>(body) { f => send_error(f.kind, fail_msg); more = false; };
+    if more && !client_gone {
+        slot_tokens[s * c.n_ctx + slots[s].n] = tok;
+        slots[s].n++;
+    } else {
+        finish(s);
+    }
+}
+
+// The batch cannot be decoded: every slot at work fails, and forgets its tokens.
+fn fail_all(msg: const u8[:]) {
+    for s in slots.len {
+        guard slots[s].busy else { continue; }
+        load(s);
+        send_error(E_SERVER, msg);
+        finish(s);
+        forget(s);
+    }
+}
+
+// try_clear_idle_slots: the first slot not at work that has tokens forgets
+// them, for room in the cache the slots share; false if there is none.
+fn purge_idle_slot() -> bool {
+    guard c.unified else { return false; }
+    for s in slots.len {
+        if !slots[s].busy && slots[s].n > 0 { forget(s); return true; }
+    }
+    return false;
 }
 
 fn stop_type_name(s: i64) -> const u8[:] {
@@ -1595,7 +1905,7 @@ fn final_json(o: u8[>..]&) {
     o.push('[');
     if !t_stream { for t in gen_tokens { ei(o, t); } }
     o.push(']');
-    ki(o, "id_slot", 0);
+    ki(o, "id_slot", loaded);
     kb(o, "stop", true);
     ks(o, "model", model_name);
     ki(o, "tokens_predicted", n_gen);
@@ -1607,7 +1917,7 @@ fn final_json(o: u8[>..]&) {
     kb(o, "truncated", truncated);
     ks(o, "stop_type", stop_type_name(stop_type));
     ks(o, "stopping_word", stopping_word);
-    ki(o, "tokens_cached", cached.len);
+    ki(o, "tokens_cached", slots[loaded].n);
     k(o, "timings");
     stats_json(o);
     o.push('}');
@@ -1722,6 +2032,17 @@ fn respond_error(kind: i64, msg: const u8[:]) {
     respond_with(error_code(kind), "application/json; charset=utf-8", o);
 }
 
+// A request's failure: an event if its response is events begun already,
+// else the whole response.
+fn send_error(kind: i64, msg: const u8[:]) {
+    guard streaming else { respond_error(kind, msg); return; }
+    var o: u8[>..] = [];
+    o.append("{\"error\":");
+    error_json(o, kind, msg);
+    o.push('}');
+    send(o);
+}
+
 // The request's body as JSON, or a 400.
 fn body_json() -> i64 {
     jdoc::reset();
@@ -1741,7 +2062,7 @@ fn route_props() {
     params_json(o, true);
     ki(o, "n_ctx", c.n_ctx);
     o.push('}');
-    ki(o, "total_slots", 1);
+    ki(o, "total_slots", slots.len);
     ks(o, "model_alias", model_name);
     ks(o, "model_ftype", ftype_name);
     ks(o, "model_path", model_path);
@@ -1928,7 +2249,7 @@ fn route_completion(res_type: i64) {
     }
     for t in tokens { if t < 0 || t >= vocab::n_tokens() { fail(E_INVALID_REQUEST, "Prompt contains invalid tokens"); } }
     eval_params(body);
-    generate(tokens);
+    start(tokens);
 }
 
 fn has_number(v: i64) -> bool {
@@ -1964,7 +2285,7 @@ fn route_chat() {
     apply_chat_session();
     var tokens: i32[>..] = [];
     vocab::tokenize(prompt, true, true, tokens);
-    generate(tokens);
+    start(tokens);
 }
 
 // A file of --path, for a GET of path ("/" is index.html): false if there
@@ -2004,7 +2325,8 @@ fn authorized() -> bool {
     return false;
 }
 
-// Serves the request in raw, its head and body, on the main thread.
+// Serves the request in raw, its head and body, on the main thread: all of
+// it, or, for one that generates, as far as giving it a slot.
 fn handle(raw: const u8[:]) {
     streaming = false;
     client_gone = false;
@@ -2029,17 +2351,7 @@ fn handle(raw: const u8[:]) {
         else if get && static_dir.len > 0 && serve_file(path) {}
         else { respond_error(E_NOT_FOUND, "File Not Found"); }
     }
-    exception::try<Fail>(body) { f =>
-        if streaming {
-            var o: u8[>..] = [];
-            o.append("{\"error\":");
-            error_json(o, f.kind, fail_msg);
-            o.push('}');
-            send(o);
-        } else {
-            respond_error(f.kind, fail_msg);
-        }
-    };
+    exception::try<Fail>(body) { f => send_error(f.kind, fail_msg); };
 }
 
 //
@@ -2047,8 +2359,9 @@ fn handle(raw: const u8[:]) {
 //
 
 // The engine's one job: a request, its head and body, in a shared blob,
-// since a job must fit one mail message.
-enum Job { Request { req: http::Shared } }
+// since a job must fit one mail message; and whether it generates, and so
+// waits for a slot.
+enum Job { Request { req: http::Shared, slot: bool } }
 // What a request waits on: the engine, or nothing yet.
 enum Use { None, Engine }
 struct St { use: Use = Use.None }
@@ -2060,6 +2373,11 @@ let MAX_BODY: i64 = 256 * 1024 * 1024;
 // How long a worker waits for each piece of a response: a request may wait
 // behind others, and a long prompt takes a while before its first token.
 let WAIT_MS: i64 = 3600 * 1000;
+
+// A request that generates, until a slot is free: where its response goes,
+// and its job.
+struct Waiting { reply: http::MailAddress, piece: i64, job: Job }
+var waiting: Waiting[>..] = [];
 
 // The request the engine serves now: where its response goes, in messages
 // of at most reply_piece bytes, and its job, which the first one echoes.
@@ -2108,17 +2426,48 @@ fn respond_with(status: i64, content_type: const u8[:], data: const u8[:]) {
     reply_part(data, true);
 }
 
+// A job from a worker: its request served at once, unless it generates;
+// then it waits its turn for a slot.
 fn run(u: Job.Request, a: plod::Asked<Job>&) {
-    var raw: u8[>..] = [];
-    http::shared_append(u.req, 0, http::shared_len(u.req), raw);
-    http::shared_release(u.req);
     a.replied = true;
-    guard plod::still_wanted(a) else { return; }
-    reply_to = a.reply;
-    reply_piece = a.piece;
-    reply_job = a.job;
+    let w = Waiting { reply: a.reply, piece: a.piece, job: a.job };
+    if u.slot { waiting.push(w); } else { serve(w); }
+}
+
+fn blob_of(job: Job) -> http::Shared {
+    return match job { Request r => r.req };
+}
+
+// Serves the request of w, if its client still waits, with no other
+// request's state in the globals.
+fn serve(w: Waiting) {
+    let req = blob_of(w.job);
+    var raw: u8[>..] = [];
+    http::shared_append(req, 0, http::shared_len(req), raw);
+    http::shared_release(req);
+    guard http::mail_live(w.reply) else { return; }
+    unload();
+    reply_to = w.reply;
+    reply_piece = w.piece;
+    reply_job = w.job;
     handle(raw);
-    if streaming { reply_part("", true); }
+}
+
+// The engine's loop, until the workers stop: the jobs they sent taken, the
+// requests that wait given the slots free, in their order, and a step for
+// the slots at work. With none at work it waits for a job.
+fn engine(box: http::Box) {
+    let jobs = plod::Jobs<Job> { .. };
+    while !http::mail_stopped(box) {
+        if !any_busy() { http::mail_wait(box, -1); }
+        http::mail_take(box) { key, tag, bytes => plod::lane_job(jobs, bytes) { u, a => run(u, a); }; };
+        var served = 0;
+        while served < waiting.len && any_free() { serve(waiting[served]); served++; }
+        for i in waiting.len - served { waiting[i] = waiting[i + served]; }
+        waiting.resize(waiting.len - served);
+        if any_busy() { step(); }
+    }
+    http::mail_close(box);
 }
 
 // A whole response from a worker, with the fields every response has.
@@ -2163,7 +2512,9 @@ fn route(cx) {
     raw.append(body);
     let b, err = http::shared_put(raw, 1);
     guard err == 0 else { plod::fail(cx, 503, "unavailable"); }
-    let sent = plod::try_ask(cx, cx.app.engine, Job.Request { req: b }, WAIT_MS, 0);
+    let slot = method == "POST" && (path == "/completion" || path == "/completions" || path == "/v1/completions" ||
+                                    path == "/chat/completions" || path == "/v1/chat/completions");
+    let sent = plod::try_ask(cx, cx.app.engine, Job.Request { req: b, slot: slot }, WAIT_MS, 0);
     if sent != http::SENT {
         http::shared_release(b);
         plod::fail(cx, 503, "unavailable");
@@ -2246,6 +2597,7 @@ fn setup() {
     var chat_template: u8[>..] = [];
     var breakers_given = false;
     var dry_breakers: u8[>..] = [];
+    var n_slots = 0;
     var i = 1;
     fn value() -> const u8[:] {
         if i + 1 >= args.len { die(str("missing value for ", args[i])); }
@@ -2277,9 +2629,7 @@ fn setup() {
         else if a == "-a" || a == "--alias" { alias.clear(); alias.append(value()); }
         else if a == "--api-key" { api_key.clear(); api_key.append(value()); }
         else if a == "--path" { static_dir.clear(); static_dir.append(value()); }
-        else if a == "-np" || a == "--parallel" {
-            if int_value() != 1 { write_stderr("warning: one slot only: --parallel is ignored\n"); }
-        }
+        else if a == "-np" || a == "--parallel" { n_slots = int_value(); }
         else if a == "--jinja" { use_jinja = true; }
         else if a == "--no-jinja" { use_jinja = false; }
         else if a == "--chat-template" { chat_template.clear(); chat_template.append(value()); }
@@ -2343,7 +2693,17 @@ fn setup() {
 
     model::load(m, model_path);
     c.n_threads = n_threads;
+    // the slots: llama-server's 4, in one cache unified for them
+    if context::any_recurrent(m) || m.hp.arch == model::ARCH_T5 {
+        if n_slots > 1 { write_stderr("warning: this model's cache holds one sequence: one slot\n"); }
+        n_slots = 1;
+    }
+    if n_slots <= 0 { n_slots = 4; }
+    if n_slots > 64 { die("at most 64 slots"); }
+    c.unified = n_slots > 1;
     context::init(c, m, if n_ctx > 0 { n_ctx } else { m.hp.n_ctx_train as i64 });
+    for s in n_slots { slots.push(Slot { .. }); }
+    slot_tokens.resize(n_slots * c.n_ctx, 0);
     sampler::apply_model_defaults(sp, m.meta);
     base_sp = sp;
 
@@ -2410,6 +2770,6 @@ fn main() {
     setup();
     net::set_ready();
     log("main: model loaded");
-    plod::lane(box, plod::Jobs<Job> { .. }) { u, a => run(u, a); };
+    engine(box);
     thread_wait(http_thread);
 }

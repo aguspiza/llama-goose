@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Send the same requests to llama.cpp's llama-server and to the Goose
 server, and compare the responses, less what changes from run to run (ids,
-times, the build). Both must run the same model, with one slot:
-    llama-server -m model.gguf --port 18431 -np 1
+times, the build). Both must run the same model, with the same slots:
+llama-server without its prompt cache in RAM, which the Goose server lacks,
+and, for a model with one slot in the Goose server (a recurrent one), -np 1:
+    llama-server -m model.gguf --port 18431 --cache-ram 0
     tools/server.exe -m model.gguf --port 18432
     scripts/compare-server.py [ref_port] [goose_port]
 Each request goes to both in turn, so the caches of the two see the same

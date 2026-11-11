@@ -112,6 +112,9 @@ extern fn rope_ext(ctx: Ctx, a: Tensor, pos: Tensor, freqs: Tensor, n_dims: i32,
 extern fn rope_set_offset(a: Tensor, n_offs: i32) -> Tensor = "ggml_rope_set_offset";
 extern fn flash_attn_ext(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, mask: Tensor,
                          scale: f32, max_bias: f32, logit_softcap: f32) -> Tensor = "ggml_flash_attn_ext";
+// flash_attn_ext where each slice of q attends to its own list of k and v rows (kv_rows: [n_kv, n_slices], -1 for padding)
+extern fn flash_attn_ext_rows(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, mask: Tensor, kv_rows: Tensor,
+                              scale: f32, max_bias: f32, logit_softcap: f32) -> Tensor = "ggml_flash_attn_ext_rows";
 // the output: the heads' values [S_v, H_v, n_tokens, n_seqs], then K states
 extern fn gated_delta_net(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, g: Tensor, beta: Tensor,
                           state: Tensor, n_states: i64) -> Tensor = "ggml_gated_delta_net";

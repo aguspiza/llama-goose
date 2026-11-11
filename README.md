@@ -16,7 +16,7 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
 | UGM, RWKV, PLaMo2 and PLaMo3 tokenizers | ported | through `tools/simple` with T5, RWKV and PLaMo 2 and 3 models |
 | WPM tokenizer | loads, does not tokenize yet | |
-| model loading, KV cache, recurrent states, decode; T5's encoder | ported for 65 architectures (see Architectures below) | `tools/simple`, `tools/perplexity` |
+| model loading, KV cache (one, unified for several sequences, as `-kvu`), recurrent states, decode; T5's encoder | ported for 65 architectures (see Architectures below); recurrent models and T5 hold one sequence | `tools/simple`, `tools/perplexity`, `tools/batched`, `tools/parallel` |
 | other architectures | not yet (see below) | |
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
@@ -29,7 +29,7 @@ Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 | PEG parsers (`common/peg-parser`) | ported | `tests/peg`: test-gbnf-generation's cases and parse cases of test-basic |
 | tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 75 templates of `models/templates`; `tests/chat_peg`: all 517 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
 | `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
-| `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported with one slot (requests are generated one at a time; `/health` and CORS preflights are answered meanwhile, and a client that leaves stops its generation), except embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses with gemma-3 and LFM2.5 |
+| `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported, with llama-server's 4 slots in one KV cache (`-np` for another number; one for a recurrent model): the requests of the slots at work are decoded together, a batch at a time, a client that leaves stops its generation, and `/health` and CORS preflights are answered meanwhile; except the prompt cache in RAM (`--cache-ram`), a cache split per slot, embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses, slots included, with Qwen3 and Qwen2.5 |
 | `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images, audio and `-hf` downloads; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
 | the rest of `common/` (args, downloads) | not yet | |
 
@@ -183,6 +183,21 @@ llama-perplexity's (4.9 s against 5.4 s for gemma-3-270m, 4 chunks).
 Both tools default to llama.cpp's thread count (half the logical CPUs
 above 4); `-t` sets it.
 
+`tools/batched` and `tools/parallel` are examples/batched and
+examples/parallel, on one cache unified for all the sequences (llama.cpp's
+`-kvu`; the cache split per sequence is not ported). Each cell of the cache
+keeps a position and the set of sequences it belongs to, so a shared prompt
+is stored once, and cells are taken as `llama_kv_cache::find_slot` takes
+them. When a batch has tokens of several sequences, each sequence's queries
+attend to the rows of its own cells (`ggml_flash_attn_ext_rows`), as in
+llama.cpp. The logits depend on which tokens share a batch, so both sides
+must decode the same batches to be compared: `tools/parallel` with 3
+clients, 5 requests, a shared system prompt and greedy sampling logs the
+same requests and responses as llama-parallel on 23 attention-only models
+of the table above (gemma-3's sliding window among them), and on Qwen3 0.6B
+also with a seed, without the shared prompt and with `--junk`;
+`tools/batched` writes the same 4 sequences as llama-batched.
+
 `tests/chat_template` applies every built-in template, and the template of
 every case in llama.cpp's `test-chat-template.cpp`, to its conversation,
 and compares with what libllama writes (180 checks); it also renders each
@@ -245,21 +260,44 @@ and [goose-http](https://github.com/kaitk/goose-http) (HTTP/1.1 with
 keep-alive and chunked responses, worker threads) and `common/jdoc` (JSON
 written as nlohmann writes it). Goose threads may only use flat globals, and
 the model, vocab and templates are not flat, so the program's first thread
-loads them and serves the requests one at a time, as the lane Plod's workers
-send them to. The workers answer `/health`, CORS preflights, and 503
-"Loading model" until the model is loaded; request bodies cross to the main
-thread as goose-http shared blobs, and responses come back as mail messages,
-the events of a stream as they are generated. Between tokens and prompt
-batches the main thread checks whether the client is still there, and stops
-when it is not. With one
-slot on both, `scripts/compare-server.py` sends 29 requests to it and to
-llama.cpp's `llama-server` and compares the responses, less ids, times and
-the cached-token counts: completions with and without streaming, stop
-strings, grammars and JSON schemas, chat with tool calls (streamed as
-deltas), prefilled assistant messages and errors. All 29 are the same with
-gemma-3 270M and LFM2.5 230M. The cached-token counts differ because
+loads them and serves the requests, as the lane Plod's workers send them to.
+The workers answer `/health`, CORS preflights, and 503 "Loading model" until
+the model is loaded; request bodies cross to the main thread as goose-http
+shared blobs, and responses come back as mail messages, the events of a
+stream as they are generated.
+
+A request that generates takes a slot, as in llama-server: 4 of them by
+default, each a sequence of one KV cache they share, which keeps the slot's
+last prompt for a request that starts as it does (the slot is chosen as
+llama-server chooses it: the most similar prompt, else an empty slot, else
+the one used longest ago). The main thread runs the slots at work together:
+each step decodes one batch, with the token each generating slot sampled last
+and the next tokens of the prompts, and samples a token for each slot. The
+sampler, the grammar, the chat parser and the response so far are globals,
+as they were with one slot, so each request's are kept as bytes while the
+globals hold another's (`tools/stash`: the server lists them once, and the
+list both writes them and reads them back). Requests beyond the slots wait
+in their order; the others (`/props`, `/tokenize`, ...) are served between
+steps. At each step the main thread checks whether each client is still
+there, and frees the slot of one that is not. When the cache is full, a slot
+not at work gives up its cells, as in llama-server. A recurrent model's
+cache holds one sequence, so it has one slot.
+
+`scripts/compare-server.py` sends 29 requests to it and to llama.cpp's
+`llama-server`, both with their 4 slots, and compares the responses, less
+ids, times and the cached-token counts: completions with and without
+streaming, stop strings, grammars and JSON schemas, chat with tool calls
+(streamed as deltas), prefilled assistant messages and errors. All 29 are
+the same, the slot each request got included, with Qwen3 0.6B and Qwen2.5
+0.5B, also with a context of 256 tokens, where slots are purged; and with
+Mamba 130M and one slot. The cached-token counts differ because
 llama-server reuses an SWA or recurrent cache only from a checkpoint, while
-this server keeps every attention cell and reuses more.
+this server keeps every attention cell and reuses more. Requests served at
+the same time are not compared with llama-server's, since which batch a
+token falls in depends on when each request arrives, and that changes the
+last bits of its logits; in a test build that decoded one slot per batch,
+four requests at once gave the responses of the same four served one after
+another.
 
 `LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
 llama.cpp's eval callback.
