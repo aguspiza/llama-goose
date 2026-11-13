@@ -555,7 +555,7 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
     let n_tokens = tokens.len;
     guard n_tokens > 0 else { abort("encode: no tokens"); }
     let n_kv = pad_to(n_tokens, 256);
-    let gctx = ggml::init(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false), true);
+    let gctx = ggml::init_graph(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false));
     var b = Build {
         ctx: gctx,
         gf: ggml::new_graph_custom(gctx, MAX_NODES, false),
@@ -3264,7 +3264,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     }
     head = idxs[idxs.len - 1] + 1;
 
-    let gctx = ggml::init(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false), true);
+    let gctx = ggml::init_graph(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false));
     var b = Build {
         ctx: gctx,
         gf: ggml::new_graph_custom(gctx, MAX_NODES, false),

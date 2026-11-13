@@ -6,6 +6,8 @@ namespace ggml;
 
 // contexts
 extern fn init(mem_size: i64, no_alloc: bool) -> Ctx = "lg_init";
+// For a graph's nodes: in memory kept from one graph to the next, so one such context at a time.
+extern fn init_graph(mem_size: i64) -> Ctx = "lg_init_graph";
 extern fn get_tensor(ctx: Ctx, name: const u8[:]) -> Tensor = "lg_get_tensor";
 extern fn tensor_name(t: Tensor, out: u8[>..]&) = "lg_tensor_name";
 extern fn set_name(t: Tensor, name: const u8[:]) = "lg_set_name";

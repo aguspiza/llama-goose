@@ -3,12 +3,23 @@
 #include "ggml.h"
 #include "ggml-cpu.h"
 #include <string.h>
+#include <stdlib.h>
 
 typedef struct { void * data; int64_t len; } lg_bytes;
 typedef struct { float * data; int64_t len; } lg_f32s;
 
 struct ggml_context * lg_init(int64_t mem_size, bool no_alloc) {
     struct ggml_init_params p = { (size_t) mem_size, NULL, no_alloc };
+    return ggml_init(p);
+}
+
+// A context for a graph's nodes in memory kept from one graph to the next
+// (llama.cpp's buf_compute_meta): one such context at a time.
+struct ggml_context * lg_init_graph(int64_t mem_size) {
+    static void * mem;
+    static int64_t size;
+    if (mem_size > size) { free(mem); mem = malloc((size_t) mem_size); size = mem_size; }
+    struct ggml_init_params p = { (size_t) mem_size, mem, true };
     return ggml_init(p);
 }
 
@@ -40,7 +51,6 @@ bool lg_tensor_allocated(const struct ggml_tensor * t) { return t->buffer != NUL
 //
 #include "gguf.h"
 #include "goose.h"
-#include <stdlib.h>
 
 // A NUL-terminated copy of a Goose string, valid until the next call.
 static const char * lg_cstr(lg_bytes s) {
