@@ -1,55 +1,206 @@
 # llama.goose
 
-A plan to port [llama.cpp](https://github.com/ggml-org/llama.cpp) to
-[Goose](https://aardappel.github.io/goose/) and to build it with `goose build`
-instead of CMake. The goals are shorter build times, lower memory use, faster
-inference and source code that is easier to read.
+**[llama.cpp](https://github.com/ggml-org/llama.cpp) ported to
+[Goose](https://aardappel.github.io/goose/).** The tokenizers, the model
+graphs, sampling, grammars, chat templates, tool calls and `llama-server`
+are rewritten in Goose; ggml, the tensor library under them, stays the C it
+is and is built by `goose build`.
 
-## Status
+It writes the same text as llama.cpp, byte for byte, at about the same
+speed. It builds with a tenth of the CPU time, without CMake, into binaries
+a third of the size. It is a work in progress: it runs on the CPU only, and
+a good part of llama.cpp is [not ported yet](#what-is-missing).
 
-Following llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
+Follows llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
 
-| Part | State | Checked against llama.cpp |
+## At a glance
+
+| | llama.goose | llama.cpp |
 |---|---|---|
-| ggml (C, CPU backend) | built by `goose build`, unchanged | `tests/ggml_smoke` |
-| Unicode, pre-tokenizer splits | ported | `tests/unicode_split` |
-| SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
-| UGM, RWKV, PLaMo2 and PLaMo3 tokenizers | ported | through `tools/simple` with T5, RWKV and PLaMo 2 and 3 models |
-| WPM tokenizer | loads, does not tokenize yet | |
-| model loading, KV cache (one, unified for several sequences, as `-kvu`), recurrent states, decode; T5's encoder | ported for 65 architectures (see Architectures below); recurrent models and T5 hold one sequence | `tools/simple`, `tools/perplexity`, `tools/batched`, `tools/parallel` |
-| other architectures | not yet (see below) | |
-| sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
-| GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
-| JSON schema to grammar | ported | `tests/json_schema`: the 83 cases of `test-json-schema-to-grammar.cpp`, the same grammar text; `tools/completion -j`/`-jf` |
-| lazy grammars (word and token triggers) | ported | through the tool call grammars below |
-| sampling: adaptive-p, infill; regex grammar triggers | not yet | |
-| built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
-| Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
-| Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported | `tests/chat_template`, `tools/completion --jinja` |
-| PEG parsers (`common/peg-parser`) | ported | `tests/peg`: test-gbnf-generation's cases and parse cases of test-basic |
-| tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 75 templates of `models/templates`; `tests/chat_peg`: all 517 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
-| `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
-| `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported, with llama-server's 4 slots in one KV cache (`-np` for another number; one for a recurrent model): the requests of the slots at work are decoded together, a batch at a time, a client that leaves stops its generation, and `/health` and CORS preflights are answered meanwhile; except the prompt cache in RAM (`--cache-ram`), a cache split per slot, embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses, slots included, with Qwen3 and Qwen2.5 |
-| `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images, audio and `-hf` downloads; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
-| the rest of `common/` (args, downloads) | not yet | |
+| Generated text | the same bytes, checked on 65 architectures | the reference |
+| Building server, completion, perplexity, simple and cli | 151 s, on one core | about 1,600 CPU-seconds |
+| `server` binary | 6.0 MB | 17.6 MB |
+| Server speed, one request (Qwen3 0.6B) | 66 tokens/s | 67 tokens/s |
+| Server speed, four requests at once | 130 tokens/s | 138 tokens/s |
+| Build system | `goose build` and one shell script | CMake |
+| Backends | CPU | CPU, CUDA, Vulkan, Metal, ... |
+| Architectures | 65 | more than a hundred |
+| Platforms checked | Windows, MinGW-w64 gcc | Windows, Linux, macOS, Android, ... |
 
-`tools/simple` is llama.cpp's `examples/simple`. With gemma-3 270M (Q8_0)
-and greedy sampling it writes byte for byte the text llama.cpp's
-`llama-simple` writes, over 200 generated tokens on four prompts, at the
-same speed (77-93 tokens/s on both, on a Ryzen 7 5700U).
+Where the figures come from: [Numbers](#numbers).
 
-Checked the same way, all byte for byte over 150 generated tokens and three
-prompts each, at llama.cpp's speed: gemma-3 270M (Q8_0), LFM2.5 230M (Q8_0
-and Q4_K_M; lfm2 mixes attention with short convolutions that keep a
-recurrent state) and MiniCPM5 2B (llama architecture, Q4_K_M).
+## What you get
 
-### Architectures
+- **The same output.** Each of the 65 architectures writes, with greedy
+  sampling, the bytes `llama-simple` writes; with a seed, `tools/completion`
+  writes what `llama-completion` writes; the server gives `llama-server`'s
+  responses to 29 requests. llama.cpp's own test cases for grammars, JSON
+  schemas, Jinja, chat templates and tool calls are run against what
+  llama.cpp makes of them. See [How it is checked](#how-it-is-checked).
+- **Short builds.** A program is one C file that gcc compiles on one core:
+  73 s for the server, 4 to 36 s for the others. ggml is compiled once and
+  cached.
+- **Small binaries.** 3 to 6 MB, where llama.cpp's are 6 to 18 MB.
+- **The same speed.** The kernels, the weights and the KV cache are ggml's
+  on both sides, and the code around them keeps what llama.cpp does per
+  token: a thread pool that stays, a graph run again while its shape
+  holds, a partial sort for top-k.
+- **No CMake.** The Goose compiler and gcc; `scripts/build.sh` builds a
+  program, `scripts/test.sh` builds and runs the tests.
+- **Source to read.** About 34,000 lines of Goose (`llama/` 12,700,
+  `common/` 15,300, `tools/` 5,500). Each file starts with the llama.cpp
+  sources it ports, and a script reports every week which of them changed
+  upstream.
+
+## What is missing
+
+Compared with llama.cpp at the same commit. ❌ is not ported; 🟡 is ported
+in part.
+
+| Area | Missing |
+|---|---|
+| ❌ GPU | Every backend but the CPU's: CUDA, Vulkan, Metal, SYCL, OpenCL, ... ggml's sources are here, but only its CPU backend is built. |
+| 🟡 Platforms | Built and checked on Windows with MinGW-w64 gcc only. `goose build` with MSVC does not find the C headers yet. Linux and macOS have their branches in the code and have not been checked. |
+| 🟡 Architectures | 65 are ported. Not the ones with no model of 4 GB or less in Q4 (the large mixtures of experts, the 7B and larger dense models), nor the experts of gemma4, nemotron_h and k2-horizon. [The list](#architectures). |
+| ❌ Other kinds of model | Embedding and encoder-only models (the bert family and its WPM tokenizer, t5encoder), diffusion models, audio decoders. |
+| ❌ Multimodal | Images and audio (`mtmd`, `--mmproj`). The vision models in the list run as text models. |
+| ❌ Adapters and state | LoRA adapters, control vectors, saving and loading a context's state (session and prompt cache files). |
+| 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). Not the cache split per sequence, context shift or self-extend. A recurrent model and T5 hold one sequence. |
+| 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
+| 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
+| 🟡 `llama-completion`, `llama-cli` | Not context shift, prompt cache files or self-extend; the cli has no images, audio or `-hf` downloads. |
+| ❌ `common/` | The argument parser (each program reads the flags it supports itself), downloads (`-hf`), fitting the context to the free memory. |
+| ❌ Other programs | `llama-quantize`, `llama-bench`, `llama-embedding`, `llama-mtmd-cli`, `llama-tts`, `llama-imatrix` and the rest of llama.cpp's tools and examples. |
+
+## What is ported
+
+| Part | Checked against llama.cpp by |
+|---|---|
+| ✅ ggml: unchanged C, built by `goose build` | `tests/ggml_smoke` |
+| ✅ Tokenizers: SPM, BPE, UGM, RWKV, PLaMo2, PLaMo3; Unicode and the pre-tokenizer splits | the same tokens on llama.cpp's 15 SPM and BPE test vocabs; the others through their models |
+| ✅ Models: loading, the graphs of 65 architectures, the KV cache for several sequences, recurrent states, T5's encoder | the same text as `llama-simple`, the same perplexities as `llama-perplexity`, the same batches as `llama-batched` and `llama-parallel` |
+| ✅ Sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the settings a model recommends | the same text as `llama-completion` with a seed |
+| ✅ Grammars: GBNF, lazy grammars, JSON schema to grammar | the 470 cases of llama.cpp's grammar tests and the 83 of its JSON schema test: the same parse, the same grammar text |
+| ✅ Chat templates: the 54 built-in ones and the Jinja engine | the 383 cases of `test-jinja.cpp`; 215 checks of prompts against libllama and libcommon |
+| ✅ Tool calls and reasoning: the PEG parsers, the differential autoparser, the 22 dedicated handlers | llama.cpp's analysis of its 75 templates; the 517 cases of `test-chat.cpp` |
+
+### Programs
+
+| Program | llama.cpp's | What it does |
+|---|---|---|
+| `tools/simple` | `llama-simple` | greedy generation from a prompt |
+| `tools/simple_chat` | `llama-simple-chat` | a chat with the model's template |
+| `tools/completion` | `llama-completion` | text and conversation, interactive, reverse prompts, grammars, JSON schemas, `--jinja`, colors |
+| `tools/perplexity` | `llama-perplexity` | its default mode |
+| `tools/batched`, `tools/parallel` | `llama-batched`, `llama-parallel` | several sequences in one batch |
+| `tools/server` | `llama-server` | `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; 4 slots decoded together, the prompt cache of each slot |
+| `tools/cli` | `llama-cli` | the chat over a server it starts, with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob` |
+
+## Quick start
+
+It needs the Goose compiler, v2026.4 (not the `goose` AI agent that may be
+on PATH), and MinGW-w64 gcc.
+
+```bash
+scripts/build.sh tools/server.goose        # GOOSE=path/to/goose.exe to pick the compiler
+tools/server -m model.gguf --port 8080
+
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+The first build compiles ggml (about 1.5 minutes) and caches it. More in
+[Building](#building).
+
+## Numbers
+
+Measured on 2026-11-13 on a Ryzen 7 5700U (8 cores, 16 threads) with
+Windows 11, MinGW-w64 gcc 15.2 and Goose v2026.4. llama.cpp is a CPU-only
+`Release` build with the same gcc.
+
+**Build time**, with ggml already compiled and cached. Each Goose program
+is one C file, compiled by one gcc process at `-O1`:
+
+| Program | Lines of C | Build |
+|---|---:|---:|
+| `tools/server` | 646k | 73 s |
+| `tools/completion` | 272k | 36 s |
+| `tools/perplexity` | 128k | 19 s |
+| `tools/simple` | 128k | 19 s |
+| `tools/cli` | 18k | 4 s |
+| `scripts/test.sh` (build and run every test) | | 109 s |
+
+Goose writes the server's C in about 5 s; gcc takes the rest (a little over
+twice as long at `-O3`, for no gain in speed: see [Building](#building)).
+llama.cpp
+spent about 1,600 CPU-seconds on the same tools without ggml (`common/`,
+`src/`, the server, cpp-httplib, mtmd), spread over 16 cores, in its
+`.ninja_log` of 2026-11-05. So the Goose build costs about ten times less
+CPU. The comparison flatters Goose: the C++ side has the architectures,
+argument parsing, downloads and multimodal that are not ported yet.
+
+**Binary size**, without symbols:
+
+| Program | llama.goose | llama.cpp |
+|---|---:|---:|
+| server | 6.0 MB | 17.6 MB |
+| completion | 3.9 MB | 10.1 MB |
+| perplexity | 3.0 MB | 10.1 MB |
+| simple | 3.0 MB | 6.0 MB |
+
+Here too part of the difference is what is not ported yet.
+
+**Speed**, Qwen3 0.6B Q4_K_M, 8 threads, 200 tokens per request:
+
+| | llama.goose | llama.cpp |
+|---|---:|---:|
+| server, one request | 66 tokens/s | 67 tokens/s |
+| server, four requests at once, in all | 130 tokens/s | 138 tokens/s |
+| completion | 67 tokens/s | 67 tokens/s |
+
+The two programs were run in turns in one session, and each figure is the
+median of five or six runs. Read the columns against each other, not as
+what the machine can do: single runs vary by about 5%, and the machine's
+state moves both programs by 10% from one session to another (earlier the
+same day the server gave 73 tokens/s for one request, and llama-server
+77). A model this small is where the code around ggml shows; with MiniCPM5
+2B, at some 100 ms per token, no difference was measured.
+
+**Memory** is ggml's on both sides: the weights and the KV cache.
+
+## How it is checked
+
+- **Text.** `tools/simple` against `llama-simple` on three prompts for each
+  architecture, greedy; `tools/completion` against `llama-completion` with
+  seeds, samplers, grammars and conversations; `tools/perplexity`,
+  `tools/batched` and `tools/parallel` against theirs.
+- **The server.** `scripts/compare-server.py` sends 29 requests to it and
+  to `llama-server`, both with their 4 slots, and compares the responses:
+  completions with and without streaming, stop strings, grammars, JSON
+  schemas, chat with tool calls, errors.
+- **llama.cpp's tests.** `tests/` runs the cases of llama.cpp's own tests
+  (tokenizers, grammars, JSON schemas, Jinja, chat templates, tool call
+  parsers) and compares with what llama.cpp answered, kept in
+  `tests/data/` and regenerated from a llama.cpp build by `scripts/gen-*`.
+
+One thing to know when comparing: once a context holds more than 256
+tokens, ggml splits the attention of a single token over the threads, and
+the last bits of the logits depend on how many there are, in llama.cpp
+too. The same text then needs the same `-t`.
+
+The notes on each part are in [docs/verification.md](docs/verification.md).
+
+## Architectures
 
 Each one writes, with greedy sampling, byte for byte the text llama.cpp's
 `llama-simple` writes on three prompts (`The capital of France is`,
 `def fibonacci(n):`, `Once upon a time, in a small village`), 60 to 150
 tokens each. The models are the smallest GGUFs found on Hugging Face; none
 over 4 GB in Q4.
+
+<details>
+<summary>The 65 architectures and the model each was checked with</summary>
 
 | Architecture | Model checked | Notes |
 |---|---|---|
@@ -119,7 +270,10 @@ over 4 GB in Q4.
 | starcoder2 | starcoder2-3b Q4_K_M | |
 | t5 | flan-t5-small F16 | encoder and decoder, UGM tokenizer |
 
-Not ported yet:
+</details>
+
+<details>
+<summary>Not ported yet, and why</summary>
 
 - The ones without a model of 4 GB or less in Q4: lfm2moe (LFM2.5-8B-A1B is
   5.2 GB), olmoe (4.2 GB), beam/bailingmoe3 (Moon-Beam-8B-A1B, 4.9 GB),
@@ -145,376 +299,7 @@ Not ported yet:
   Q/K norms and output gate, limite with four taps, and the MTP layers some
   models carry; they abort with "not ported yet".
 
-`tools/completion` gives the same text as `llama-completion` with these
-architectures too (checked with qwen3, gemma2, granitehybrid and phi3, text
-and conversation), given the same `-c`: without it llama-completion fits the
-context to the free memory (`common/fit`, not ported), and Phi-3.5's rope
-factors depend on the context's size.
-
-Q4_0 models crashed in ggml's 8x8 repack kernels, in this port and in
-llama.cpp's own MinGW build: gcc spills AVX values to the stack with aligned
-moves that Win64 does not align for. The CPU backend is now compiled with
-`-Wa,-muse-unaligned-vector-move`, as the programs already were.
-
-Two details matter for bit-identical results. The weights read by mul_mat
-go to the CPU's repack buffers, as llama.cpp places them. And ggml's base
-is compiled without `-march=native`, as CMake compiles it, while its CPU
-backend is compiled with it: with FMA, gcc fuses the multiply-adds of the
-reference quantizers and their results differ in the last bits.
-`tools/completion` is llama.cpp's `llama-completion`. With a fixed seed it
-writes the same text as `llama-completion` (eight runs over the three
-architectures, with penalties, typical, XTC, dynamic temperature,
-top-n-sigma, and the sampling settings a GGUF recommends): the RNG is
-`std::mt19937` and the uniform draws follow libstdc++. In conversation mode
-it reads the user's turns from stdin; with the built-in templates (the
-default, as in `llama-completion`) and with `--jinja`, three-turn chats on
-the three models, in English and Spanish, with and without colors, give
-the same bytes as `llama-completion` fed the same lines.
-`scripts/compare-completion.sh` runs both and compares (llama.cpp writes
-stdout in Windows text mode, `\r\n`, which it reads as `\n`).
-
-`tools/perplexity` is llama-perplexity's default mode (one sequence per
-batch). Over the first chunks of llama.cpp's README at `-c 512`, with
-`-b 512` and `-b 128`, it prints the same perplexities as llama-perplexity
-for all three architectures. It scores the logits on a pool of Goose
-threads, as llama.cpp does with its own; with gemma3's 262k-token
-vocabulary that is as much work as the model. Run time is within 10% of
-llama-perplexity's (4.9 s against 5.4 s for gemma-3-270m, 4 chunks).
-Both tools default to llama.cpp's thread count (half the logical CPUs
-above 4); `-t` sets it.
-
-`tools/batched` and `tools/parallel` are examples/batched and
-examples/parallel, on one cache unified for all the sequences (llama.cpp's
-`-kvu`; the cache split per sequence is not ported). Each cell of the cache
-keeps a position and the set of sequences it belongs to, so a shared prompt
-is stored once, and cells are taken as `llama_kv_cache::find_slot` takes
-them. When a batch has tokens of several sequences, each sequence's queries
-attend to the rows of its own cells (`ggml_flash_attn_ext_rows`), as in
-llama.cpp. The logits depend on which tokens share a batch, so both sides
-must decode the same batches to be compared: `tools/parallel` with 3
-clients, 5 requests, a shared system prompt and greedy sampling logs the
-same requests and responses as llama-parallel on 23 attention-only models
-of the table above (gemma-3's sliding window among them), and on Qwen3 0.6B
-also with a seed, without the shared prompt and with `--junk`;
-`tools/batched` writes the same 4 sequences as llama-batched.
-
-`tests/chat_template` applies every built-in template, and the template of
-every case in llama.cpp's `test-chat-template.cpp`, to its conversation,
-and compares with what libllama writes (180 checks); it also renders each
-case's Jinja template through `common/chat.goose` and compares with what
-libcommon's `common_chat_templates_apply` writes (35 checks). The cases and
-llama.cpp's answers are in `tests/data/chat_cases.txt`;
-`scripts/gen-chat-cases.sh` regenerates it from a llama.cpp build.
-
-`llama/grammar.goose` is llama.cpp's GBNF grammars: the same parse (rule
-ids and elements, compared by `tests/grammar` with what llama.cpp's parser
-makes of each test grammar), the same pushdown stacks, and the same
-rejection of the candidate tokens, code point by code point. With the
-grammars of llama.cpp's `grammars/` (JSON, lists, arithmetic, chess, C,
-Japanese) and a conversation with a grammar, `tools/completion --grammar`
-writes the same text as `llama-completion` on the three models.
-`scripts/gen-grammar-cases.sh` regenerates `tests/data/grammar_cases.txt`.
-
-`common/chat_apply.goose` is `common_chat_templates_apply` with Jinja the
-whole way: the conversation and tools as OpenAI JSON, the template's
-workarounds, and the output's parser from `common/parsers` (in
-`common/chat_parsers.goose`) or from the differential autoparser
-(`common/autoparser.goose`), which renders the template with pairs of sample
-conversations and reads its markers off the differences. The PEG parsers
-(`common/peg.goose`) also write the grammar; their GBNF names carry parser
-ids, so the parsers are made in the order GCC evaluates the C++ expressions
-(right operand of `+` first), and the grammars come out the same text.
-`tests/chat_peg` runs test-chat.cpp's 517 PEG cases against what llama.cpp
-makes of them (`scripts/gen-peg-chat-cases.sh`), and `tests/autoparser` the
-analysis of every template (`scripts/gen-autoparser-cases.sh`).
-
-`common/json_schema.goose` is `json-schema-to-grammar.cpp` with the schema
-model of `json-schema.cpp`: the schema is read with the standard library's
-`json` into a table of values, parsed into schema nodes, and each node
-becomes a rule. `tests/json_schema` compares the grammar text with what
-llama.cpp writes for every case of its test, errors and warnings included
-(`scripts/gen-schema-cases.sh` regenerates `tests/data/schema_cases.txt`),
-and `tools/completion -j` writes the same text as `llama-completion`.
-
-Goose programs get their arguments in the Windows code page, where
-llama.cpp's get UTF-8 from their manifest; `console::utf8_args` reads the
-command line as UTF-8 (a Japanese prompt failed before it).
-
-`common/jinja*.goose` is llama.cpp's Jinja engine, the one its chat
-templates run on. Its values are indices into arenas (llama.cpp shares
-them through `shared_ptr`), strings keep which parts came from the user's
-input, and errors are `exception::throw`s with llama.cpp's messages.
-`tests/jinja` renders every template case of llama.cpp's `test-jinja.cpp`
-and compares with what llama.cpp's engine makes of it (output, error, or
-not implemented); `scripts/gen-jinja-cases.sh` regenerates
-`tests/data/jinja_cases.txt`. Numbers and dates go through libc
-(`common/shim.c`: `snprintf`, `strtod`, `strftime`), as in llama.cpp.
-`tools/simple_chat` is examples/simple-chat with a `-s` seed: with the seed
-fixed in llama.cpp's too, three-turn chats in English and Spanish give the
-same bytes on all three models. Like simple-chat it runs 4 threads
-(libllama's default, not common's): ggml's flash attention splits a long
-KV cache by thread, so the thread count changes the last bits.
-
-`tools/server` is `llama-server`, over [Plod](https://github.com/kaitk/plod)
-and [goose-http](https://github.com/kaitk/goose-http) (HTTP/1.1 with
-keep-alive and chunked responses, worker threads) and `common/jdoc` (JSON
-written as nlohmann writes it). Goose threads may only use flat globals, and
-the model, vocab and templates are not flat, so the program's first thread
-loads them and serves the requests, as the lane Plod's workers send them to.
-The workers answer `/health`, CORS preflights, and 503 "Loading model" until
-the model is loaded; request bodies cross to the main thread as goose-http
-shared blobs, and responses come back as mail messages, the events of a
-stream as they are generated.
-
-A request that generates takes a slot, as in llama-server: 4 of them by
-default, each a sequence of one KV cache they share, which keeps the slot's
-last prompt for a request that starts as it does (the slot is chosen as
-llama-server chooses it: the most similar prompt, else an empty slot, else
-the one used longest ago). The main thread runs the slots at work together:
-each step decodes one batch, with the token each generating slot sampled last
-and the next tokens of the prompts, and samples a token for each slot. The
-sampler, the grammar, the chat parser and the response so far are globals,
-as they were with one slot, so each request's are kept as bytes while the
-globals hold another's (`tools/stash`: the server lists them once, and the
-list both writes them and reads them back). Requests beyond the slots wait
-in their order; the others (`/props`, `/tokenize`, ...) are served between
-steps. At each step the main thread checks whether each client is still
-there, and frees the slot of one that is not. When the cache is full, a slot
-not at work gives up its cells, as in llama-server. A recurrent model's
-cache holds one sequence, so it has one slot.
-
-`scripts/compare-server.py` sends 29 requests to it and to llama.cpp's
-`llama-server`, both with their 4 slots, and compares the responses, less
-ids, times and the cached-token counts: completions with and without
-streaming, stop strings, grammars and JSON schemas, chat with tool calls
-(streamed as deltas), prefilled assistant messages and errors. All 29 are
-the same, the slot each request got included, with Qwen3 0.6B and Qwen2.5
-0.5B, also with a context of 256 tokens, where slots are purged; and with
-Mamba 130M and one slot. The cached-token counts differ because
-llama-server reuses an SWA or recurrent cache only from a checkpoint, while
-this server keeps every attention cell and reuses more. Requests served at
-the same time are not compared with llama-server's, since which batch a
-token falls in depends on when each request arrives, and that changes the
-last bits of its logits; in a test build that decoded one slot per batch,
-four requests at once gave the responses of the same four served one after
-another.
-
-`LLAMA_GOOSE_TRACE=1` prints sums of layer 0's tensors to compare with
-llama.cpp's eval callback.
-
-## Results so far
-
-Measured on 2026-11-05 on the machine below, with ggml already compiled
-and cached on both sides. The C++ figures come from the `.ninja_log` of a
-CPU-only `Release` build of llama.cpp (llama-server, -completion,
--perplexity, -simple, -tokenize and test-tokenizer-0, without the web UI).
-
-**Build time.** Each Goose program is one C file, compiled by one gcc
-process on one core:
-
-| Program | Lines of C | `-O1` | `-O3` |
-|---|---:|---:|---:|
-| `tools/server` | 384k | 47 s | 106 s |
-| `tools/completion` | 172k | 26 s | 49 s |
-| `tools/perplexity` | 37k | 11 s | 15 s |
-| `tools/simple` | 36k | 11 s | |
-| `tools/cli` | 18k | 4 s | 6 s |
-| `scripts/test.sh` (build and run every test) | | 105 s | |
-
-Goose writes the server's 16 MB of C in about 3 s; gcc takes the rest.
-llama.cpp spends about 1,600 CPU-seconds on the same tools without ggml
-(`common/`, `src/`, the server, cpp-httplib, mtmd), spread over 16 cores.
-So the Goose build costs about 15 times less CPU: about 100 s for the five
-tools one after another, on one core at a time. The comparison flatters
-Goose: the C++ side has more than a hundred architectures, argument
-parsing, downloads and multimodal, which are not ported yet.
-
-**`-O1` is the default.** Goose code compiled at `-O1` runs as fast as at
-`-O3`: the heavy work is in ggml, which stays at `-O3`. At `-O0` the Goose
-code that runs per token (parsing, sampling, grammars) slows generation by
-a third.
-
-| | `-O3` | `-O1` | `-O0` |
-|---|---:|---:|---:|
-| server, LFM3 1.7B Q4_K_M, chat, 300 tokens: prompt | 114 t/s | 115 t/s | 114 t/s |
-| server, same: generation | 22.5 t/s | 22.5 t/s | 15.0 t/s |
-| completion, LFM2.5 230M Q8_0, 300 tokens | 67.3 t/s | 67.7 t/s | |
-| perplexity, gemma-3 270M, 4 chunks of 512 | 4.6 s | 4.6 s | |
-
-The output is the same at every level (same text, same perplexity).
-
-**Binary size**, both static, without symbols:
-
-| Program | Goose | llama.cpp |
-|---|---:|---:|
-| server | 4.4 MB | 16.8 MB |
-| completion | 3.2 MB | 9.6 MB |
-| perplexity | 2.4 MB | 9.6 MB |
-| simple | 2.4 MB | 5.8 MB |
-
-Here too part of the difference is what is not ported yet.
-
-**Inference speed and memory** are llama.cpp's: the kernels, the weights
-and the KV cache are ggml's in both.
-
-The rest of this README is the feasibility study written before the port.
-
-## Measurements
-
-All numbers come from this machine (16 threads, MinGW gcc, Ninja) and from
-llama.cpp at `faec40e87` (2026-07-11), built for the CPU only in
-`RelWithDebInfo`.
-
-### Where the build time goes
-
-The whole build takes **2,108 CPU-seconds** for 365 targets, taken from `.ninja_log`.
-
-| Component        | CPU time | Share |
-|------------------|---------:|------:|
-| `common/`        |   777 s  | 36.9% |
-| `src/` (libllama)|   499 s  | 23.6% |
-| `tools/server`   |   373 s  | 17.7% |
-| (other paths)    |   145 s  |  6.9% |
-| `tools/mtmd`     |   129 s  |  6.1% |
-| `ggml/src`       |   123 s  |  5.8% |
-| `cpp-httplib`    |    53 s  |  2.5% |
-| linking          |     8 s  |  0.4% |
-
-The slowest files are all C++ glue code. `common/arg.cpp` takes 78 s,
-`chat.cpp` 66 s, `peg-parser.cpp` 62 s and `server-task.cpp` 61 s. Eleven
-files in `common/` and the server include nlohmann/json.
-
-The compute core (`ggml/src`) takes **less than 6%** of the build time.
-
-### Goose compile speed
-
-Compiling the 428-line [raytracer](https://github.com/aguspiza/raytracing-goose)
-took 0.2 s with `goose` (it emits 6,774 lines of C) and 1.9 s with `gcc -O2`.
-For comparison, `arg.cpp` (4,137 lines of C++) takes 78 s.
-
-### Source size
-
-| Part                    | Lines (C/C++/CUDA/GLSL) |
-|-------------------------|------------------------:|
-| `ggml/src` (everything) | 300k |
-| of which `ggml-cpu`     |  87k |
-| of which `ggml-cuda`    |  38k |
-| of which `ggml-vulkan`  |  31k |
-| `src/`                  |  74k |
-| `common/`               |  35k |
-| `tools/`                |  45k |
-
-## What to expect
-
-### Build time: large gain, from porting the glue code
-
-About 78% of the build time is C++ in `common/`, `src/` and the server.
-Code generated by Goose is plain C, which compiles one or two orders of
-magnitude faster than C++ that uses templates and json.hpp. If those three
-parts are ported, a CPU-only build could drop from about 35 CPU-minutes to a
-few CPU-minutes (estimate, not measured).
-
-There is a risk. Goose emits **one C file per program**, so gcc cannot split
-that file across cores. A 100k-line Goose program becomes one very large C file,
-and its compile time must be measured early (see step 1 below).
-
-### The cheap alternative was tried: unity builds
-
-CMake can merge the `.cpp` files of each target into a few large ones
-(`-DCMAKE_UNITY_BUILD=ON`), with no change to the sources. On this fork
-(branch `mtp-clean`, all 87 executables, tests included):
-
-| Build  | Wall time | CPU time |
-|--------|----------:|---------:|
-| normal |    445 s  |  7,021 s |
-| unity  |   ~328 s  |  3,746 s |
-
-The machine was shared with other jobs, and another process killed the
-unity build by mistake once (it was resumed), so these are rough numbers.
-It did not work as is:
-
-- Four `static` helpers have the same name in two files each (`chat.cpp`,
-  `llama-kv-cache.cpp`, `models/gemma4.cpp`) and `mtmd-helper.cpp` refuses
-  mtmd's internal headers. Each needed a `SKIP_UNITY_BUILD_INCLUSION` line,
-  and new clashes will appear as upstream adds files.
-- The resulting test programs failed to start (`0xc0000139`, a function
-  missing from a DLL). Found later: Git's MinGW was first on PATH, with an
-  older `libstdc++-6.dll`; the normal build has the same problem there. So
-  this one was not unity's fault.
-
-It needs patches to the CMake files and constant care on every upstream
-merge, so it was dropped. Precompiled headers were ruled out too, because
-they complicate the build.
-
-### Goose and C in one program
-
-Goose mixes with C source code. A sidecar file next to the Goose root
-(`llama.build` beside `llama.goose`) lists C files with `c_sources`,
-`c_include`, `c_defines` and `c_libs`, and `goose build` compiles and links
-them with the program (docs/packages.md §3). Goose calls that C through
-`extern fn`. ggml can therefore stay C, built as part of the Goose program,
-while the logic above it moves to Goose.
-
-What crosses the boundary: scalars, flat structs, slices and pointers to
-them. Returns are a scalar or a flat struct, so ggml objects (`ggml_context`,
-`ggml_tensor`, a backend) cross as opaque `i64` handles.
-
-### Memory: no gain, no loss
-
-Memory use in llama.cpp is mostly the model weights (memory-mapped) and the
-KV cache. The language does not change either of them.
-
-Goose threads **share no memory**: every worker gets its own copy of the
-globals (spec §11.2). If the weights or the KV cache lived in Goose memory,
-each thread would need its own copy. With ggml kept in C they stay in C
-memory, shared by ggml's own C thread pool, as they are today. The possible
-saving is the C++ runtime and the heap churn of `std::string` and json in
-the server: megabytes, not gigabytes.
-
-### Inference speed: same as today
-
-- CPU token generation is limited by memory bandwidth and by hand-written
-  SIMD kernels (AVX2/AVX-512/NEON quantized dot products). Goose has no
-  intrinsics. `simd fn` relies on gcc auto-vectorization and forbids fusing
-  multiply-adds unless the baseline does. A Goose rewrite of `ggml-cpu`
-  would be slower.
-- The CUDA, Vulkan and Metal backends cannot be written in Goose.
-- The thread pool in ggml splits each matrix multiply across threads that
-  share the same tensors. Goose's no-sharing model cannot express that.
-
-All three stay in C, mixed into the Goose program, so the speed of the
-kernels does not change. Goose code calls ggml per graph node (a few
-thousand direct C calls per token), never per element, so the boundary
-should not show up in tokens per second.
-
-### Readability: real gain where the logic lives
-
-`src/` (model architectures, vocabulary, sampling, KV cache bookkeeping) and
-`common/` (argument parsing, chat templates, grammars) are where a reader
-gets lost in C++. These parts are also the ones that dominate build time,
-so readability and build time point to the same parts of the code.
-
-## Proposed plan
-
-1. **Measure the risk first.** Port one self-contained file from `common/`,
-   such as `json-schema-to-grammar.cpp`, to Goose. Compare its compile time,
-   its output on the existing tests and the size of the generated C. Then
-   generate a synthetic 50k-line Goose program to see how gcc handles one
-   large C file.
-2. **ggml with `goose build`.** List ggml's C sources (CPU backend first,
-   then Vulkan) in the `.build` sidecar, so `goose build` compiles them with
-   the program. It is checked by running `test-backend-ops` against the
-   CMake build. Vulkan shader generation and CUDA need a step the sidecar
-   cannot express yet. Avoid `cmake_target` in the sidecar, since the goal
-   is to drop CMake.
-3. **Port `common/`, then `src/`**, file by file, behind the existing
-   `llama.h` C API (Goose `export fn`). The C++ build stays as the reference:
-   every step must give identical tokens on a fixed prompt and seed.
-4. **Server last.** It depends on json and HTTP, and Goose's `export fn`
-   calls must stay on one thread. Its threading model needs its own design.
-
-Libraries that need porting (for example a json library) get their own
-folders next to this one, named `<name>.goose`.
+</details>
 
 ## Layout
 
@@ -532,9 +317,15 @@ llama/              libllama in Goose (package `llama`):
   vocab.goose         vocabularies and tokenizers (vocab_pre.goose generated)
   model.goose         hyperparameters and weights
   context.goose       KV cache, graphs, decode
-tools/              programs: simple.goose
-scripts/            build, test, weekly sync, generators
-tests/              Goose programs that exit non-zero on failure
+  sampler.goose       the sampler chain
+  grammar.goose       GBNF grammars
+  chat.goose          the built-in chat templates
+common/             llama.cpp's common/ (package `common`): the Jinja engine, chat
+                    templates and their parsers, PEG, JSON schemas, JSON documents, the console
+tools/              the programs, and the packages they share (net/, proc/, stash/)
+scripts/            build, test, compare with llama.cpp, weekly sync, generators
+tests/              Goose programs that exit non-zero on failure; data/ has llama.cpp's answers
+docs/               the notes on each check, and the study written before the port
 ```
 
 Every Goose file ported from llama.cpp starts with a line naming its
@@ -563,17 +354,36 @@ gets `-O3` from its sidecar. It compiles only the package objects that are
 missing, so the program's C is compiled once, not twice as a `goose build`
 followed by the optimized compile would. v2026.4 names a package's objects
 by a hash, and only a whole `goose build` writes the response files that
-list them for the link, so `scripts/build.sh` writes those itself. See "Results so far" for why `-O1`.
+list them for the link, so `scripts/build.sh` writes those itself.
 
 ggml's C is compiled once (about 1.5 minutes) and cached under `~/.goose`.
-After that each program takes a few seconds to a minute ("Results so
-far"): well under a second to a few seconds for Goose to write its C, the
+After that each program takes a few seconds to a minute ([Numbers](#numbers)):
+well under a second to a few seconds for Goose to write its C, the
 rest gcc on that one file.
 
 Goose keeps arrays of up to 256 elements in static data and builds larger
 ones element by element when the program starts. gcc took 30 s to optimize
 that function for the Unicode tables, so they are one binary file the
 program embeds (`embed_file`).
+
+<details>
+<summary>Why <code>-O1</code> (measured on 2026-11-05)</summary>
+
+**`-O1` is the default.** Goose code compiled at `-O1` runs as fast as at
+`-O3`: the heavy work is in ggml, which stays at `-O3`. At `-O0` the Goose
+code that runs per token (parsing, sampling, grammars) slows generation by
+a third.
+
+| | `-O3` | `-O1` | `-O0` |
+|---|---:|---:|---:|
+| server, LFM3 1.7B Q4_K_M, chat, 300 tokens: prompt | 114 t/s | 115 t/s | 114 t/s |
+| server, same: generation | 22.5 t/s | 22.5 t/s | 15.0 t/s |
+| completion, LFM2.5 230M Q8_0, 300 tokens | 67.3 t/s | 67.7 t/s | |
+| perplexity, gemma-3 270M, 4 chunks of 512 | 4.6 s | 4.6 s | |
+
+The output is the same at every level (same text, same perplexity).
+
+</details>
 
 ## Weekly sync with upstream
 
@@ -595,3 +405,9 @@ fetch`: no branch or file there changes) and sorts every file changed since
 
 `git -C ../llama.cpp diff <old> <new> -- <path>` shows what changed in one
 file, and the report prints that command with both commits filled in.
+
+## Background
+
+[docs/feasibility-study.md](docs/feasibility-study.md) is the study written
+before the port: where llama.cpp's build time goes, what Goose could and
+could not change, and the plan that was followed.
