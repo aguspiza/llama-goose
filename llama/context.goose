@@ -78,6 +78,7 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     }
     c.kv_buf = ggml::backend_alloc_ctx_tensors(c.kv_ctx, m.backend);
     ggml::backend_buffer_clear(c.kv_buf, 0);
+    drop_graph();
     c.galloc = ggml::gallocr_new(m.backend);
     c.n_past = 0;
     cell_pos.clear();
@@ -555,6 +556,7 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
     let n_tokens = tokens.len;
     guard n_tokens > 0 else { abort("encode: no tokens"); }
     let n_kv = pad_to(n_tokens, 256);
+    drop_graph();
     let gctx = ggml::init_graph(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false));
     var b = Build {
         ctx: gctx,
@@ -3248,29 +3250,33 @@ fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i
     c.n_past = seq_pos_max(0) + 1;
 }
 
-// One ubatch: its tokens placed in free cells, then run.
-fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i64[:], seqs: const u64[:],
-                 outputs: const i32[:], logits: f32[>..]&) {
-    let n_tokens = tokens.len;
-    let n_outputs = outputs.len;
+// What the graph of a ubatch depends on.
+struct Shape { n_tokens: i64, n_outputs: i64, n_kv: i64, n_slices: i64, n_rows: i64, n_rows_swa: i64, n_enc: i64 }
 
-    // the cells (find_slot, apply_ubatch)
-    var idxs: i64[>..] = [];
-    find_slot(n_tokens, idxs);
-    for idx, i in idxs {
-        cell_pos[idx] = pos[i];
-        cell_seqs[idx] = seqs[i];
-        n_used++;
-    }
-    head = idxs[idxs.len - 1] + 1;
+// The graph of the last ubatch (llama.cpp's gf_res_prev), kept: a ubatch of
+// the same shape runs it again (llm_graph_result::can_reuse), and so is
+// spared building it and allocating its tensors, each token while one is
+// generated. Its nodes are in init_graph's memory: it is dropped before
+// another graph is built there.
+struct Kept { b: Build, out: ggml::Tensor, shape: Shape, live: bool }
+var kept = Kept { .. };
 
+fn drop_graph() {
+    if kept.b.ctx.p != 0 { ggml::free(kept.b.ctx); }
+    kept = Kept { .. };
+}
+
+// Builds the graph of a ubatch of this shape and allocates its tensors: kept.
+fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
+    drop_graph();
+    let n_tokens = sh.n_tokens;
+    let n_outputs = sh.n_outputs;
     let gctx = ggml::init_graph(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false));
     var b = Build {
         ctx: gctx,
         gf: ggml::new_graph_custom(gctx, MAX_NODES, false),
         n_tokens: n_tokens,
-        // llama.cpp's get_n_kv: the cells in use, padded to 256
-        n_kv: min(c.n_ctx, max(256, pad_to(used_max_p1(), 256))),
+        n_kv: sh.n_kv,
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             pos: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens * n_pos_per_embd(m)),
@@ -3286,28 +3292,17 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
             rows: ggml::NONE,
             rows_swa: ggml::NONE,
         },
-        tracing: false,
+        tracing: tracing,
         traced: [],
     };
-    {
-        var flag: u8[>..] = [];
-        b.tracing = env("LLAMA_GOOSE_TRACE", flag) && flag == "1";
-    }
     let has_swa = m.hp.swa_type != model::SWA_NONE;
-    // unified: each slice of tokens attends to the rows of its sequences' cells
-    let use_rows = c.unified && m.hp.arch != model::ARCH_T5;
-    let n_slices = if use_rows { n_slices_of(seqs) } else { 1 };
-    var rows: i32[>..] = [];
-    var rows_swa: i32[>..] = [];
-    if use_rows {
-        let n_rows = kv_rows(pos, seqs, n_slices, 0, rows);
-        b.inp.rows = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, n_rows, n_slices);
-        b.inp.mask = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, n_rows, n_tokens / n_slices, 1, n_slices);
+    if sh.n_rows > 0 {      // unified
+        b.inp.rows = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, sh.n_rows, sh.n_slices);
+        b.inp.mask = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, sh.n_rows, n_tokens / sh.n_slices, 1, sh.n_slices);
         ggml::set_input(b.inp.rows);
         if has_swa {
-            let n_rows_swa = kv_rows(pos, seqs, n_slices, m.hp.n_swa, rows_swa);
-            b.inp.rows_swa = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, n_rows_swa, n_slices);
-            b.inp.mask_swa = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, n_rows_swa, n_tokens / n_slices, 1, n_slices);
+            b.inp.rows_swa = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, sh.n_rows_swa, sh.n_slices);
+            b.inp.mask_swa = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, sh.n_rows_swa, n_tokens / sh.n_slices, 1, sh.n_slices);
             ggml::set_input(b.inp.rows_swa);
         } else {
             b.inp.rows_swa = b.inp.rows;
@@ -3389,6 +3384,53 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     ggml::set_output(out);
     ggml::build_forward_expand(b.gf, out);
     guard ggml::gallocr_alloc_graph(c.galloc, b.gf) else { abort("decode: failed to allocate the graph"); }
+    kept = Kept { b: b, out: out, shape: sh, live: !tracing };   // a traced graph's sums are of its one run
+}
+
+// One ubatch: its tokens placed in free cells, then run.
+fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i64[:], seqs: const u64[:],
+                 outputs: const i32[:], logits: f32[>..]&) {
+    let n_tokens = tokens.len;
+    let n_outputs = outputs.len;
+
+    // the cells (find_slot, apply_ubatch)
+    var idxs: i64[>..] = [];
+    find_slot(n_tokens, idxs);
+    for idx, i in idxs {
+        cell_pos[idx] = pos[i];
+        cell_seqs[idx] = seqs[i];
+        n_used++;
+    }
+    head = idxs[idxs.len - 1] + 1;
+
+    var tracing = false;
+    {
+        var flag: u8[>..] = [];
+        tracing = env("LLAMA_GOOSE_TRACE", flag) && flag == "1";
+    }
+    let has_swa = m.hp.swa_type != model::SWA_NONE;
+    // unified: each slice of tokens attends to the rows of its sequences' cells
+    let use_rows = c.unified && m.hp.arch != model::ARCH_T5;
+    let n_slices = if use_rows { n_slices_of(seqs) } else { 1 };
+    var rows: i32[>..] = [];
+    var rows_swa: i32[>..] = [];
+    var sh = Shape {
+        n_tokens: n_tokens,
+        n_outputs: n_outputs,
+        // llama.cpp's get_n_kv: the cells in use, padded to 256
+        n_kv: min(c.n_ctx, max(256, pad_to(used_max_p1(), 256))),
+        n_slices: n_slices,
+        n_rows: 0,
+        n_rows_swa: 0,
+        n_enc: c.n_enc,
+    };
+    if use_rows {
+        sh.n_rows = kv_rows(pos, seqs, n_slices, 0, rows);
+        if has_swa { sh.n_rows_swa = kv_rows(pos, seqs, n_slices, m.hp.n_swa, rows_swa); }
+    }
+    if !kept.live || kept.shape != sh { build_graph(c, m, sh, tracing); }
+    var b = kept.b;
+    let out = kept.out;
 
     var pos32: i32[>..] = [];
     // M-RoPE: a token's position p is [p, p, p, 0], section after section
@@ -3451,5 +3493,4 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     logits.clear();
     logits.resize(ggml::nelements(out), 0.0);
     ggml::backend_get_f32(out, logits, 0);
-    ggml::free(gctx);
 }
