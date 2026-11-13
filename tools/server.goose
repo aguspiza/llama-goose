@@ -1846,7 +1846,7 @@ fn sample_slot(s: i64, row: const f32[:]) {
     logits.append(row);
     for lb in t_logit_bias { logits[lb.token] += lb.bias; }
     if t_ignore_eos {
-        for id in vocab::n_tokens() { if vocab::is_eog(id as! i32) { logits[id] = -F_INF; } }
+        for id in vocab::eog_ids { logits[id] = -F_INF; }
     }
     var cands: sampler::Cand[>..] = [];
     let tok = sampler::sample(ch, cands, logits);

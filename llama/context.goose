@@ -48,6 +48,7 @@ fn pad_to(n: i64, to: i64) -> i64 { (n + to - 1) / to * to }
 fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     c.n_ctx = pad_to(n_ctx, 256);
     if c.n_threads <= 0 { c.n_threads = ggml::default_threads(); }
+    ggml::use_threadpool(m.backend, c.n_threads);
     let n_layer = m.hp.n_layer as i64;
     c.kv_ctx = ggml::init(4 * n_layer * ggml::tensor_overhead(), true);
     for il in n_layer {

@@ -16,4 +16,6 @@ extern fn backend_cpu_set_n_threads(b: Backend, n: i32) = "ggml_backend_cpu_set_
 extern fn alloc_weights(ctx: Ctx, matmul: const Tensor[:], matmul_id: const Tensor[:], n_ids: i64,
                         bufs: Buffer[:]) -> bool = "lg_alloc_weights";
 extern fn default_threads() -> i32 = "lg_default_threads";
+// The backend's threads kept between graphs, not started at each one.
+extern fn use_threadpool(b: Backend, n_threads: i32) = "lg_use_threadpool";
 extern fn set_quiet(q: i32) = "lg_set_quiet";

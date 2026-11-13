@@ -89,6 +89,23 @@ fn view(c: Cand[>..]&, a: Cands) -> Cand[:] { c[a.start..a.start + a.size] }
 // Sorts by logit, highest first (the partial sorts of llama.cpp, in full).
 fn sort_desc(xs: Cand[:]) { stable_sort(xs) { a, b => a.logit > b.logit }; }
 
+// The k highest logits in xs[..k], as the first k of sort_desc, without
+// sorting the rest: of a vocab of 150,000 tokens the samplers keep 40. Each
+// token above the lowest kept takes its place among them. Beyond 128, where
+// llama.cpp leaves its partial sort too, the places cost more than the sort.
+fn top_k_desc(xs: Cand[:], k: i64) {
+    if k > 128 { sort_desc(xs); return; }
+    sort_desc(xs[..k]);
+    for i in k..xs.len {
+        guard xs[i].logit > xs[k - 1].logit else { continue; }
+        let x = xs[i];
+        xs[i] = xs[k - 1];
+        var j = k - 1;
+        while j > 0 && xs[j - 1].logit < x.logit { xs[j] = xs[j - 1]; j -= 1; }
+        xs[j] = x;
+    }
+}
+
 fn temp_impl(xs: Cand[:], temp: f32) {
     guard xs.len > 0 else { return; }
     if temp <= 0.0 {
@@ -514,7 +531,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
         KIND_TOP_K => {
             guard s.k > 0 else { return; }
             let k = min(s.k, a.size);
-            if !a.sorted { sort_desc(view(c, a)); a.sorted = true; }
+            if !a.sorted { top_k_desc(view(c, a), k); a.sorted = true; }
             a.size = k;
         },
         KIND_TYPICAL => {
@@ -641,7 +658,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             // int(k), as x86 converts: what is out of range becomes INT_MIN
             let ki: i64 = if kf != kf || kf >= 2147483648.0 || kf < -2147483648.0 { -2147483648 } else { kf as! i32 };
             let kk = min(max(ki, 1), a.size);
-            if !a.sorted { sort_desc(view(c, a)); a.sorted = true; }
+            if !a.sorted { top_k_desc(view(c, a), kk); a.sorted = true; }
             a.size = kk;
             softmax_impl(c, a, true);
             mirostat_draw(c, s, a);

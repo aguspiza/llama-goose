@@ -167,3 +167,14 @@ int lg_default_threads(void) {
 #endif
     return n > 0 ? (n <= 4 ? n : n / 2) : 4;
 }
+
+// A pool of threads the backend keeps from one graph to the next, as
+// llama.cpp's programs attach to their context: without one, ggml starts
+// its threads and joins them at each graph, each token.
+void lg_use_threadpool(ggml_backend_t backend, int n_threads) {
+    static struct ggml_threadpool * pool;
+    if (pool) { ggml_threadpool_free(pool); }
+    struct ggml_threadpool_params params = ggml_threadpool_params_default(n_threads);
+    pool = ggml_threadpool_new(&params);
+    ggml_backend_cpu_set_threadpool(backend, pool);
+}
