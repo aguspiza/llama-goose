@@ -80,8 +80,9 @@ jobs:
           path: ${{ env.ZIP }}
 
   linux:
-    # glibc 2.35, the oldest the Goose compiler runs on: the binaries run there and later
-    runs-on: ubuntu-22.04
+    # Ubuntu 24.04: the server's HTTP package needs liburing 2.5 and the io_uring of
+    # kernel 6.x (22.04's lack them); the binaries need glibc 2.39 or later
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
