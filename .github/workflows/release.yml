@@ -1,0 +1,83 @@
+# Builds the tools for Windows x64 and publishes them as a GitHub release.
+# A tag v* makes the release of that tag; a manual run only keeps the zip as
+# the run's artifact.
+#
+# The binaries are built for x86-64-v3 (AVX2, FMA, F16C, BMI2: Haswell, Zen
+# and later), not for the runner's CPU, so that other machines run them.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GOOSE_VERSION: v2026.4
+  MARCH: x86-64-v3
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            unzip
+            zip
+
+      - name: Install Goose
+        run: |
+          curl -fsSL -o goose.zip \
+            "https://github.com/aardappel/goose/releases/download/$GOOSE_VERSION/goose-$GOOSE_VERSION-windows-x64.zip"
+          unzip -q goose.zip -d "$HOME"
+          echo "GOOSE=$HOME/goose-$GOOSE_VERSION-windows-x64/goose.exe" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          # ggml's CPU backend is built for the same instruction set as the programs
+          sed -i "s/\"-march=native\"/\"-march=$MARCH\"/" ggml/cpu/ggml_cpu.build
+          grep -q -- "-march=$MARCH" ggml/cpu/ggml_cpu.build
+          gcc --version | head -1
+          "$GOOSE" --version
+          scripts/build.sh tools/server.goose tools/cli.goose tools/completion.goose \
+            tools/simple.goose tools/simple_chat.goose tools/perplexity.goose \
+            tools/batched.goose tools/parallel.goose
+
+      - name: Package
+        run: |
+          name="llama-goose-${GITHUB_REF_NAME//\//-}-windows-x64"
+          mkdir "$name"
+          cp tools/*.exe "$name/"
+          # the MinGW runtime the programs link to
+          ldd "$name"/*.exe | grep -io '/mingw64/bin/[^ ]*\.dll' | sort -u | xargs -r -I{} cp {} "$name/"
+          cp README.md "$name/"
+          ls -la "$name"
+          # it starts with MinGW off PATH, from the DLLs beside it: no arguments, it prints its usage
+          out=$(PATH=/usr/bin "$name/simple.exe" 2>&1 || true)
+          grep -q "example usage" <<< "$out"
+          zip -qr "$name.zip" "$name"
+          echo "ZIP=$name.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP }}
+          path: ${{ env.ZIP }}
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP }}
+          generate_release_notes: true

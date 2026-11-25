@@ -349,8 +349,13 @@ scripts/test.sh                             # build and run everything in tests/
 ```
 
 `scripts/build.sh` runs goose build's own commands (from `--dry-run`), with
-the program's C at `-O1 -march=native` (`OPT=3` for another level). ggml
-gets `-O3` from its sidecar. It compiles only the package objects that are
+the program's C at `-O1 -march=native` (`OPT=3` for another level,
+`MARCH=x86-64-v3` for another instruction set). ggml gets `-O3` from its
+sidecar.
+
+`.github/workflows/release.yml` builds the tools for Windows x64 at
+`x86-64-v3` (AVX2), ggml's CPU backend too, with the MinGW DLLs they need,
+and publishes the zip as the release of each tag `v*`. It compiles only the package objects that are
 missing, so the program's C is compiled once, not twice as a `goose build`
 followed by the optimized compile would. v2026.4 names a package's objects
 by a hash, and only a whole `goose build` writes the response files that

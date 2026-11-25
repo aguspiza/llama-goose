@@ -9,9 +9,12 @@
 # GOOSE  the Goose compiler, v2026.4 (default: ~/goose/goose.exe; the
 #        `goose` on PATH may be a different program with the same name)
 # OPT    gcc's optimization level for the program's C (default 1)
+# MARCH  gcc's -march for the program's C (default native; a release takes
+#        one that other CPUs run, with ggml/cpu/ggml_cpu.build's set alike)
 set -euo pipefail
 
 opt=${OPT:-1}
+march=${MARCH:-native}
 goose=${GOOSE:-$HOME/goose/goose.exe}
 export GOOSE_CC=gcc
 # MinGW: gcc spills 32-byte AVX values to the stack with aligned moves, which
@@ -47,7 +50,7 @@ for program in "$@"; do
         { sed 's/.*/"&"/' <<< "$objs"; grep -v '\.o"$' "$rsp" || true; } > "$rsp.new"
         mv "$rsp.new" "$rsp"
     done
-    link=${link/ -O2 / -O$opt -march=native $avx_fix }
+    link=${link/ -O2 / -O$opt -march=$march $avx_fix }
     eval "$link"
     echo "built ${program%.goose}.exe"
 done
