@@ -11,7 +11,7 @@ speed. It builds with a tenth of the CPU time, without CMake, into binaries
 a third of the size. It is a work in progress: it runs on the CPU only, and
 a good part of llama.cpp is [not ported yet](#what-is-missing).
 
-Follows llama.cpp `1b6935b22` (2026-11-02), ggml 0.28.0.
+Follows llama.cpp `dfdfca22b` (2026-11-24), ggml 1.0.0.
 
 ## At a glance
 
@@ -65,7 +65,7 @@ in part.
 | ❌ Other kinds of model | Embedding and encoder-only models (the bert family and its WPM tokenizer, t5encoder), diffusion models, audio decoders. |
 | ❌ Multimodal | Images and audio (`mtmd`, `--mmproj`). The vision models in the list run as text models. |
 | ❌ Adapters and state | LoRA adapters, control vectors, saving and loading a context's state (session and prompt cache files). |
-| 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). Not the cache split per sequence, context shift or self-extend. A recurrent model and T5 hold one sequence. |
+| 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). Not the cache split per sequence, the smaller cache of the sliding-window layers (as `--swa-full`, so the logits of those models may differ in their last bits once a server's slots reuse cells), context shift or self-extend. A recurrent model and T5 hold one sequence. |
 | 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
 | 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
 | 🟡 `llama-completion`, `llama-cli` | Not context shift, prompt cache files or self-extend; the cli has no images, audio or `-hf` downloads. |
@@ -80,9 +80,9 @@ in part.
 | ✅ Tokenizers: SPM, BPE, UGM, RWKV, PLaMo2, PLaMo3; Unicode and the pre-tokenizer splits | the same tokens on llama.cpp's 15 SPM and BPE test vocabs; the others through their models |
 | ✅ Models: loading, the graphs of 65 architectures, the KV cache for several sequences, recurrent states, T5's encoder | the same text as `llama-simple`, the same perplexities as `llama-perplexity`, the same batches as `llama-batched` and `llama-parallel` |
 | ✅ Sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the settings a model recommends | the same text as `llama-completion` with a seed |
-| ✅ Grammars: GBNF, lazy grammars, JSON schema to grammar | the 470 cases of llama.cpp's grammar tests and the 83 of its JSON schema test: the same parse, the same grammar text |
-| ✅ Chat templates: the 54 built-in ones and the Jinja engine | the 383 cases of `test-jinja.cpp`; 215 checks of prompts against libllama and libcommon |
-| ✅ Tool calls and reasoning: the PEG parsers, the differential autoparser, the 22 dedicated handlers | llama.cpp's analysis of its 75 templates; the 517 cases of `test-chat.cpp` |
+| ✅ Grammars: GBNF, lazy grammars, JSON schema to grammar | the 526 cases of llama.cpp's grammar tests and the 87 of its JSON schema test: the same parse, the same grammar text |
+| ✅ Chat templates: the 54 built-in ones and the Jinja engine | the 406 cases of `test-jinja.cpp`; 215 checks of prompts against libllama and libcommon |
+| ✅ Tool calls and reasoning: the PEG parsers, the differential autoparser, the 22 dedicated handlers | llama.cpp's analysis of its 83 templates; the 603 cases of `test-chat.cpp` |
 
 ### Programs
 

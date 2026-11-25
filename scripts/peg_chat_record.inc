@@ -39,7 +39,7 @@ static void record_msg(const common_chat_msg & msg) {
     }
 }
 
-static void record_case(const std::string & path, common_chat_templates * tmpls, peg_test_case tc) {
+static void record_case(const std::string & path, common_chat_templates * tmpls, const common_peg_tokens & specials, peg_test_case tc) {
     if (tc.params.messages.empty()) {
         tc.params.messages = { message_user };
     }
@@ -72,6 +72,17 @@ static void record_case(const std::string & path, common_chat_templates * tmpls,
     field(path);
     field(tc.input);
     field(inputs.dump());
+    std::vector<std::pair<llama_token, std::string>> by_id;
+    for (const auto & [piece, id] : specials.ids) {
+        by_id.push_back({ id, piece });
+    }
+    std::sort(by_id.begin(), by_id.end());
+    json sp = json::array();
+    for (const auto & [id, piece] : by_id) {
+        sp.push_back(json::array({ json(piece), json(id) }));
+    }
+    field(sp.dump());
+    const bool tokenized = !specials.ids.empty();
 
     common_chat_params applied;
     try {
@@ -110,11 +121,28 @@ static void record_case(const std::string & path, common_chat_templates * tmpls,
 
     common_chat_parser_params pp(applied);
     pp.parser = applied.parser;
+    if (tokenized) {
+        pp.generation_prompt = fake_input(fake_tokenize(specials, applied.generation_prompt));
+    }
     const auto & in = tc.input;
+    const auto in_tokens = fake_tokenize(specials, in);
+    // a cut at the end of the token it falls in, when tokenized
+    const auto token_cut = [&](size_t pos) {
+        size_t end = 0;
+        for (const auto & t : in_tokens) {
+            if (end >= pos) {
+                break;
+            }
+            end += t.piece.size();
+        }
+        return end;
+    };
     std::vector<std::pair<size_t, bool>> cuts;
     if (in.size() >= 3) {
-        cuts.push_back({ record_utf8_safe(in, in.size() / 3), true });
-        cuts.push_back({ record_utf8_safe(in, 2 * in.size() / 3), true });
+        const size_t a = record_utf8_safe(in, in.size() / 3);
+        const size_t b = record_utf8_safe(in, 2 * in.size() / 3);
+        cuts.push_back({ tokenized ? token_cut(a) : a, true });
+        cuts.push_back({ tokenized ? token_cut(b) : b, true });
     }
     cuts.push_back({ in.size(), tc.is_partial });
     field(std::to_string(cuts.size()));
@@ -122,7 +150,8 @@ static void record_case(const std::string & path, common_chat_templates * tmpls,
         field(std::to_string(cut));
         field(partial ? "1" : "0");
         try {
-            auto msg = common_chat_parse(common_chat_input(in.substr(0, cut)), partial, pp);
+            const auto input = tokenized ? fake_input(fake_tokenize(specials, in.substr(0, cut))) : common_chat_input(in.substr(0, cut));
+            auto msg = common_chat_parse(input, partial, pp);
             field("1");
             record_msg(msg);
         } catch (const std::exception & e) {

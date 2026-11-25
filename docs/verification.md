@@ -17,15 +17,15 @@ has the summary.
 | model loading, KV cache (one, unified for several sequences, as `-kvu`), recurrent states, decode; T5's encoder | ported for 65 architectures (see [Architectures](../README.md#architectures)); recurrent models and T5 hold one sequence | `tools/simple`, `tools/perplexity`, `tools/batched`, `tools/parallel` |
 | other architectures | not yet (see [Architectures](../README.md#architectures)) | |
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
-| GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 470 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
-| JSON schema to grammar | ported | `tests/json_schema`: the 83 cases of `test-json-schema-to-grammar.cpp`, the same grammar text; `tools/completion -j`/`-jf` |
+| GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 526 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
+| JSON schema to grammar | ported | `tests/json_schema`: the 87 cases of `test-json-schema-to-grammar.cpp`, the same grammar text; `tools/completion -j`/`-jf` |
 | lazy grammars (word and token triggers) | ported | through the tool call grammars below |
 | sampling: adaptive-p, infill; regex grammar triggers | not yet | |
 | built-in chat templates (`llama_chat_apply_template`, 54 of them, and their detection from a Jinja source) | ported | `tests/chat_template`, `tools/simple_chat` |
-| Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 383 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
+| Jinja engine (`common/jinja`: lexer, parser, runtime, builtins, input marking, caps) | ported | `tests/jinja`: all 406 cases of `test-jinja.cpp`, and its caps, stats and string-parts checks |
 | Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported | `tests/chat_template`, `tools/completion --jinja` |
 | PEG parsers (`common/peg-parser`) | ported | `tests/peg`: test-gbnf-generation's cases and parse cases of test-basic |
-| tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 75 templates of `models/templates`; `tests/chat_peg`: all 517 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
+| tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 83 templates of `models/templates`; `tests/chat_peg`: all 603 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
 | `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
 | `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported, with llama-server's 4 slots in one KV cache (`-np` for another number; one for a recurrent model): the requests of the slots at work are decoded together, a batch at a time, a client that leaves stops its generation, and `/health` and CORS preflights are answered meanwhile; except the prompt cache in RAM (`--cache-ram`), a cache split per slot, embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses, slots included, with Qwen3 and Qwen2.5 |
 | `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images, audio and `-hf` downloads; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
@@ -149,7 +149,7 @@ conversations and reads its markers off the differences. The PEG parsers
 (`common/peg.goose`) also write the grammar; their GBNF names carry parser
 ids, so the parsers are made in the order GCC evaluates the C++ expressions
 (right operand of `+` first), and the grammars come out the same text.
-`tests/chat_peg` runs test-chat.cpp's 517 PEG cases against what llama.cpp
+`tests/chat_peg` runs test-chat.cpp's 603 PEG cases against what llama.cpp
 makes of them (`scripts/gen-peg-chat-cases.sh`), and `tests/autoparser` the
 analysis of every template (`scripts/gen-autoparser-cases.sh`).
 
@@ -218,8 +218,16 @@ streaming, stop strings, grammars and JSON schemas, chat with tool calls
 the same, the slot each request got included, with Qwen3 0.6B and Qwen2.5
 0.5B, also with a context of 256 tokens, where slots are purged; and with
 Mamba 130M and one slot. The cached-token counts differ because
-llama-server reuses an SWA or recurrent cache only from a checkpoint, while
-this server keeps every attention cell and reuses more. Requests served at
+llama-server reuses a recurrent cache only from a checkpoint. A sliding-window
+model's cache is reused as llama-server does without checkpoints: only when it
+starts before the window of the first token to evaluate. With gemma-4 E2B 23
+of the 29 are the same: llama.cpp keeps the sliding-window layers in a smaller
+cache of their own (`llama_kv_cache_iswa`), whose cells are placed and
+overwritten apart from the others, and this port has one cache for all the
+layers; after slots are cleared and reused, those layers attend to another
+number and order of cells, and the last bits of the logits change (with
+llama-server's `--swa-full`, which makes the two caches alike, all 29 are the
+same). Requests served at
 the same time are not compared with llama-server's, since which batch a
 token falls in depends on when each request arrives, and that changes the
 last bits of its logits; in a test build that decoded one slot per batch,

@@ -28,9 +28,9 @@ let T_DOT = 17;
 let T_COLON = 18;
 let T_PIPE = 19;
 let T_ADDITIVE = 21;     // + - ~
-let T_MULTIPLICATIVE = 22;   // * / %
-let T_COMPARISON = 23;   // < > <= >= == !=
-let T_UNARY = 24;        // - +
+let T_MULTIPLICATIVE = 22;   // * // / %
+let T_POWER = 23;        // **
+let T_COMPARISON = 24;   // < > <= >= == !=
 let T_COMMENT = 25;      // {# ... #}
 
 // A token: its type, its value (atext[s..s + n]) and where it starts.
@@ -47,7 +47,7 @@ fn tok_text(t: Tok) -> const u8[:] { atext[t.s..t.s + t.n] }
 struct Seq { s: const u8[:], t: u8 }
 
 // In the order they are tried.
-let SEQUENCES: Seq[31] = [
+let SEQUENCES: Seq[33] = [
     Seq { "{%-", T_OPEN_STMT }, Seq { "-%}", T_CLOSE_STMT },
     Seq { "{{-", T_OPEN_EXPR }, Seq { "-}}", T_CLOSE_EXPR },
     Seq { "{%", T_OPEN_STMT }, Seq { "%}", T_CLOSE_STMT },
@@ -59,7 +59,8 @@ let SEQUENCES: Seq[31] = [
     Seq { "<=", T_COMPARISON }, Seq { ">=", T_COMPARISON }, Seq { "==", T_COMPARISON },
     Seq { "!=", T_COMPARISON }, Seq { "<", T_COMPARISON }, Seq { ">", T_COMPARISON },
     Seq { "+", T_ADDITIVE }, Seq { "-", T_ADDITIVE }, Seq { "~", T_ADDITIVE },
-    Seq { "*", T_MULTIPLICATIVE }, Seq { "/", T_MULTIPLICATIVE }, Seq { "%", T_MULTIPLICATIVE },
+    Seq { "**", T_POWER }, Seq { "*", T_MULTIPLICATIVE }, Seq { "//", T_MULTIPLICATIVE },
+    Seq { "/", T_MULTIPLICATIVE }, Seq { "%", T_MULTIPLICATIVE },
     Seq { "=", T_EQUALS },
 ];
 
@@ -261,27 +262,6 @@ fn lex(source: const u8[:], src: const u8[:]) {
         if lx.pos >= src.len { break; }
 
         let ch = src[lx.pos];
-        let closing = ch == '-' && next_is(lx, "%}", 1);
-
-        // a unary operator, or the sign of a number
-        if !closing && (ch == '-' || ch == '+') {
-            start_pos = lx.pos;
-            let lt = last_type();
-            if lt == T_TEXT || lt == T_EOF {
-                var msg: u8[>..] = [];
-                msg.append("unexpected character: ");
-                msg.push(ch);
-                lex_fail(msg, source, lx.pos);
-            }
-            if lt != T_IDENT && lt != T_NUMBER && lt != T_STRING && lt != T_CLOSE_PAREN && lt != T_CLOSE_SQUARE {
-                lx.pos++;
-                let s = atext.len;
-                atext.push(ch);
-                let ns, nn = consume_numeric(lx);
-                push_tok(if nn == 0 { T_UNARY } else { T_NUMBER }, s, atext.len - s, start_pos);
-                continue;
-            }
-        }
 
         // the operators and brackets
         var matched = false;

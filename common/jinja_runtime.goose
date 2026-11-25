@@ -4,6 +4,7 @@
 // port-of: common/jinja/runtime.cpp, common/jinja/runtime.h (runtime, gather_string_parts)
 import std;
 import exception;
+import math;
 import .jinja;
 import .number;
 import .jinja_lexer;
@@ -182,6 +183,7 @@ recursive fn exec_impl(n: i64, c: Ctx) -> i64 {
         return obj;
     }
     if k == N_BINARY { return exec_binary(n, c); }
+    if k == N_CHAIN { return exec_chain(n, c); }
     if k == N_UNARY { return exec_unary(n, c); }
     if k == N_FILTER {
         let input = exec(nd.x, c);
@@ -263,6 +265,47 @@ recursive fn exec_binary(n: i64, c: Ctx) -> i64 {
     return binary(c, op, left, right);
 }
 
+// a < b < c: each comparison with the operand before, stopping at the first
+// false one, as `and` does; the operands after it are not executed.
+recursive fn exec_chain(n: i64, c: Ctx) -> i64 {
+    let nd = nodes[n];
+    var left = exec(list_item(nd.l0, 0), c);
+    var res = -1;
+    for i in nd.n1 {
+        let right = exec(list_item(nd.l0, i + 1), c);
+        res = binary(c, node_text(list_item(nd.l1, i)), left, right);
+        if !truthy(res) { break; }
+        left = right;
+    }
+    return res;
+}
+
+// The values of a call's arguments onto argstack; *array gives its items,
+// **object its members as keyword arguments (exec_call_args).
+recursive fn exec_call_args(l: i64, n: i64, c: Ctx) {
+    for i in n {
+        let a = list_item(l, i);
+        if nodes[a].kind != N_SPREAD {
+            let v = exec(a, c);
+            argstack.push(v);
+            continue;
+        }
+        let v = exec(nodes[a].x, c);
+        if nodes[a].flag {
+            if kind(v) != K_OBJECT { fail(str("Argument after ** must be an object, got ", tname(v))); }
+            for k in obj_len(v) {
+                let key = obj_key(v, k);
+                if kind(key) != K_STRING { fail(str("Keyword argument key must be a string, got ", tname(key))); }
+                let kw = new_val(Val { kind: K_KWARG, a: key, b: obj_value(v, k), .. });
+                argstack.push(kw);
+            }
+        } else {
+            if kind(v) != K_ARRAY && kind(v) != K_TUPLE { fail(str("Argument after * must be an array, got ", tname(v))); }
+            for k in arr_len(v) { argstack.push(arr_at(v, k)); }
+        }
+    }
+}
+
 // left op right, for an operator that evaluates both.
 fn binary(c: Ctx, op: const u8[:], left: i64, right: i64) -> i64 {
     if op == "==" { return mk_bool(equiv(left, right)); }
@@ -299,12 +342,26 @@ fn binary(c: Ctx, op: const u8[:], left: i64, right: i64) -> i64 {
         let is_float = lk == K_FLOAT || rk == K_FLOAT;
         if op == "+" || op == "-" || op == "*" {
             let r = if op == "+" { a + b } else if op == "-" { a - b } else { a * b };
-            return if is_float { mk_float(r) } else { mk_int(cast_i64(r)) };
+            return if is_float { mk_float(r) } else { mk_int(float_to_int(r)) };
         }
         if op == "/" { return mk_float(a / b); }
+        if op == "//" {
+            // Python's: rounded toward -inf
+            if lk == K_INT && rk == K_INT {
+                let x = vals[left].i;
+                let y = vals[right].i;
+                if y == 0 { fail("integer division by zero"); }
+                // INT64_MIN / -1 wraps around
+                if y == -1 { return mk_int((0 - (x as! u64)) as! i64); }
+                var q = x / y;
+                if x % y != 0 && (x < 0) != (y < 0) { q -= 1; }
+                return mk_int(q);
+            }
+            return mk_float(floor(a / b));
+        }
         if op == "%" {
             let r = fmod(a, b);
-            return if is_float { mk_float(r) } else { mk_int(cast_i64(r)) };
+            return if is_float { mk_float(r) } else { mk_int(float_to_int(r)) };
         }
         if op == "<" { return mk_bool(a < b); }
         if op == ">" { return mk_bool(a > b); }
@@ -344,6 +401,12 @@ fn binary(c: Ctx, op: const u8[:], left: i64, right: i64) -> i64 {
         return mk_bool(if op == "in" { member } else { !member });
     }
 
+    // "a" < "b": byte order, the code points' order, as in Python
+    if lk == K_STRING && rk == K_STRING && (op == "<" || op == ">" || op == "<=" || op == ">=") {
+        let d = cmp_bytes(sbytes(left), sbytes(right));
+        return mk_bool(if op == "<" { d < 0 } else if op == ">" { d > 0 } else if op == "<=" { d <= 0 } else { d >= 0 });
+    }
+
     fail(str("Unknown operator \"", op, "\" between ", tname(left), " and ", tname(right)));
     return -1;
 }
@@ -361,10 +424,11 @@ fn concat_null_with_str(left: i64, right: i64) -> i64 {
     return mk_concat(a, b);
 }
 
-// static_cast<int64_t>(v) as x86 does it: INT64_MIN for NaN, infinities
-// and what does not fit.
-fn cast_i64(v: f64) -> i64 {
-    if !(v < 9223372036854775808.0 && v >= -9223372036854775808.0) { return -9223372036854775807 - 1; }
+// A float to an int, saturating, NaN as 0 (float_to_int).
+fn float_to_int(v: f64) -> i64 {
+    if v != v { return 0; }
+    if v >= 9223372036854775808.0 { return 9223372036854775807; }
+    if v <= -9223372036854775808.0 { return -9223372036854775807 - 1; }
     return v as! i64;
 }
 
@@ -398,10 +462,7 @@ recursive fn apply_filter(c: Ctx, filter: i64, input: i64) -> i64 {
         let callee = nodes[filter].x;
         if nodes[callee].kind != N_IDENT { fail("Filter callee must be an identifier"); }
         let mark = argstack.len;
-        for i in nodes[filter].n0 {
-            let v = exec(list_item(nodes[filter].l0, i), c);
-            argstack.push(v);
-        }
+        exec_call_args(nodes[filter].l0, nodes[filter].n0, c);
         let r = apply_filter_by_name(c, node_text(callee), input, Args { ctx: c, at: mark, n: argstack.len - mark });
         argstack.resize(mark);
         return r;
@@ -422,10 +483,7 @@ recursive fn exec_test(n: i64, c: Ctx) -> i64 {
     } else if t.kind == N_CALL {
         if nodes[t.x].kind != N_IDENT { fail("Test callee must be an identifier"); }
         id = t.x;
-        for i in t.n0 {
-            let v = exec(list_item(t.l0, i), c);
-            argstack.push(v);
-        }
+        exec_call_args(t.l0, t.n0, c);
     } else {
         fail("Invalid test expression");
     }
@@ -621,10 +679,7 @@ recursive fn exec_call_statement(n: i64, c: Ctx) -> i64 {
     let call_ctx = scope(c);
     set_var(call_ctx, "caller", f);
     let mark = argstack.len;
-    for i in call.n0 {
-        let v = exec(list_item(call.l0, i), c);
-        argstack.push(v);
-    }
+    exec_call_args(call.l0, call.n0, c);
     let r = invoke(callee, Args { ctx: call_ctx, at: mark, n: argstack.len - mark });
     argstack.resize(mark);
     return r;
@@ -633,10 +688,7 @@ recursive fn exec_call_statement(n: i64, c: Ctx) -> i64 {
 recursive fn exec_call(n: i64, c: Ctx) -> i64 {
     let nd = nodes[n];
     let mark = argstack.len;
-    for i in nd.n0 {
-        let v = exec(list_item(nd.l0, i), c);
-        argstack.push(v);
-    }
+    exec_call_args(nd.l0, nd.n0, c);
     let callee = exec(nd.x, c);
     if kind(callee) != K_FUNC { fail(str("Callee is not a function: got ", tname(callee))); }
     let r = invoke(callee, Args { ctx: c, at: mark, n: argstack.len - mark });

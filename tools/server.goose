@@ -547,7 +547,7 @@ fn eval_params(data: i64) {
                     let w = jdoc::str_of(jdoc::at(v, i));
                     if w.len > 0 { t_stops.append(w); t_stops.push(0); }
                 }
-            } else if jdoc::is_str(v) {
+            } else if jdoc::is_str(v) && jdoc::str_of(v).len > 0 {
                 t_stops.append(jdoc::str_of(v));
                 t_stops.push(0);
             }
@@ -792,6 +792,13 @@ fn need_str(v: i64, what: const u8[:]) -> const u8[:] {
 }
 
 // The prompt of a chat request (into prompt), and the task's chat parameters.
+// Whether the template renders reasoning_effort = none as a level of its own.
+fn effort_none_known() -> bool {
+    let caps = if ts.has_tool_use { ts.tool_use.caps } else { ts.main.caps };
+    for lv in caps.reasoning_effort_levels { if lv == 0 { return true; } }
+    return false;
+}
+
 fn chat_prompt(body: i64, prompt: u8[>..]&) {
     let tools_v = jdoc::get(body, "tools");
     let has_tools = jdoc::is_arr(tools_v) && jdoc::len(tools_v) > 0;
@@ -820,13 +827,12 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
                 has_schema = true;
             }
         } else if ty == "json_schema" {
-            let wrapper = jdoc::get(rf, "json_schema");
-            let s = jdoc::get(wrapper, "schema");
+            let s = if jdoc::contains(rf, "json_schema") { jdoc::get(jdoc::get(rf, "json_schema"), "schema") } else { jdoc::get(rf, "schema") };
             json_schema_text.clear();
             if s >= 0 { jdoc::dump(json_schema_text, s); } else { json_schema_text.append("{}"); }
             has_schema = true;
         } else if ty.len > 0 && ty != "text" {
-            fail(E_INVALID_REQUEST, str("response_format type must be one of \"text\" or \"json_object\", but got: ", ty));
+            fail(E_INVALID_REQUEST, str("response_format type must be one of \"text\", \"json_object\" or \"json_schema\", but got: ", ty));
         }
     }
     if json_schema_text == "{}" { json_schema_text.clear(); json_schema_text.append("{\"type\":\"object\"}"); }
@@ -983,9 +989,29 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
         }
         if jdoc::contains(body, "reasoning_effort") {
             let effort = jdoc::get_str(body, "reasoning_effort", "");
+            let caps = if ts.has_tool_use { ts.tool_use.caps } else { ts.main.caps };
+            var levels: u8[>..] = [];
+            var none_level = false;
+            for lv, i in caps.reasoning_effort_levels {
+                if i > 0 { levels.append(", "); }
+                levels.append(jinja::effort_name(lv));
+                if lv == 0 { none_level = true; }
+            }
             if effort == "none" {
                 thinking = false;
+                // some templates know reasoning_effort = none, others raise on it
+                if none_level {
+                    kw_text.append("reasoning_effort");
+                    kw_ends.push(kw_text.len);
+                    jdoc::put_str(kw_text, effort);
+                    kw_ends.push(kw_text.len);
+                }
             } else if effort.len > 0 {
+                for lv in caps.reasoning_effort_rejected {
+                    if jinja::effort_name(lv) == effort {
+                        fail(E_INVALID_REQUEST, str("reasoning_effort \"", effort, "\" is not supported by the chat template, supported levels: ", levels));
+                    }
+                }
                 kw_text.append("reasoning_effort");
                 kw_ends.push(kw_text.len);
                 jdoc::put_str(kw_text, effort);
@@ -1009,8 +1035,8 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
             i += 2;
         }
     }
-    // reasoning_effort "none" also drops the kwarg
-    if jdoc::get_str(body, "reasoning_effort", "") == "none" {
+    // reasoning_effort "none" also drops the kwarg, unless the template knows it
+    if jdoc::get_str(body, "reasoning_effort", "") == "none" && !effort_none_known() {
         var kept: chat_apply::KV[>..] = [];
         for kv in kws { if kv.key != "reasoning_effort" { kept.push(kv); } }
         kws.clear();
@@ -1032,6 +1058,7 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
     };
     if !chat_apply::apply(ts, inp) { fail(E_INVALID_REQUEST, chat_apply::err); }
     prompt.append(chat_render::prompt);
+    gen_prompt_tokens(chat_render::gen_prompt, chat_apply::gen_prompt_toks);
     if stream && jdoc::get_bool(body, "logprobs", false) && has_tools { fail(E_INVALID_REQUEST, "logprobs is not supported with tools + stream"); }
 }
 
@@ -1077,6 +1104,7 @@ struct Stats { cache_n: i64, prompt_n: i64, prompt_ms: f64, predicted_n: i64, pr
 var generated: u8[>..] = [];        // the text so far
 var gen_tokens: i32[>..] = [];
 var fed: u8[>..] = [];              // the text sent so far (the chat parser's input)
+var gen_itok: i32[>..] = [];        // the token each byte of generated starts, -1 for the rest of its piece
 var n_sent = 0;
 var stop_type = STOP_NONE;
 var stopping_word: u8[>..] = [];
@@ -1100,6 +1128,7 @@ fn find_stop(text: const u8[:], last_len: i64, full: bool) -> i64 {
         guard b == 0 else { continue; }
         let word = t_stops[start..i];
         start = i + 1;
+        if word.len == 0 { continue; }
         var pos = -1;
         if full {
             let tmp = word.len + last_len;
@@ -1182,10 +1211,34 @@ fn call_id(i: i64, parsed: const u8[:]) -> u8[>..] {
     return str(nth(call_ids, i));
 }
 
+// The token each byte of the generation prompt starts (common_chat_input_tokenize);
+// none if the pieces do not give back the text.
+fn gen_prompt_tokens(text: const u8[:], out: i32[>..]&) {
+    out.clear();
+    var ids: i32[>..] = [];
+    vocab::tokenize(text, false, true, ids);
+    var back: u8[>..] = [];
+    for id, i in ids {
+        let pc = piece(id, true);
+        // some tokenizers put a space before the first special token
+        if i == 0 && pc.len > 0 && is_space_byte(pc[0]) && !(text.len > 0 && is_space_byte(text[0])) { continue; }
+        if pc.len == 0 { continue; }
+        back.append(pc);
+        out.push(id);
+        for k in pc.len - 1 { out.push(-1); }
+    }
+    if back != text { out.clear(); }
+}
+
+fn is_space_byte(c: u8) -> bool { c == ' ' || (c >= 9 && c <= 13) }
+
 // The chat message of the output: parsed into chat_peg's content_text,
 // reasoning_text and calls (an empty parse keeps the previous message).
 fn parse_chat(text: const u8[:], partial: bool) -> bool {
-    if !chat_apply::parse(text, partial) {
+    // the tokens of the text, which is the generation so far or a start of it
+    let known = text.len <= generated.len && gen_itok.len == generated.len && generated[..text.len] == text;
+    let toks = if known { gen_itok[..text.len] } else { gen_itok[..0] };
+    if !chat_apply::parse_tokens(text, toks, partial) {
         if partial { return false; }
         log(str("parse_chat: unparsed ", chat_apply::format_name(chat_render::format), " output: ", chat_apply::input_text));
         fail(E_SERVER, chat_apply::err);
@@ -1439,6 +1492,10 @@ fn finish_stats() {
 // process_token: the token's text checked for stops; false when the generation ends.
 fn process_token(tok: i32, piece0: const u8[:]) -> bool {
     generated.append(piece0);
+    if piece0.len > 0 {
+        gen_itok.push(tok);
+        for i in piece0.len - 1 { gen_itok.push(-1); }
+    }
     if t_return_tokens { gen_tokens.push(tok); }
     var has_next = true;
     let incomplete = utf8_complete(generated) < generated.len;
@@ -1540,6 +1597,8 @@ fn slot_state(st: stash::Stash&) {
     stash::keep(st, t_cmpl_id);
     // the generation
     stash::keep(st, generated);
+    stash::keep(st, gen_itok);
+    stash::keep(st, chat_apply::gen_prompt_toks);
     stash::keep(st, gen_tokens);
     stash::keep(st, fed);
     stash::keep_value(st, n_sent);
@@ -1590,7 +1649,6 @@ fn slot_state(st: stash::Stash&) {
     stash::keep(st, peg::pt);
     stash::keep(st, peg::ps);
     stash::keep(st, peg::kids);
-    stash::keep(st, peg::delims);
     stash::keep(st, peg::ranges);
     stash::keep(st, peg::rules);
     stash::keep(st, peg::arenas);
@@ -1691,6 +1749,7 @@ fn pick_slot(prompt: const i32[:]) -> i64 {
 // then a token at a time until a stop. Its state stays in the globals.
 fn start(prompt: const i32[:]) {
     generated.clear();
+    gen_itok.clear();
     gen_tokens.clear();
     fed.clear();
     n_sent = 0;
@@ -1709,6 +1768,12 @@ fn start(prompt: const i32[:]) {
     // the sampler (common_sampler_init) and the grammar
     sampler::init(ch, t_sp);
     ch.has_grammar = false;
+    if t_grammar.len > 0 {
+        // ignore_eos bans the end-of-generation tokens as llama.cpp's logit biases do
+        var banned = t_ignore_eos;
+        for lb in t_logit_bias { if lb.bias == -F_INF && vocab::is_eog(lb.token) { banned = true; } }
+        if banned { fail(E_INVALID_REQUEST, "Failed to initialize samplers: EOG tokens cannot be banned when a grammar is set"); }
+    }
     if t_grammar.len > 0 {
         if !sampler::set_grammar(ch, t_grammar, "root") {
             fail(E_INVALID_REQUEST, str("Failed to initialize samplers: failed to parse grammar: ", grammar::err));
@@ -1742,6 +1807,14 @@ fn start(prompt: const i32[:]) {
     if t_cache_prompt {
         let have = tokens_of(s);
         while n_past < have.len && n_past < prompt.len && have[n_past] == prompt[n_past] { n_past++; }
+    }
+    // server_prompt::get_reuse, without checkpoints: the cache is of use when it starts before the
+    // window of the first token to evaluate (a SWA model), or before that token (others)
+    if n_past > 0 && !context::any_recurrent(m) {
+        let n_swa = if m.hp.swa_type != model::SWA_NONE { m.hp.n_swa as i64 } else { 0 };
+        let pos_eval = n_past - (if n_past < prompt.len { 0 } else { 1 });
+        let thold = max(0, if n_swa > 0 { pos_eval - n_swa + 2 } else { pos_eval });
+        if context::seq_pos_min(s) >= thold { n_past = 0; }
     }
     if n_past == prompt.len && n_past > 0 { n_past--; }
     n_past = context::keep_first(c, m, s, n_past);
@@ -2101,6 +2174,10 @@ fn caps_json(o: u8[>..]&) {
     k(o, "reasoning_effort_levels");
     o.push('[');
     for lv in caps.reasoning_effort_levels { es(o, jinja::effort_name(lv)); }
+    o.push(']');
+    k(o, "reasoning_effort_rejected");
+    o.push('[');
+    for lv in caps.reasoning_effort_rejected { es(o, jinja::effort_name(lv)); }
     o.push(']');
     o.push('}');
 }
@@ -2727,6 +2804,17 @@ fn setup() {
     if !sampler::meta_str(m.meta, "tokenizer.chat_template.tool_use", tool_use) { tool_use.clear(); }
     if vocab::special_bos_id != vocab::TOKEN_NULL { bos_text.append(piece(vocab::special_bos_id, true)); }
     if vocab::special_eos_id != vocab::TOKEN_NULL { eos_text.append(piece(vocab::special_eos_id, true)); }
+    // the special tokens the chat parsers match by id (common_peg_tokens(vocab))
+    {
+        var pieces: const u8[:][>..] = [];
+        var ids: i64[>..] = [];
+        for id in vocab::n_tokens() {
+            guard vocab::is_control(id) || vocab::is_user_defined(id) else { continue; }
+            pieces.push(vocab::token_text(id));
+            ids.push(id);
+        }
+        peg::set_tokens(pieces, ids);
+    }
     let ts0, ok = chat_apply::init(tmpl_src, tool_use, bos_text, eos_text, vocab::add_bos, vocab::add_eos);
     ts = ts0;
     if !ok { die(str("failed to initialize the chat template: ", chat_apply::err)); }

@@ -505,9 +505,29 @@ fn json_string(out: u8[>..]&, s: const u8[:]) {
     out.push('"');
 }
 
-// value_to_json: v as JSON, its objects' keys in their order. indent < 0
-// writes one line; otherwise each item on a line of its own.
-recursive fn to_json(out: u8[>..]&, v: i64, lvl: i64, indent: i64, item_sep: const u8[:], key_sep: const u8[:]) {
+// An object key's text in JSON: a float as float_json writes it, anything
+// else as its as_string().
+fn key_text(out: u8[>..]&, key: i64) {
+    if vals[key].kind == K_FLOAT { number::float_json(out, vals[key].f); } else { out.append(sbytes(as_string(key))); }
+}
+
+fn key_less(a: i64, b: i64) -> bool {
+    var x: u8[>..] = [];
+    var y: u8[>..] = [];
+    key_text(x, a);
+    key_text(y, b);
+    for i in min(x.len, y.len) { if x[i] != y[i] { return x[i] < y[i]; } }
+    return x.len < y.len;
+}
+
+// The members of the objects being written, in the order they are written
+// in: a run per object, from the top of the stack.
+var json_order: i64[>..<] = [];
+
+// value_to_json: v as JSON, its objects' keys in their order, or sorted by
+// their text with sort_keys (in byte order, Python's code point order).
+// indent < 0 writes one line; otherwise each item on a line of its own.
+recursive fn to_json(out: u8[>..]&, v: i64, lvl: i64, indent: i64, item_sep: const u8[:], key_sep: const u8[:], sort_keys: bool = false) {
     let x = vals[v];
     if x.kind == K_NONE || x.kind == K_UNDEF { out.append("null"); return; }
     if x.kind == K_BOOL { out.append(if x.i != 0 { "true" } else { "false" }); return; }
@@ -518,12 +538,18 @@ recursive fn to_json(out: u8[>..]&, v: i64, lvl: i64, indent: i64, item_sep: con
     if !is_arr && x.kind != K_OBJECT { out.append("null"); return; }
     if lvl >= LIMIT { fail(str("value is nested more than ", LIMIT, " levels deep")); }
     out.push(if is_arr { '[' } else { '{' });
+    let mark = json_order.len;
+    for k in x.n { json_order.push(k); }
+    if !is_arr && sort_keys {
+        stable_sort(json_order[mark..json_order.len]) { i, j => key_less(items[x.a + 2 * i], items[x.a + 2 * j]) };
+    }
     if x.n > 0 {
         if indent >= 0 { out.push('\n'); }
-        for k in x.n {
+        for q in x.n {
+            let k = json_order[mark + q];
             if indent > 0 { for i in (lvl + 1) * indent { out.push(' '); } }
             if is_arr {
-                to_json(out, items[x.a + k], lvl + 1, indent, item_sep, key_sep);
+                to_json(out, items[x.a + k], lvl + 1, indent, item_sep, key_sep, sort_keys);
             } else {
                 let key = items[x.a + 2 * k];
                 if vals[key].kind == K_FLOAT {
@@ -534,13 +560,14 @@ recursive fn to_json(out: u8[>..]&, v: i64, lvl: i64, indent: i64, item_sep: con
                     json_key(out, key);
                 }
                 out.append(key_sep);
-                to_json(out, items[x.a + 2 * k + 1], lvl + 1, indent, item_sep, key_sep);
+                to_json(out, items[x.a + 2 * k + 1], lvl + 1, indent, item_sep, key_sep, sort_keys);
             }
-            if k < x.n - 1 { out.append(item_sep); }
+            if q < x.n - 1 { out.append(item_sep); }
             if indent >= 0 { out.push('\n'); }
         }
         if indent > 0 { for i in lvl * indent { out.push(' '); } }
     }
+    json_order.resize(mark);
     out.push(if is_arr { ']' } else { '}' });
 }
 

@@ -247,9 +247,6 @@ fn patch_source(src: const u8[:], out: u8[>..]&) {
     if find(out, "<|channel|>") >= 0 && find(out, "in message.content or") >= 0 {
         replace_all(out, "{%- if \"<|channel|>analysis<|message|>\" in message.content or \"<|channel|>final<|message|>\" in message.content %}", "{%- if false %}");
     }
-    if find(out, "[TOOL_CALLS]") >= 0 && find(out, "if (message['content'] is none or") >= 0 {
-        replace_all(out, "{%- if (message['content'] is none or message['content'] == '' or message['content']|length == 0) and (message['tool_calls'] is not defined or message['tool_calls'] is none or message['tool_calls']|length == 0) %}", "{%- if false %}");
-    }
 }
 
 fn replace_all(s: u8[>..]&, from: const u8[:], to: const u8[:]) {
@@ -493,11 +490,22 @@ fn render_content(out: u8[>..]&, m: Message) {
 
 var content_only = -1;
 var input_text: u8[>..] = [];
+var input_toks: i32[>..] = [];
+// the token each byte of the generation prompt starts (common_chat_input), when known
+var gen_prompt_toks: i32[>..] = [];
 
 // The message the output of the last apply makes, in chat_peg's content_text,
 // reasoning_text and calls; false, and the message in err, if the output
 // does not match the format.
 fn parse(output: const u8[:], is_partial: bool) -> bool {
+    var none: i32[>..] = [];
+    return parse_tokens(output, none, is_partial);
+}
+
+// parse, of output whose bytes start the tokens toks (as many as its bytes,
+// -1 where none starts; or none at all): the parsers that know the special
+// tokens match them by id.
+fn parse_tokens(output: const u8[:], toks: const i32[:], is_partial: bool) -> bool {
     var a = chat_render::parser;
     if a < 0 {
         if content_only < 0 || content_only >= peg::arenas.len {
@@ -511,9 +519,12 @@ fn parse(output: const u8[:], is_partial: bool) -> bool {
     input_text.clear();
     input_text.append(chat_render::gen_prompt);
     input_text.append(output);
+    input_toks.clear();
+    if gen_prompt_toks.len == chat_render::gen_prompt.len { input_toks.append(gen_prompt_toks); } else { input_toks.resize(chat_render::gen_prompt.len, -1); }
+    if toks.len == output.len { input_toks.append(toks); } else { input_toks.resize(input_text.len, -1); }
     var flags = peg::FLAG_LENIENT;
     if !is_partial { flags |= peg::FLAG_COMPLETE; }
-    let r, ok = peg::parse(a, input_text, flags, 0);
+    let r, ok = peg::parse_tokens(a, input_text, input_toks, flags, 0);
     if !ok { err.clear(); err.append(peg::err); return false; }
     if r.kind == peg::FAIL {
         if is_partial && r.end > 0 {

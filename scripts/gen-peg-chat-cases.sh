@@ -24,8 +24,8 @@ lfm2=$(grep -n '^static void test_lfm2_parser' "$t" | cut -d: -f1)
 lfm2_end=$(awk -v s="$lfm2" 'NR > s && /^static void / { print NR; exit }' "$t")
 { sed -n "1,$((first - 1))p" "$t"; sed -n "${lfm2},$((lfm2_end - 1))p" "$t"; sed -n "${peg},$((next - 1))p" "$t"; } |
     sed -e '/server-chat.h/d' \
-        -e 's|^class peg_test_builder;$|#include "peg_chat_record.inc"\nclass peg_test_builder;|' \
-        -e 's|test_peg_parser(tester_.tmpls_.get(), \[this\](peg_test_case \& t) { t = tc_; }, tester_.detailed_debug_);|record_case(tester_.template_path(), tester_.tmpls_.get(), tc_);|' \
+        -e 's|^class peg_test_builder;$|#include "peg_chat_record.inc"\nclass peg_test_builder;|' |
+    perl -0pe 's/test_peg_parser\(tester_\.tmpls_\.get\(\), tester_\.specials_, \[this\]\(peg_test_case & t\) \{ t = tc_; \},\s*tester_\.detailed_debug_\);/record_case(tester_.template_path(), tester_.tmpls_.get(), tester_.specials_, tc_);/' \
     > "$tmp/test-chat-recorded.cpp"
 grep -q 'record_case(tester_' "$tmp/test-chat-recorded.cpp" || { echo "test-chat.cpp changed: run() not found"; exit 1; }
 cp "$root/scripts/extract_peg_chat_cases.cpp" "$root/scripts/peg_chat_record.inc" "$tmp/"

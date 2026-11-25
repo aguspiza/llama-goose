@@ -111,6 +111,12 @@ struct Inputs {
     cross_mask: ggml::Tensor,    // t5: [n_enc, n_tokens]
     rows: ggml::Tensor,          // unified: [n_kv_rows, n_slices], the cells each slice of tokens attends to
     rows_swa: ggml::Tensor,
+    // gemma4 (llm_graph_input_gemma4_prune): the token rows the layers that share
+    // another's cache compute, the rows of them kept for the output, and the masks of those rows
+    prune_ids: ggml::Tensor,
+    prune_keep: ggml::Tensor,
+    out_mask: ggml::Tensor,
+    out_mask_swa: ggml::Tensor,
 }
 
 // Per graph: what the graph builders read.
@@ -577,6 +583,10 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
             cross_mask: ggml::NONE,
             rows: ggml::NONE,
             rows_swa: ggml::NONE,
+            prune_ids: ggml::NONE,
+            prune_keep: ggml::NONE,
+            out_mask: ggml::NONE,
+            out_mask_swa: ggml::NONE,
         },
         tracing: false,
         traced: [],
@@ -2602,6 +2612,36 @@ fn build_gemma3n(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
 }
 
 // models/gemma4.cpp (without experts)
+// gemma4: whether the graph prunes the rows before the layers that share a cache.
+fn prune_shared(hp: model::HParams&) -> bool {
+    return hp.arch == model::ARCH_GEMMA4 && hp.n_layer_kv_from_start > 0 && hp.n_layer_kv_from_start < hp.n_layer as i64;
+}
+var kept_slice_outputs = 0;     // the shape's n_slice_outputs, for build_gemma4
+
+// The rows the pruned layers compute (take: per slice its outputs, padded with
+// the last of them) and the rows of those kept (keep): set_input of the prune input.
+fn prune_rows(outputs: const i32[:], n_slices: i64, n_slice_tokens: i64, n_slice_outputs: i64,
+              take: i32[>..]&, keep: i32[>..]&) {
+    take.clear();
+    keep.clear();
+    for sl in n_slices {
+        let first = take.len;
+        for o in outputs {
+            guard o >= sl * n_slice_tokens && o < (sl + 1) * n_slice_tokens else { continue; }
+            keep.push((sl * n_slice_outputs + take.len - first) as! i32);
+            take.push(o);
+        }
+        let dummy = if take.len > first { take[take.len - 1] } else { (sl * n_slice_tokens) as! i32 };
+        while take.len - first < n_slice_outputs { take.push(dummy); }
+    }
+}
+
+// The rows of mask (rows of n_cols) at take: the mask of the pruned rows.
+fn take_mask_rows(mask: const f32[:], n_cols: i64, take: const i32[:], out: f32[>..]&) {
+    out.clear();
+    for t in take { out.append(mask[t * n_cols..(t + 1) * n_cols]); }
+}
+
 fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let hp .= m.hp;
     let ctx = b.ctx;
@@ -2621,19 +2661,48 @@ fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     inpL = ggml::scale(ctx, inpL, sqrt(n_embd_f));
     if inp_per_layer.p != 0 {
         let n_epl_f: f32 = n_epl;
-        inp_per_layer = ggml::scale(ctx, inp_per_layer, sqrt(n_epl_f));
+        // per_layer_input_scale (1/sqrt(2)) folded into the scale of the embeddings
+        inp_per_layer = ggml::scale(ctx, inp_per_layer, sqrt(n_epl_f) / sqrt(two));
         inp_per_layer = ggml::reshape_3d(ctx, inp_per_layer, n_epl, n_layer, ggml::ne(inp_per_layer, 1));
-        // project_per_layer_inputs
+        // project_per_layer_inputs: per_layer_input_scale folded into the norm's weight,
+        // per_layer_projection_scale (1/sqrt(n_embd)) into its eps
+        let proj_norm_w = ggml::scale(ctx, m.per_layer_proj_norm, 1.0 / sqrt(two));
+        ggml::build_forward_expand(b.gf, proj_norm_w);
         var proj = ggml::mul_mat(ctx, m.per_layer_model_proj, inpL);
-        proj = ggml::scale(ctx, proj, 1.0 / sqrt(n_embd_f));
         proj = ggml::reshape_3d(ctx, proj, n_epl, n_layer, n_tokens);
-        proj = build_norm_rms(b, m, proj, m.per_layer_proj_norm);
+        let proj_scale: f32 = 1.0 / sqrt(n_embd_f);
+        proj = ggml::rms_norm(ctx, proj, hp.f_norm_rms_eps / (proj_scale * proj_scale));
+        proj = ggml::mul(ctx, proj, proj_norm_w);
         inp_per_layer = ggml::add(ctx, proj, inp_per_layer);
-        inp_per_layer = ggml::scale(ctx, inp_per_layer, 1.0 / sqrt(two));
-        inp_per_layer = ggml::cont(ctx, ggml::permute(ctx, inp_per_layer, 0, 2, 1, 3));
+        // [n_embd_per_layer, n_tokens, n_layer], a view
+        inp_per_layer = ggml::permute(ctx, inp_per_layer, 0, 2, 1, 3);
     }
 
+    // the layers that share another's cache write none: from the first of them on,
+    // only the rows of the outputs are computed (one row per output of the fullest slice)
+    let prune = prune_shared(hp);
+    let full_mask = b.inp.mask;
+    let full_mask_swa = b.inp.mask_swa;
+    let full_pos = b.inp.pos;
+    var n_rows = n_tokens;
+
     for il in n_layer {
+        if prune && il == hp.n_layer_kv_from_start {
+            let n_slices = ggml::ne(full_mask, 3);
+            n_rows = n_slices * kept_slice_outputs;
+            b.inp.prune_ids = ggml::new_tensor_1d(ctx, ggml::TYPE_I32, n_rows);
+            b.inp.prune_keep = ggml::new_tensor_1d(ctx, ggml::TYPE_I32, ggml::ne(b.inp.out_ids, 0));
+            b.inp.out_mask = ggml::new_tensor_4d(ctx, ggml::tensor_type(full_mask), ggml::ne(full_mask, 0), kept_slice_outputs, 1, n_slices);
+            b.inp.out_mask_swa = ggml::new_tensor_4d(ctx, ggml::tensor_type(full_mask_swa), ggml::ne(full_mask_swa, 0), kept_slice_outputs, 1, n_slices);
+            ggml::set_input(b.inp.out_mask);
+            ggml::set_input(b.inp.out_mask_swa);
+            ggml::set_input(b.inp.prune_ids);
+            ggml::set_input(b.inp.prune_keep);
+            inpL = ggml::get_rows(ctx, inpL, b.inp.prune_ids);
+            b.inp.pos = ggml::reshape_1d(ctx, ggml::get_rows(ctx, ggml::reshape_2d(ctx, full_pos, 1, n_tokens), b.inp.prune_ids), n_rows);
+            b.inp.mask = b.inp.out_mask;
+            b.inp.mask_swa = b.inp.out_mask_swa;
+        }
         let ly = m.layers[il];
         let n_embd_head = model::head_k(hp, il);
         assert(n_embd_head == model::head_v(hp, il));
@@ -2650,11 +2719,11 @@ fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         var q = ggml::NONE;
         if ly.wqkv.p != 0 {
             qkv_fused = ggml::mul_mat(ctx, ly.wqkv, cur);
-            q = ggml::cont(ctx, ggml::view_2d(ctx, qkv_fused, n_embd_head * n_head, n_tokens, ggml::nb(qkv_fused, 1), 0));
+            q = ggml::cont(ctx, ggml::view_2d(ctx, qkv_fused, n_embd_head * n_head, n_rows, ggml::nb(qkv_fused, 1), 0));
         } else {
             q = ggml::mul_mat(ctx, ly.wq, cur);
         }
-        q = ggml::reshape_3d(ctx, q, n_embd_head, n_head, n_tokens);
+        q = ggml::reshape_3d(ctx, q, n_embd_head, n_head, n_rows);
         q = build_norm_rms(b, m, q, ly.attn_q_norm);
         q = rope(b, m, q, freq_base, freq_scale, factors, n_rot_l);
 
@@ -2680,7 +2749,7 @@ fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         } else {
             cur = build_attn(b, m, c, il, ly.wo, ggml::NONE, q, ggml::NONE, ggml::NONE, hp.f_attention_scale);
         }
-        if il == n_layer - 1 {
+        if !prune && il == n_layer - 1 {
             cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
             inpL = ggml::get_rows(ctx, inpL, b.inp.out_ids);
         }
@@ -2697,8 +2766,10 @@ fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
             let pe_in = cur;
             cur = ggml::mul_mat(ctx, ly.per_layer_inp_gate, cur);
             cur = ggml::gelu(ctx, cur);
-            var inp_this_layer = slice_2d(b, inp_per_layer, il);
-            if il == n_layer - 1 { inp_this_layer = ggml::get_rows(ctx, inp_this_layer, b.inp.out_ids); }
+            var inp_this_layer = ggml::view_2d(ctx, inp_per_layer, ggml::ne(inp_per_layer, 0), ggml::ne(inp_per_layer, 1),
+                                               ggml::nb(inp_per_layer, 1), il * ggml::nb(inp_per_layer, 2));
+            if prune && !model::has_kv(hp, il) { inp_this_layer = ggml::get_rows(ctx, inp_this_layer, b.inp.prune_ids); }
+            else if il == n_layer - 1 { inp_this_layer = ggml::get_rows(ctx, inp_this_layer, b.inp.out_ids); }
             cur = ggml::mul(ctx, cur, inp_this_layer);
             cur = ggml::mul_mat(ctx, ly.per_layer_proj, cur);
             cur = build_norm_rms(b, m, cur, ly.per_layer_post_norm);
@@ -2706,6 +2777,13 @@ fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         }
         if ly.out_scale.p != 0 { cur = ggml::mul(ctx, cur, ly.out_scale); }
         inpL = cur;
+    }
+    if prune {
+        inpL = ggml::get_rows(ctx, inpL, b.inp.prune_keep);
+        // the ubatch's inputs are filled in the full tensors
+        b.inp.mask = full_mask;
+        b.inp.mask_swa = full_mask_swa;
+        b.inp.pos = full_pos;
     }
     var cur = build_norm_rms(b, m, inpL, m.output_norm);
     cur = ggml::mul_mat(ctx, m.output, cur);
@@ -3031,6 +3109,14 @@ fn used_max_p1() -> i64 {
 }
 
 // The last position of sequence s in the cache, or -1 (llama_memory_seq_pos_max).
+// The smallest position of sequence s, -1 if it has none (llama_memory_seq_pos_min).
+fn seq_pos_min(s: i64) -> i64 {
+    let bit: u64 = 1 << s;
+    var p = -1;
+    for q, i in cell_pos { if cell_seqs[i] & bit != 0 && (p < 0 || q < p) { p = q; } }
+    return p;
+}
+
 fn seq_pos_max(s: i64) -> i64 {
     let bit: u64 = 1 << s;
     var p = -1;
@@ -3251,7 +3337,8 @@ fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i
 }
 
 // What the graph of a ubatch depends on.
-struct Shape { n_tokens: i64, n_outputs: i64, n_kv: i64, n_slices: i64, n_rows: i64, n_rows_swa: i64, n_enc: i64 }
+struct Shape { n_tokens: i64, n_outputs: i64, n_kv: i64, n_slices: i64, n_rows: i64, n_rows_swa: i64, n_enc: i64,
+               n_slice_outputs: i64 }   // gemma4 prunes: the most outputs of a slice
 
 // The graph of the last ubatch (llama.cpp's gf_res_prev), kept: a ubatch of
 // the same shape runs it again (llm_graph_result::can_reuse), and so is
@@ -3291,6 +3378,10 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
             cross_mask: ggml::NONE,
             rows: ggml::NONE,
             rows_swa: ggml::NONE,
+            prune_ids: ggml::NONE,
+            prune_keep: ggml::NONE,
+            out_mask: ggml::NONE,
+            out_mask_swa: ggml::NONE,
         },
         tracing: tracing,
         traced: [],
@@ -3423,11 +3514,21 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         n_rows: 0,
         n_rows_swa: 0,
         n_enc: c.n_enc,
+        n_slice_outputs: 0,
     };
+    if prune_shared(m.hp) {
+        let n_slice_tokens = n_tokens / n_slices;
+        for sl in n_slices {
+            var k = 0;
+            for o in outputs { if o >= sl * n_slice_tokens && o < (sl + 1) * n_slice_tokens { k++; } }
+            sh.n_slice_outputs = max(sh.n_slice_outputs, k);
+        }
+    }
     if use_rows {
         sh.n_rows = kv_rows(pos, seqs, n_slices, 0, rows);
         if has_swa { sh.n_rows_swa = kv_rows(pos, seqs, n_slices, m.hp.n_swa, rows_swa); }
     }
+    kept_slice_outputs = sh.n_slice_outputs;
     if !kept.live || kept.shape != sh { build_graph(c, m, sh, tracing); }
     var b = kept.b;
     let out = kept.out;
@@ -3439,7 +3540,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     }
     ggml::backend_set_i32(b.inp.tokens, tokens);
     if ggml::allocated(b.inp.pos) { ggml::backend_set_i32(b.inp.pos, pos32); }   // bloom reads no positions
-    ggml::backend_set_i32(b.inp.out_ids, outputs);
+    if ggml::allocated(b.inp.out_ids) { ggml::backend_set_i32(b.inp.out_ids, outputs); }   // gemma4 prunes without it
     if ggml::allocated(b.inp.kv_idxs) { ggml::backend_set_i64(b.inp.kv_idxs, idxs); }   // no attention: no cache cells
     if any_recurrent(m) { ggml::backend_set_i32(b.inp.s_copy, [0]); }
     if b.inp.pos_bucket.p != 0 {
@@ -3468,21 +3569,46 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     }
     var mask: f32[>..] = [];
     let alibi = m.hp.f_max_alibi_bias > 0.0;
+    let pruned = b.inp.prune_ids.p != 0;
+    var take: i32[>..] = [];
+    var keep: i32[>..] = [];
+    if pruned {
+        prune_rows(outputs, n_slices, n_tokens / n_slices, sh.n_slice_outputs, take, keep);
+        if take.len > 0 { ggml::backend_set_i32(b.inp.prune_ids, take); }
+        if keep.len > 0 { ggml::backend_set_i32(b.inp.prune_keep, keep); }
+    }
+    var cut: f32[>..] = [];
     if use_rows {
         ggml::backend_set_i32(b.inp.rows, rows);
         fill_mask(mask, ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, 0, alibi);
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
+        if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
+            take_mask_rows(mask, ggml::ne(b.inp.rows, 0), take, cut);
+            ggml::backend_set_f16(b.inp.out_mask, cut);
+        }
         if has_swa {
             ggml::backend_set_i32(b.inp.rows_swa, rows_swa);
             fill_mask(mask, ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices, m.hp.n_swa);
             ggml::backend_set_f16(b.inp.mask_swa, mask);
+            if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
+                take_mask_rows(mask, ggml::ne(b.inp.rows_swa, 0), take, cut);
+                ggml::backend_set_f16(b.inp.out_mask_swa, cut);
+            }
         }
     } else {
         fill_mask(mask, b.n_kv, pos, seqs, [], 1, 0, alibi);
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
+        if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
+            take_mask_rows(mask, b.n_kv, take, cut);
+            ggml::backend_set_f16(b.inp.out_mask, cut);
+        }
         if has_swa {
             fill_mask(mask, b.n_kv, pos, seqs, [], 1, m.hp.n_swa);
             ggml::backend_set_f16(b.inp.mask_swa, mask);
+            if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
+                take_mask_rows(mask, b.n_kv, take, cut);
+                ggml::backend_set_f16(b.inp.out_mask_swa, cut);
+            }
         }
     }
 

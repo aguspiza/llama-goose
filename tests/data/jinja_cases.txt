@@ -191,6 +191,34 @@ ok
 big
 1
 T
+18
+chained comparison
+109
+{{ 1 <= x <= 100 }},{{ 1 <= y <= 100 }},{{ 1 < 2 < 3 < 2 }},{{ 1 == 1 != 2 }},{{ 'a' in 'apple' == 'apple' }}
+16
+{"x":42,"y":500}
+26
+True,False,False,True,True
+2
+ok
+26
+True,False,False,True,True
+1
+T
+32
+chained comparison short circuit
+15
+{{ 2 < 1 < y }}
+2
+{}
+5
+False
+2
+ok
+5
+False
+1
+T
 17
 object comparison
 102
@@ -905,6 +933,20 @@ ok
 c
 1
 T
+22
+array index boundaries
+102
+{% for items in arrays %}{% for i in indices %}{{ items[i] | default('_') }}|{% endfor %};{% endfor %}
+97
+{"arrays":[["a","b","c"],[]],"indices":[-9223372036854775808,-4,-3,-1,0,2,3,9223372036854775807]}
+34
+_|_|a|c|a|c|_|_|;_|_|_|_|_|_|_|_|;
+2
+ok
+34
+_|_|a|c|a|c|_|_|;_|_|_|_|_|_|_|_|;
+1
+T
 17
 array bool access
 17
@@ -1073,6 +1115,20 @@ ok
 ('c', 'b', 'a')
 1
 T
+38
+multipart string comparison and access
+182
+{% set left = a + 'bc' %}{% set right = 'ab' + c %}{{ left == right }}|{{ left[0] }}{{ left[1] }}{{ left[2] }}|{{ right[1:3] }}|{{ left[3] is undefined }}|{{ empty[0] is undefined }}
+28
+{"a":"a","c":"c","empty":""}
+21
+True|abc|bc|True|True
+2
+ok
+21
+True|abc|bc|True|True
+1
+T
 26
 string slice negative step
 20
@@ -1127,6 +1183,90 @@ arithmetic
 ok
 2
 20
+1
+T
+14
+floor division
+68
+{{ 7 // 2 }},{{ -7 // 2 }},{{ 7 // -2 }},{{ 7.5 // 2 }},{{ a // b }}
+14
+{"a":10,"b":3}
+13
+3,-4,-4,3.0,3
+2
+ok
+13
+3,-4,-4,3.0,3
+1
+T
+17
+string comparison
+85
+{{ 'b' > 'a' }},{{ 'VBD' > 'VB' }},{{ 'a' <= 'a' }},{{ 'Z' < 'a' }},{{ 'ab' >= 'b' }}
+2
+{}
+25
+True,True,True,True,False
+2
+ok
+25
+True,True,True,True,False
+1
+T
+25
+unary minus after keyword
+66
+{{ 1 if false else -1 }},{{ not -1 }},{{ x and -2 }},{{ -3 if x }}
+10
+{"x":true}
+14
+-1,False,-2,-3
+2
+ok
+14
+-1,False,-2,-3
+1
+T
+22
+unary minus after elif
+44
+{% if false %}a{% elif -1 < 0 %}b{% endif %}
+2
+{}
+1
+b
+2
+ok
+1
+b
+1
+T
+21
+unary and binary sign
+103
+{{ -x }},{{ - 1 }},{{ --x }},{{ 1 - -x }},{{ 1 -1 }},{{ x -1 }},{{ [x, -1][-1] }},{{ +x }},{{ -x|abs }}
+7
+{"x":3}
+20
+-3,-1,3,4,0,2,-1,3,3
+2
+ok
+20
+-3,-1,3,4,0,2,-1,3,3
+1
+T
+36
+binary minus after keyword attribute
+16
+{{ a.else - 1 }}
+16
+{"a":{"else":3}}
+1
+2
+2
+ok
+1
+2
 1
 T
 15
@@ -1213,6 +1353,101 @@ error
 parser: Parser Error: template is nested more than 128 levels deep
 ...((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((...
                                            ^
+1
+E
+41
+undefined hint: missing object key (attr)
+43
+{% set m = {'a': 1} %}{{ m.missing_key() }}
+0
+
+61
+Callee is not a function: got Undefined (hint: 'missing_key')
+5
+error
+238
+
+------------
+While executing CallExpression at line 1, column 39 in source:
+...{% set m = {'a': 1} %}{{ m.missing_key() }}...
+                                         ^
+Error: Callee is not a function: got Undefined (hint: 'missing_key')
+1
+E
+46
+undefined hint: missing object key (subscript)
+46
+{% set m = {'a': 1} %}{{ m['missing_key']() }}
+0
+
+61
+Callee is not a function: got Undefined (hint: 'missing_key')
+5
+error
+242
+
+------------
+While executing CallExpression at line 1, column 42 in source:
+...% set m = {'a': 1} %}{{ m['missing_key']() }}...
+                                           ^
+Error: Callee is not a function: got Undefined (hint: 'missing_key')
+1
+E
+39
+undefined hint: unknown array attribute
+38
+{% set a = [1] %}{{ a.missing_key() }}
+0
+
+61
+Callee is not a function: got Undefined (hint: 'missing_key')
+5
+error
+228
+
+------------
+While executing CallExpression at line 1, column 34 in source:
+...{% set a = [1] %}{{ a.missing_key() }}...
+                                    ^
+Error: Callee is not a function: got Undefined (hint: 'missing_key')
+1
+E
+40
+undefined hint: unknown string attribute
+38
+{% set s = 'x' %}{{ s.missing_key() }}
+0
+
+61
+Callee is not a function: got Undefined (hint: 'missing_key')
+5
+error
+228
+
+------------
+While executing CallExpression at line 1, column 34 in source:
+...{% set s = 'x' %}{{ s.missing_key() }}...
+                                    ^
+Error: Callee is not a function: got Undefined (hint: 'missing_key')
+1
+E
+37
+undefined hint: unknown int attribute
+36
+{% set n = 1 %}{{ n.missing_key() }}
+0
+
+61
+Callee is not a function: got Undefined (hint: 'missing_key')
+5
+error
+224
+
+------------
+While executing CallExpression at line 1, column 32 in source:
+...{% set n = 1 %}{{ n.missing_key() }}...
+                                  ^
+Error: Callee is not a function: got Undefined (hint: 'missing_key')
 1
 T
 10
@@ -2348,10 +2583,24 @@ tojson sort_keys=true
 {"data":{"b":2,"a":1}}
 16
 {"a": 1, "b": 2}
-4
-skip
-53
-NotImplemented: tojson sort_keys=true not implemented
+2
+ok
+16
+{"a": 1, "b": 2}
+1
+T
+44
+tojson sort_keys=true nested with separators
+55
+{{ data|tojson(sort_keys=true, separators=(',',':')) }}
+56
+{"data":{"name":"f","args":{"z":1,"a":[{"y":2,"b":3}]}}}
+47
+{"args":{"a":[{"b":3,"y":2}],"z":1},"name":"f"}
+2
+ok
+47
+{"args":{"a":[{"b":3,"y":2}],"z":1},"name":"f"}
 1
 T
 6
@@ -3195,6 +3444,48 @@ ok
 Hello, John Smith,Hi, Jane Doe
 1
 T
+24
+macro with unpacked args
+127
+{% macro add(a, b, c=0) %}{{ a + b + c }}{% endmacro %}{{ add(*[1, 2]) }},{{ add(1, **{'b': 2, 'c': 3}) }},{{ add(*xs, **kw) }}
+25
+{"xs":[1,2],"kw":{"c":5}}
+5
+3,6,8
+2
+ok
+5
+3,6,8
+1
+T
+25
+filter with unpacked args
+34
+{{ 'a-b' | replace(*['-', '+']) }}
+2
+{}
+3
+a+b
+2
+ok
+3
+a+b
+1
+T
+45
+caller saved and called after its scope ended
+216
+{% set ns = namespace(f=none) %}{% macro keep() %}{% set ns.f = caller %}{% endmacro %}{% macro outer(p) %}{% call keep() %}[{{ p }}]{% endcall %}{% endmacro %}{{ outer('a') }}{{ outer('b') }}{{ ns.f() }}{{ ns.f() }}
+2
+{}
+6
+[b][b]
+2
+ok
+6
+[b][b]
+1
+T
 17
 macro with caller
 542
@@ -3401,6 +3692,39 @@ yes
 ok
 3
 yes
+1
+T
+32
+is divisibleby -1 with INT64_MIN
+26
+{{ x is divisibleby(-1) }}
+26
+{"x":-9223372036854775808}
+4
+True
+2
+ok
+4
+True
+1
+E
+19
+is divisibleby zero
+26
+{{ 10 is divisibleby(0) }}
+0
+
+29
+divisibleby: division by zero
+5
+error
+156
+
+------------
+While executing TestExpression at line 1, column 7 in source:
+...{{ 10 is divisibleby(0) }}...
+         ^
+Error: divisibleby: division by zero
 1
 T
 5
@@ -4797,10 +5121,24 @@ array|map with filter
 {"arr":["1","2","3"]}
 1
 6
-4
-skip
-49
-NotImplemented: Array sum builtin not implemented
+2
+ok
+1
+6
+1
+T
+9
+array|sum
+92
+{{ [1, 2.5, 3]|sum }},{{ [1, 2]|sum(start=10) }},{{ items|sum(attribute='w') }},{{ []|sum }}
+27
+{"items":[{"w":1},{"w":2}]}
+10
+6.5,13,3,0
+2
+ok
+10
+6.5,13,3,0
 1
 T
 9
@@ -5632,6 +5970,20 @@ dict from tuples and kwargs
 {% set o = dict((obj | items | list), c=2) %}{{ o|tojson }}
 21
 {"obj":{"a":3,"b":1}}
+24
+{"a": 3, "b": 1, "c": 2}
+2
+ok
+24
+{"a": 3, "b": 1, "c": 2}
+1
+T
+34
+dict from dict and unpacked kwargs
+47
+{% set o = dict(obj, **{k: 2}) %}{{ o|tojson }}
+29
+{"obj":{"a":3,"b":1},"k":"c"}
 24
 {"a": 3, "b": 1, "c": 2}
 2

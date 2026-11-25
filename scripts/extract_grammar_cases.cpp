@@ -5,7 +5,9 @@
 //   P  grammar  ok  symbols  rules       the parser (test-grammar-parser)
 //   B  grammar  root  ok                 llama_grammar_init_impl
 //   G  grammar                           the grammar of the M cases after it
-//   M  input  matched                    a string through that grammar
+//   M  input  matched  masks             a string through that grammar; masks has a
+//                                        "1" or "0" per token tried: whether the
+//                                        sampler mask allowed it
 // symbols is "name id\n" per symbol, by name; rules is one line per rule,
 // "type:value " per element. Built by scripts/gen-grammar-cases.sh, which
 // extracts the test functions into parser.inc and integration.inc.
@@ -85,14 +87,20 @@ struct token_and_piece {
     std::string piece;
 };
 
-static std::string token(llama_token id) {
+// a 0xff marker, the ID in big-endian order, the piece's length and the piece
+static std::string token(llama_token id, const std::string & piece) {
     return std::string{
         static_cast<char>(0xff),
         static_cast<char>((id >> 24) & 0xff),
         static_cast<char>((id >> 16) & 0xff),
         static_cast<char>((id >> 8) & 0xff),
-        static_cast<char>(id & 0xff)
-    };
+        static_cast<char>(id & 0xff),
+        static_cast<char>(piece.size())
+    } + piece;
+}
+
+static std::string token(llama_token id) {
+    return token(id, "<[" + std::to_string(id) + "]>");
 }
 
 static std::vector<token_and_piece> parse_tokens(const std::string & input) {
@@ -101,7 +109,7 @@ static std::vector<token_and_piece> parse_tokens(const std::string & input) {
     while (offset < input.size()) {
         try {
             if (static_cast<unsigned char>(input[offset]) == 0xff) {
-                if (offset + 5 > input.size()) {
+                if (offset + 6 > input.size()) {
                     throw std::runtime_error("not enough bytes for token id");
                 }
                 uint32_t val =
@@ -109,8 +117,12 @@ static std::vector<token_and_piece> parse_tokens(const std::string & input) {
                     (static_cast<unsigned char>(input[offset + 2]) << 16) |
                     (static_cast<unsigned char>(input[offset + 3]) << 8)  |
                     (static_cast<unsigned char>(input[offset + 4]));
-                result.push_back({static_cast<llama_token>(val), "<[" + std::to_string(val) + "]>"});
-                offset += 5;
+                size_t len = static_cast<unsigned char>(input[offset + 5]);
+                if (offset + 6 + len > input.size()) {
+                    throw std::runtime_error("not enough bytes for token piece");
+                }
+                result.push_back({static_cast<llama_token>(val), input.substr(offset + 6, len)});
+                offset += 6 + len;
             } else {
                 uint32_t cpt = unicode_cpt_from_utf8(input, offset);
                 result.push_back({0, unicode_cpt_to_utf8(cpt)});
@@ -123,16 +135,24 @@ static std::vector<token_and_piece> parse_tokens(const std::string & input) {
     return result;
 }
 
-static bool match_string(const std::string & input, llama_grammar * grammar) {
+// whether the sampler mask allows the token: it rejects one only if every stack does
+static bool mask_allows(llama_grammar * grammar, const token_and_piece & in) {
+    const auto decoded = llama_grammar_decode_utf8(in.piece, grammar->partial_utf8);
+    llama_grammar_candidates rejects = { { 0, decoded.first.data(), decoded.second, in.token, llama_grammar_is_opaque(*grammar, in.token) } };
+    for (const auto & stack : llama_grammar_get_stacks(grammar)) {
+        rejects = llama_grammar_reject_candidates_for_stack(llama_grammar_get_rules(grammar), stack, rejects);
+    }
+    return rejects.empty();
+}
+
+static bool match_string(const std::string & input, llama_grammar * grammar, std::string & masks) {
     const auto parsed = parse_tokens(input);
     auto & stacks_cur = llama_grammar_get_stacks(grammar);
     for (const auto & in : parsed) {
+        masks += mask_allows(grammar, in) ? "1" : "0";
         try {
             llama_grammar_accept_token(*grammar, in.token, in.piece);
         } catch (const std::runtime_error &) {
-            return false;
-        }
-        if (stacks_cur.empty()) {
             return false;
         }
     }
@@ -150,14 +170,16 @@ static void test(const std::string &, const std::string & grammar_str, const std
         return;
     }
     const llama_grammar_stacks stacks_org = llama_grammar_get_stacks(grammar);
+    const llama_partial_utf8   partial_org = grammar->partial_utf8;
     llama_grammar_stacks & stacks_cur = llama_grammar_get_stacks(grammar);
     field("G"); field(grammar_str);
     for (const auto * list : { &passing, &failing }) {
         for (const auto & s : *list) {
-            bool matched = match_string(s, grammar);
-            field("M"); field(s); field(matched ? "1" : "0");
+            std::string masks;
+            bool matched = match_string(s, grammar, masks);
+            field("M"); field(s); field(matched ? "1" : "0"); field(masks);
             stacks_cur = stacks_org;
-            grammar->partial_utf8 = {};
+            grammar->partial_utf8 = partial_org;
         }
     }
     llama_grammar_free_impl(grammar);

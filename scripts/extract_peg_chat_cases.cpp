@@ -8,12 +8,15 @@
 // then, before the first case of each template,
 //   S  template  its source
 // and each case is
-//   P  template  input  inputs (JSON)  ok
+//   P  template  input  inputs (JSON)  specials (JSON [[piece, id], ...])  ok
 //   ok:  prompt  prompt parts (JSON)  format  grammar  grammar_lazy
 //        generation_prompt  triggers (JSON [[type, value], ...])
 //        preserved tokens (JSON)  additional stops (JSON)
 //        thinking start  thinking ends (JSON)  number of parses
 //        and per parse: cut  is_partial  ok  (ok: msg fields, else the error)
+// With specials, the input and the generation prompt are tokenized as the
+// test does (fake_tokenize: the longest special at each place, else a UTF-8
+// character of text), and the cuts fall between tokens.
 //   else: the error
 // msg fields: role  content  reasoning  number of tool calls, and per call
 // name  arguments  id.

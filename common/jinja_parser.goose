@@ -39,6 +39,7 @@ let N_KWARG = 26;        // x key, y value
 let N_SPREAD = 27;       // x argument
 let N_CALL_STMT = 28;    // x the call, l0 the caller's parameters, l1 body
 let N_TERNARY = 29;      // x condition, y if true, z if false
+let N_CHAIN = 30;        // l0 operands, l1 operators (N_BINARY nodes, only s is used): 1 <= x <= 100
 
 struct Node {
     kind: u8,
@@ -77,7 +78,8 @@ fn node_type(kind: u8) -> const u8[:] {
         N_FILTER => "FilterExpression", N_FILTER_STMT => "FilterStatement",
         N_SELECT => "SelectExpression", N_TEST => "TestExpression", N_UNARY => "UnaryExpression",
         N_SLICE => "SliceExpression", N_KWARG => "KeywordArgumentExpression",
-        N_SPREAD => "SpreadExpression", N_CALL_STMT => "CallStatement", _ => "Ternary",
+        N_SPREAD => "SpreadExpression", N_CALL_STMT => "CallStatement", N_CHAIN => "ComparisonChainExpression",
+        _ => "Ternary",
     };
 }
 
@@ -222,7 +224,7 @@ recursive fn parse_statement() -> i64 {
         r = mk_node(N_MACRO, start);
         let id = parse_primary();
         nodes[r].x = id;
-        let args, nargs = parse_args();
+        let args, nargs = parse_args(false);
         nodes[r].l0 = args;
         nodes[r].n0 = nargs;
         expect(T_CLOSE_STMT, "Expected %}");
@@ -240,7 +242,7 @@ recursive fn parse_statement() -> i64 {
         var cargs = 0;
         var ncargs = 0;
         if is(T_OPEN_PAREN) {
-            let ca, nca = parse_args();
+            let ca, nca = parse_args(false);
             cargs = ca;
             ncargs = nca;
         }
@@ -464,31 +466,57 @@ recursive fn parse_not() -> i64 {
     return r;
 }
 
-// Comparisons and membership, one precedence:
-// 'a' in 'apple' == 'b' in 'banana' is 'a' in ('apple' == ('b' in 'banana')).
+// Comparisons and membership, one precedence, chained as in Python:
+// 'a' in 'apple' == 'b' in 'banana' is 'a' in 'apple' and 'apple' == 'b' and 'b' in 'banana'.
 recursive fn parse_comparison() -> i64 {
-    var left = parse_additive();
+    let first = parse_additive();
+    let pos = cur;
+    // operator, operand, operator, operand, ... on pstack: no list may live across the recursion
+    let mark = pstack.len;
     loop {
-        let start = cur;
         var r = -1;
         if is_identifier("not") && peek(1).t == T_IDENT && tok_text(peek(1)) == "in" {
+            r = mk_node(N_BINARY, cur);
             cur += 2;
-            r = mk_node(N_BINARY, start);
             nodes[r].s = atext.len;
             nodes[r].sn = 6;
             atext.append("not in");
         } else if is_identifier("in") || is(T_COMPARISON) {
+            let op_pos = cur;
             let op = next();
-            r = mk_text_node(N_BINARY, start, op);
+            r = mk_text_node(N_BINARY, op_pos, op);
         } else {
             break;
         }
-        let right = parse_additive();
-        nodes[r].x = left;
-        nodes[r].y = right;
-        left = r;
+        pstack.push(r);
+        let operand = parse_additive();
+        pstack.push(operand);
     }
-    return left;
+    let n_ops = (pstack.len - mark) / 2;
+    if n_ops == 0 { return first; }
+    if n_ops == 1 {
+        let r = pstack[mark];
+        nodes[r].pos = pos;
+        nodes[r].x = first;
+        nodes[r].y = pstack[mark + 1];
+        pstack.resize(mark);
+        return r;
+    }
+    var ops: i64[>..] = [];
+    var operands: i64[>..] = [];
+    operands.push(first);
+    for k in n_ops { ops.push(pstack[mark + 2 * k]); operands.push(pstack[mark + 2 * k + 1]); }
+    pstack.resize(mark);
+    let r = mk_node(N_CHAIN, pos);
+    for o in operands { pstack.push(o); }
+    let l0, n0 = take_list(mark);
+    for o in ops { pstack.push(o); }
+    let l1, n1 = take_list(mark);
+    nodes[r].l0 = l0;
+    nodes[r].n0 = n0;
+    nodes[r].l1 = l1;
+    nodes[r].n1 = n1;
+    return r;
 }
 
 recursive fn parse_additive() -> i64 {
@@ -562,8 +590,9 @@ recursive fn parse_filter() -> i64 {
     return operand;
 }
 
+// A sign where an operand is expected is unary: -x, 1 + -x, x if c else -1.
 recursive fn parse_unary() -> i64 {
-    if !is(T_UNARY) {
+    if !(is(T_ADDITIVE) && tok_text(peek(0)) != "~") {
         let member = parse_member(parse_primary());
         return if is(T_OPEN_PAREN) { parse_call(member) } else { member };
     }
@@ -593,18 +622,22 @@ recursive fn parse_call(callee: i64) -> i64 {
     return r;
 }
 
-// (a, b, key=value, *spread)
-recursive fn parse_args() -> i64, i64 {
+// (a, b, key=value, *array, **object); without spreads in a macro's or a
+// caller's parameters. A spread's flag: ** (keyword arguments).
+recursive fn parse_args(allow_spread: bool = true) -> i64, i64 {
     expect(T_OPEN_PAREN, "Expected (");
     let mark = pstack.len;
     while !is(T_CLOSE_PAREN) {
         var arg = -1;
-        if peek(0).t == T_MULTIPLICATIVE && tok_text(peek(0)) == "*" {
+        let t = peek(0);
+        if t.t == T_POWER || (t.t == T_MULTIPLICATIVE && tok_text(t) == "*") {
+            if !allow_spread { fail_plain(str("Unexpected token: ", tok_text(t), " of type ", t.t)); }
             let start = cur;
             cur++;
             let e = parse_expression();
             arg = mk_node(N_SPREAD, start);
             nodes[arg].x = e;
+            nodes[arg].flag = t.t == T_POWER;
         } else {
             arg = parse_expression();
             if is(T_EQUALS) {

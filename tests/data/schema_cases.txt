@@ -1399,6 +1399,73 @@ space ::= | " " | "\n"{1,2} [ \t]{0,20}
 
 1
 S
+33
+allOf with an empty integer range
+149
+{
+            "allOf": [
+                {"type": "integer", "minimum": 9},
+                {"type": "integer", "maximum": 5}
+            ]
+        }
+1
+0
+32
+allOf has an empty numeric range
+1
+S
+43
+allOf with plain integer and number schemas
+150
+{
+            "allOf": [
+                {"type": "integer"},
+                {"type": "number", "minimum": 0, "maximum": 100}
+            ]
+        }
+1
+1
+112
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+root ::= ("-"? integral-part)
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+34
+allOf with a single integer schema
+84
+{
+            "allOf": [
+                {"type": "integer"}
+            ]
+        }
+1
+1
+112
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+root ::= ("-"? integral-part)
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
+45
+allOf with bounded integer and number schemas
+150
+{
+            "allOf": [
+                {"type": "integer", "minimum": 0, "maximum": 100},
+                {"type": "number"}
+            ]
+        }
+1
+1
+93
+root ::= ([0-9] | ([1-8] [0-9] | [9] [0-9]) | "100")
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+
+1
+S
 17
 conflicting names
 908

@@ -20,7 +20,9 @@ struct Caps {
     supports_preserve_reasoning: bool = false,
     supports_reasoning_effort: bool = false,
     // the levels the template renders distinctly, lowest first (effort_name)
-    reasoning_effort_levels: i64[..6] = [],
+    reasoning_effort_levels: i64[..7] = [],
+    // the levels the template raises on
+    reasoning_effort_rejected: i64[..7] = [],
     // one of the two content kinds is supported
     supports_string_content: bool = true,
     supports_typed_content: bool = false,
@@ -29,9 +31,9 @@ struct Caps {
 
 // The reasoning effort levels caps_get tries, lowest first, and then the
 // one no template knows.
-let N_EFFORTS = 6;
+let N_EFFORTS = 7;
 fn effort_name(k: i64) -> const u8[:] {
-    return match k { 0 => "minimal", 1 => "low", 2 => "medium", 3 => "high", 4 => "xhigh", 5 => "max", _ => "REASONING_EFFORT_UNKNOWN" };
+    return match k { 0 => "none", 1 => "minimal", 2 => "low", 3 => "medium", 4 => "high", 5 => "xhigh", 6 => "max", _ => "REASONING_EFFORT_UNKNOWN" };
 }
 
 fn caps_apply_preserve_reasoning(c: Ctx, enabled: bool) {
@@ -242,10 +244,16 @@ fn caps_get(p: Program) -> Caps {
         let unknown_ok = probe(p, USER_ONLY, "", SETUP_EFFORT).ok;
         unknown.append(caps_out);
         var renders: u8[][>..] = [];
+        var rejected: i64[..7] = [];
         for li in N_EFFORTS {
             caps_effort = li;
             let ok = probe(p, USER_ONLY, "", SETUP_EFFORT).ok;
-            if !ok || (unknown_ok && caps_out == unknown) { continue; }
+            if !ok {
+                // "none" also turns thinking off, so the server does not answer it with an error
+                if li != 0 { rejected.push(li); }
+                continue;
+            }
+            if unknown_ok && caps_out == unknown { continue; }
             var found = -1;
             for rd, k in renders { if found < 0 && rd == caps_out { found = k; } }
             if found >= 0 {
@@ -255,6 +263,8 @@ fn caps_get(p: Program) -> Caps {
                 r.reasoning_effort_levels.push(li);
             }
         }
+        // a template that renders no level fails the probe for another reason: its failures say nothing of the levels
+        if r.reasoning_effort_levels.len > 0 { r.reasoning_effort_rejected = rejected; }
     }
     return r;
 }

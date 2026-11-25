@@ -437,7 +437,7 @@ fn call_other(id: i64, a: Args) -> i64 {
         let v = vals[arg(a, 0)].f;
         return mk_float(if v < 0.0 { -v } else { v });
     }
-    if id == B_FLOAT_INT { ensure_vals(a, "F", 1); return mk_int(cast_i64(vals[arg(a, 0)].f)); }
+    if id == B_FLOAT_INT { ensure_vals(a, "F", 1); return mk_int(float_to_int(vals[arg(a, 0)].f)); }
     if id == B_FLOAT_FLOAT { ensure_vals(a, "F", 1); return mk_float(vals[arg(a, 0)].f); }
     if id == B_FLOAT_STRING {
         ensure_vals(a, "F", 1);
@@ -461,7 +461,7 @@ fn call_other(id: i64, a: Args) -> i64 {
     }
     if id == B_ARR_LENGTH { ensure_vals(a, "A", 1); return mk_int(arr_len(arg(a, 0))); }
     if id == B_ARR_SLICE { return array_slice(a); }
-    if id == B_ARR_SUM { not_implemented("Array sum builtin not implemented"); }
+    if id == B_ARR_SUM { return array_sum(a); }
     if id == B_ARR_JOIN { return array_join(a); }
     if id == B_ARR_STRING || id == B_OBJ_STRING {
         ensure_vals(a, if id == B_ARR_STRING { "A" } else { "O" }, 1);
@@ -537,7 +537,11 @@ fn call_test(id: i64, a: Args) -> i64 {
     }
     if id == B_TEST_DIVISIBLEBY {
         ensure_vals(a, "II", 2);
-        return mk_bool(vals[arg(a, 0)].i % vals[arg(a, 1)].i == 0);
+        let x = vals[arg(a, 0)].i;
+        let y = vals[arg(a, 1)].i;
+        if y == 0 { fail("divisibleby: division by zero"); }
+        // INT64_MIN % -1 overflows
+        return mk_bool(y == -1 || x % y == 0);
     }
     if id == B_TEST_LOWER || id == B_TEST_UPPER {
         ensure_vals(a, "S", 1);
@@ -750,7 +754,6 @@ fn tojson(a: Args) -> i64 {
     let sort = get_kwarg_or_pos(a, "sort_keys", 4);
     if stats { mark_used(get_pos(a, 0), true, 0); }
     let indent = if kind(indent_v) == K_INT { vals[indent_v].i } else { -1 };
-    if truthy(sort) { not_implemented("tojson sort_keys=true not implemented"); }
     let ensure_ascii = truthy(ascii);
     var item_sep: u8[>..] = [];
     var key_sep: u8[>..] = [];
@@ -758,7 +761,7 @@ fn tojson(a: Args) -> i64 {
     if ns > 0 { item_sep.append(sbytes(as_string(arr_at(seps, 0)))); } else { item_sep.append(if indent < 0 { ", " } else { "," }); }
     if ns > 1 { key_sep.append(sbytes(as_string(arr_at(seps, 1)))); } else { key_sep.append(": "); }
     var out: u8[>..] = [];
-    to_json(out, get_pos(a, 0), 0, indent, item_sep, key_sep);
+    to_json(out, get_pos(a, 0), 0, indent, item_sep, key_sep, truthy(sort));
     if ensure_ascii {
         var esc: u8[>..] = [];
         ensure_ascii_json(esc, out);
@@ -1047,6 +1050,31 @@ fn array_slice(a: Args) -> i64 {
         i += step;
     }
     return out;
+}
+
+// items|sum(attribute, start): computed in doubles as the + operator, an
+// int if every operand is one.
+fn array_sum(a: Args) -> i64 {
+    ensure_kwargs(a, "attribute", "start");
+    ensure_count(a, 1, 3);
+    ensure_vals(a, "A", 1);
+    let undef = mk_undef();
+    let attribute = get_kwarg_or_pos(a, "attribute", 1);
+    let start = get_kwarg_or_pos(a, "start", 2);
+    var is_float = kind(start) == K_FLOAT;
+    var sum = if kind(start) == K_UNDEF { 0.0 } else { as_float(start) };
+    let v = get_pos(a, 0);
+    for i in arr_len(v) {
+        let item = arr_at(v, i);
+        let x = if kind(attribute) == K_UNDEF { item } else { get_attribute(item, attribute, undef) };
+        if kind(x) == K_UNDEF && kind(attribute) != K_UNDEF {
+            fail(str("sum: ", tname(item), " has no attribute '", sbytes(as_string(attribute)), "'"));
+        }
+        if kind(x) != K_INT && kind(x) != K_FLOAT { fail(str("sum: unsupported operand type ", tname(x))); }
+        is_float = is_float || kind(x) == K_FLOAT;
+        sum += as_float(x);
+    }
+    return if is_float { mk_float(sum) } else { mk_int(float_to_int(sum)) };
 }
 
 fn array_join(a: Args) -> i64 {

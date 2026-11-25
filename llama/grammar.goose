@@ -20,8 +20,10 @@ let CHAR_NOT = 4;        // [^a], [^a-b]
 let CHAR_RNG_UPPER = 5;  // makes the CHAR (or CHAR_ALT) before it a range [a-z]
 let CHAR_ALT = 6;        // another character of a set [ab], [a-zA]
 let CHAR_ANY = 7;        // .
-let TOKEN = 8;           // <[id]>: v is a token id
-let TOKEN_NOT = 9;       // !<[id]>
+let TOKEN = 8;           // <[id]>, <[id,id-id]>: v is a token id
+let TOKEN_NOT = 9;       // !<[id]>, !<[id,id-id]>
+let TOKEN_RNG_UPPER = 10; // makes the TOKEN (TOKEN_NOT, TOKEN_ALT) before it a range <[1-5]>
+let TOKEN_ALT = 11;      // another token of a set <[1,5]>, <[1-5,9]>
 
 let MAX_REPETITION_THRESHOLD = 2000;
 let RECURSIVE_LIMIT = 256;
@@ -188,21 +190,40 @@ fn parse_char(p: i64) -> u32, i64 {
 
 var parse_vocab = false;    // whether <token> can be tokenized
 
-fn parse_token(p: i64) -> u32, i64 {
+fn parse_token_id(p: i64) -> u32, i64 {
+    let int_end = parse_int_end(p);
+    let v, ok = parse_int(src[p..int_end]);
+    if !ok || v > 4294967295 { fail(str("parsed token id is too big at ", rest(p))); }
+    return v as! u32, int_end;
+}
+
+// A token, <[id,id-id,...]> or <text>, onto building as elements of type t.
+fn parse_token(p: i64, t: u8) -> i64 {
     var pos = p;
     if at(pos) != '<' { fail(str("expecting '<' at ", rest(pos))); }
     pos++;
     if at(pos) == '[' {
         pos++;
-        let int_end = parse_int_end(pos);
-        let v, ok = parse_int(src[pos..int_end]);
-        if !ok || v > 4294967295 { fail(str("parsed token id is too big at ", rest(pos))); }
-        pos = int_end;
+        let start = building.len;
+        loop {
+            let id, id_end = parse_token_id(pos);
+            pos = id_end;
+            building.push(Elem { t: if building.len == start { t } else { TOKEN_ALT }, v: id });
+            if at(pos) == '-' {
+                pos++;
+                let last, last_end = parse_token_id(pos);
+                if last < id { fail(str("invalid token range at ", rest(pos))); }
+                pos = last_end;
+                building.push(Elem { t: TOKEN_RNG_UPPER, v: last });
+            }
+            if at(pos) != ',' { break; }
+            pos++;
+        }
         if at(pos) != ']' { fail(str("expecting ']' at ", rest(pos))); }
         pos++;
         if at(pos) != '>' { fail(str("expecting '>' at ", rest(pos))); }
         pos++;
-        return v as! u32, pos;
+        return pos;
     }
     if !parse_vocab { fail(str("no vocab to parse token at ", rest(p))); }
     while at(pos) != 0 && at(pos) != '>' { pos++; }
@@ -211,7 +232,8 @@ fn parse_token(p: i64) -> u32, i64 {
     var ids: i32[>..] = [];
     vocab::tokenize(src[p..pos], false, true, ids);
     if ids.len != 1 { fail(str("invalid token '", src[p..pos], "'")); }
-    return ids[0] as! u32, pos;
+    building.push(Elem { t: t, v: ids[0] as! u32 });
+    return pos;
 }
 
 recursive fn parse_alternates(p: i64, rule_name: Range, rule_id: u32, is_nested: bool, depth: i64) -> i64 {
@@ -274,10 +296,9 @@ recursive fn parse_sequence(p: i64, rule_name: Range, rule_from: i64, is_nested:
             // a token
             var t: u8 = TOKEN;
             if c == '!' { t = TOKEN_NOT; pos++; }
-            let id, token_end = parse_token(pos);
             last_sym_start = building.len;
             n_prev_rules = 1;
-            building.push(Elem { t: t, v: id });
+            let token_end = parse_token(pos, t);
             pos = parse_space(token_end, is_nested);
         } else if is_word_char(c) {
             // a rule reference
@@ -339,6 +360,7 @@ recursive fn parse_sequence(p: i64, rule_name: Range, rule_from: i64, is_nested:
                 fail("number of repetitions exceeds sane defaults, please reduce the number of repetitions");
             }
             if max_times != 18446744073709551615 && max_times > MAX_REPETITION_THRESHOLD { max_times = 18446744073709551615; }
+            if max_times < min_times { fail("incorrect number of repetitions"); }
             repetitions(rule_name, last_sym_start, n_prev_rules, min_times, max_times, pos);
             n_prev_rules = rep_n_prev;
         } else {
@@ -542,7 +564,7 @@ fn advance(odata: i32[>..<]&, osets: Range[>..<]&, first: i64) {
         } else if t == CHAR || t == CHAR_NOT || t == CHAR_ANY || t == TOKEN || t == TOKEN_NOT {
             if !set_has(odata, osets, first, vdata, cur) { push_stack(odata, osets, vdata, cur); }
         } else {
-            abort("grammar: a stack left at the middle of a character range");
+            abort("grammar: a stack left at the middle of a character range or token set");
         }
     }
     vsets.resize(vbase);
@@ -598,9 +620,57 @@ fn match_partial_char(p: i64, pu: Partial) -> bool {
     return !positive;
 }
 
-fn match_token(pos: i64, token: i32) -> bool {
-    if elems[pos].t == TOKEN { return elems[pos].v == token as! u32; }
-    return elems[pos].v != token as! u32;
+// Whether token matches the token set at p (regular or inverse), and the
+// position after the set (llama_grammar_match_token).
+fn match_token(p: i64, token: i32) -> bool, i64 {
+    let positive = elems[p].t == TOKEN;
+    let id = token as! u32;
+    var pos = p;
+    var found = false;
+    loop {
+        if elems[pos + 1].t == TOKEN_RNG_UPPER {
+            found = found || (elems[pos].v <= id && id <= elems[pos + 1].v);
+            pos += 2;
+        } else {
+            found = found || elems[pos].v == id;
+            pos += 1;
+        }
+        if elems[pos].t != TOKEN_ALT { break; }
+    }
+    return found == positive, pos;
+}
+
+// The token ids the token rules name, as sorted inclusive ranges, merged
+// (llama_grammar_opaque_tokens): char rules never match these tokens.
+struct IdRange { lo: u32, hi: u32 }
+var opaque: IdRange[>..<] = [];
+
+fn find_opaque_tokens() {
+    var ranges: IdRange[>..] = [];
+    for e, i in elems {
+        if e.t == TOKEN || e.t == TOKEN_NOT || e.t == TOKEN_ALT {
+            let is_range = i + 1 < elems.len && elems[i + 1].t == TOKEN_RNG_UPPER;
+            ranges.push(IdRange { lo: e.v, hi: if is_range { elems[i + 1].v } else { e.v } });
+        }
+    }
+    sort(ranges) { a, b => a.lo < b.lo || (a.lo == b.lo && a.hi < b.hi) };
+    opaque.clear();
+    for r in ranges {
+        let last_hi: u64 = if opaque.len > 0 { opaque[opaque.len - 1].hi } else { 0 };
+        if opaque.len > 0 && r.lo <= last_hi + 1 {
+            opaque[opaque.len - 1].hi = max(opaque[opaque.len - 1].hi, r.hi);
+        } else {
+            opaque.push(r);
+        }
+    }
+}
+
+// Whether a token rule names the token, so that char rules do not match it
+// (llama_grammar_is_opaque).
+fn is_opaque(token: i32) -> bool {
+    let id = token as! u32;
+    let i = lower_bound(opaque) { it.lo <= id };
+    return i > 0 && opaque[i - 1].hi >= id;
 }
 
 // The code points of text after a partial sequence, then a 0, onto out;
@@ -665,24 +735,32 @@ fn accept_chr(data: i32[>..<]&, r: Range, chr: u32, odata: i32[>..<]&, osets: Ra
 // rule `start` (llama_grammar_init_impl); false, and the error in err, if a
 // rule is undefined or left-recursive.
 fn init_rules(rules: const Elem[:], starts: const i64[:], start: i64) -> bool {
-    elems.clear();
-    rule_at.clear();
-    for s in starts { rule_at.push(elems.len + s); }
-    elems.append(rules);
-    let n = starts.len;
-    for r in n {
-        var p = rule_at[r];
-        loop {
-            let e = elems[p];
-            if e.t == RULE_REF && (e.v >= n) {
+    var flat: Elem[>..] = [];
+    var rr: Range[>..] = [];
+    flat.append(rules);
+    for s, r in starts {
+        var e = s;
+        while rules[e].t != END { e++; }
+        rr.push(Range { at: s, len: e + 1 - s });
+    }
+    let n0 = starts.len;
+    for r in n0 {
+        for e in flat[rr[r].at..rr[r].at + rr[r].len] {
+            if e.t == RULE_REF && (e.v >= n0) {
                 err.clear();
                 format(err, "invalid grammar: rule ", r, " references undefined rule ", e.v);
                 return false;
             }
-            if e.t == END { break; }
-            p++;
         }
     }
+    left_factor(flat, rr);
+    elems.clear();
+    rule_at.clear();
+    for r in rr {
+        rule_at.push(elems.len);
+        elems.append(flat[r.at..r.at + r.len]);
+    }
+    let n = rr.len;
     // left recursion
     var visited: bool[>..] = [];
     var in_progress: bool[>..] = [];
@@ -725,7 +803,102 @@ fn init_rules(rules: const Elem[:], starts: const i64[:], start: i64) -> bool {
     }
     cur_n = sets.len;
     partial = Partial { value: 0, n_remain: 0 };
+    find_opaque_tokens();
     return true;
+}
+
+// An alternate of a rule, at flat[start..end] (llama_grammar_left_factor's alt_info).
+struct Alt { rule: i64, start: i64, end: i64 }
+
+// Rules with 4 or more alternates that start with the same elements, as
+// tool-choice ::= tc0 | tc1 | ..., get them once: rule ::= prefix rule',
+// rule' ::= suffix0 | suffix1 | ... An alternate that is just a reference to
+// a rule of one alternate is that rule's elements, if all are
+// (llama_grammar_left_factor). A rule r is flat[rr[r]], ending with END; a
+// rewritten rule goes at the end of flat.
+fn left_factor(flat: Elem[>..]&, rr: Range[>..]&) {
+    let n_rules_original = rr.len;
+    var changed = true;
+    while changed {
+        changed = false;
+        let n_rules = rr.len;
+        for ri in n_rules {
+            let r = rr[ri];
+            var alts: Alt[>..] = [];
+            var alt_start = r.at;
+            for j in r.at..r.at + r.len {
+                if flat[j].t == ALT || flat[j].t == END {
+                    alts.push(Alt { rule: ri, start: alt_start, end: j });
+                    alt_start = j + 1;
+                }
+            }
+            if alts.len < 4 { continue; }
+            // each a single reference to a rule of one alternate: that rule's elements
+            var resolved: Alt[>..] = [];
+            var all_single_refs = true;
+            for a in alts {
+                var done = false;
+                // references in generated suffixes are not followed: recursive rules would expand forever
+                if ri < n_rules_original && a.end - a.start == 1 && flat[a.start].t == RULE_REF {
+                    let ref_id: i64 = flat[a.start].v;
+                    if ref_id < rr.len {
+                        var k = rr[ref_id].at;
+                        while flat[k].t != ALT && flat[k].t != END { k++; }
+                        if flat[k].t == END {
+                            resolved.push(Alt { rule: ref_id, start: rr[ref_id].at, end: k });
+                            done = true;
+                        }
+                    }
+                }
+                if !done {
+                    all_single_refs = false;
+                    resolved.push(a);
+                }
+            }
+            if !all_single_refs {
+                resolved.clear();
+                resolved.append(alts);
+            }
+            var prefix_len = 0;
+            loop {
+                let first = resolved[0];
+                if first.start + prefix_len >= first.end { break; }
+                let e = flat[first.start + prefix_len];
+                var same = true;
+                for a in resolved[1..] {
+                    if a.start + prefix_len >= a.end || flat[a.start + prefix_len].t != e.t || flat[a.start + prefix_len].v != e.v {
+                        same = false;
+                        break;
+                    }
+                }
+                if !same { break; }
+                prefix_len++;
+            }
+            // the prefix does not end inside a character class
+            for a in resolved {
+                while prefix_len > 0 && (flat[a.start + prefix_len].t == CHAR_ALT || flat[a.start + prefix_len].t == CHAR_RNG_UPPER) {
+                    prefix_len--;
+                }
+            }
+            if prefix_len == 0 { continue; }
+            let suffix_id = rr.len;
+            var suffix: Elem[>..] = [];
+            for a, ai in resolved {
+                if ai > 0 { suffix.push(Elem { t: ALT, v: 0 }); }
+                suffix.append(flat[a.start + prefix_len..a.end]);
+            }
+            suffix.push(Elem { t: END, v: 0 });
+            var new_rule: Elem[>..] = [];
+            new_rule.append(flat[resolved[0].start..resolved[0].start + prefix_len]);
+            new_rule.push(Elem { t: RULE_REF, v: suffix_id as! u32 });
+            new_rule.push(Elem { t: END, v: 0 });
+            rr.push(Range { at: flat.len, len: suffix.len });
+            flat.append(suffix);
+            rr[ri] = Range { at: flat.len, len: new_rule.len };
+            flat.append(new_rule);
+            changed = true;
+        }
+    }
 }
 
 recursive fn left_recursion(r: i64, visited: bool[>..]&, in_progress: bool[>..]&, may_be_empty: bool[>..]&, depth: i64) -> bool {
@@ -917,6 +1090,9 @@ var cps: u32[>..<] = [];
 fn accept_token(token: i32, piece: const u8[:]) -> bool {
     cps.clear();
     let after = decode(piece, partial, cps);
+    // the mask rejects a piece that does not continue a partial character, so accepting one fails too
+    if after.n_remain < 0 { return false; }
+    let is_op = is_opaque(token);
     ndata.clear();
     nsets.clear();
     for k in cur_n {
@@ -924,15 +1100,17 @@ fn accept_token(token: i32, piece: const u8[:]) -> bool {
         guard st.len > 0 else { continue; }
         let pos: i64 = sdata[st.at + st.len - 1];
         if elems[pos].t == TOKEN || elems[pos].t == TOKEN_NOT {
-            if match_token(pos, token) {
+            let ok, next = match_token(pos, token);
+            if ok {
                 let at0 = tdata.len;
                 for i in st.len - 1 { tdata.push(sdata[st.at + i]); }
-                if !is_end_of_sequence(pos + 1) { tdata.push((pos + 1) as i32); }
+                if !is_end_of_sequence(next) { tdata.push(next as i32); }
                 tsets.push(Range { at: at0, len: tdata.len - at0 });
                 advance(ndata, nsets, 0);
             }
             continue;
         }
+        guard !is_op else { continue; }
         // the code points one by one, from this stack: the sets in turn above the grammar's
         let base_sets = sets.len;
         let base_data = sdata.len;
@@ -972,7 +1150,7 @@ fn accept_token(token: i32, piece: const u8[:]) -> bool {
 
 // A token to check: where its code points are (in ccps, 0-ended), the
 // partial sequence after them, its id, and its index among the candidates.
-struct Cand { index: i64, cp_at: i64, partial: Partial, id: i32 }
+struct Cand { index: i64, cp_at: i64, partial: Partial, id: i32, opaque: bool }
 
 var ccps: u32[>..<] = [];
 var ridx: i64[>..<] = [];
@@ -1024,10 +1202,13 @@ fn reject_candidates(set_first: i64, set_n: i64, cands: const Cand[:]) -> i64 {
                 var reject = false;
                 if st.len == 0 {
                     reject = cp != 0 || c.partial.n_remain != 0;
-                } else if cp == 0 {
-                    reject = c.partial.n_remain != 0;
+                } else if depth > 0 {
+                    // char rules consumed part of the token, so it cannot match by id:
+                    // only if they consumed all of it, not ending in a partial sequence
+                    reject = cp != 0 || c.partial.n_remain != 0;
                 } else {
-                    reject = !match_token(sdata[st.at + st.len - 1], c.id);
+                    let ok, next = match_token(sdata[st.at + st.len - 1], c.id);
+                    reject = c.partial.n_remain < 0 || !ok;
                 }
                 if reject { ridx.push(ci); }
             }
@@ -1044,7 +1225,10 @@ fn reject_candidates(set_first: i64, set_n: i64, cands: const Cand[:]) -> i64 {
             let ci = ridx[lv.cur_at + k];
             let c = cands[ci];
             let cp = ccps[c.cp_at + depth];
-            if cp == 0 {
+            if c.opaque {
+                // a token named by a token rule only matches token rules
+                ridx.push(ci);
+            } else if cp == 0 {
                 if c.partial.n_remain != 0 && !match_partial_char(pos, c.partial) { ridx.push(ci); }
             } else {
                 let ok, after = match_char(pos, cp);
@@ -1057,7 +1241,7 @@ fn reject_candidates(set_first: i64, set_n: i64, cands: const Cand[:]) -> i64 {
             let ci = ridx[lv.cur_at + k];
             let c = cands[ci];
             let cp = ccps[c.cp_at + depth];
-            if cp != 0 {
+            if !c.opaque && cp != 0 {
                 let ok, after = match_char(pos, cp);
                 if ok { ridx.push(ci); }
             }
@@ -1083,6 +1267,18 @@ fn reject_candidates(set_first: i64, set_n: i64, cands: const Cand[:]) -> i64 {
     return base;
 }
 
+// Whether the grammar's stacks allow the token, of text piece, as the
+// sampler mask decides: false only if every stack rejects it.
+fn piece_allowed(token: i32, piece: const u8[:]) -> bool {
+    ccps.clear();
+    let pu = decode(piece, partial, ccps);
+    let cands = [Cand { index: 0, cp_at: 0, partial: pu, id: token, opaque: is_opaque(token) }];
+    let base = reject_candidates(0, cur_n, cands);
+    let allowed = ridx.len == base;
+    ridx.resize(base);
+    return allowed;
+}
+
 // llama_grammar_apply_impl: which of the tokens ids the grammar cannot take
 // now (rejected[i]). An end of generation token is taken only where the
 // grammar can end; a token with no text, never.
@@ -1102,7 +1298,7 @@ fn reject_tokens(ids: const i32[:], rejected: bool[>..]&) {
         if piece.len == 0 || piece[0] == 0 { rejected[i] = true; continue; }
         let cp_at = ccps.len;
         let pu = decode(piece, partial, ccps);
-        cands.push(Cand { index: i, cp_at: cp_at, partial: pu, id: id });
+        cands.push(Cand { index: i, cp_at: cp_at, partial: pu, id: id, opaque: is_opaque(id) });
     }
     let base = reject_candidates(0, cur_n, cands);
     for k in base..ridx.len { rejected[cands[ridx[k]].index] = true; }

@@ -30,11 +30,11 @@ let H_LFM2_5 = 13;
 let H_GIGACHAT_V3 = 14;
 let H_MINIMAX_M3 = 15;
 let H_DEEPSEEK_V3_2 = 16;
-let H_GEMMA4_LEGACY = 17;
 let H_GEMMA4 = 18;
 let H_MINICPM5 = 19;
 let H_TRANSLATE_GEMMA = 20;
 let H_QWEN3_CODER = 21;
+let H_INKLING = 22;
 
 fn handler_name(h: i64) -> const u8[:] {
     return match h {
@@ -64,17 +64,15 @@ fn detect(src: const u8[:]) -> i64 {
     if has("<role>ASSISTANT</role>") && has("<arg_key>") { return H_LING3; }
     if has("<|START_TEXT|>") && has("<|START_ACTION|>") { return H_COHERE2MOE; }
     if is_lfm2(src) { return H_LFM2; }
-    if has("List of tools: [") && !has("<|tool_list_start|>") { return H_LFM2_5; }
+    if has("List of tools: ") && !has("<|tool_list_start|>") { return H_LFM2_5; }
     if has("<|role_sep|>") && has("<|message_sep|>") && !has("<|function_call|>") { return H_GIGACHAT_V3; }
     if has("]<]minimax[>[") && has("<tool_call>") && has("<invoke name=") { return H_MINIMAX_M3; }
     if (has("dsml_token") && has("DSML") && (has("function_calls") || has("tool_calls"))) || has("｜DSML｜ calls>") { return H_DEEPSEEK_V3_2; }
-    if has("'<|tool_call>call:'") {
-        if !has("{#- OpenAI Chat Completions:") { return H_GEMMA4_LEGACY; }
-        return H_GEMMA4;
-    }
+    if has("'<|tool_call>call:'") { return H_GEMMA4; }
     if has("Tool usage guidelines:") && has("<function name=\"") && has("<param name=\"") { return H_MINICPM5; }
     if has("[source_lang_code]") && has("[target_lang_code]") { return H_TRANSLATE_GEMMA; }
     if has("<tool_call>") && has("<function=") && has("<parameter=") && !has("'<tool_call><function=' ~ tool_call.name ~ '>'") { return H_QWEN3_CODER; }
+    if has("<|message_user|>") && has("<|content_image|>") { return H_INKLING; }   // Inkling 1 and 2
     return -1;
 }
 
@@ -108,10 +106,15 @@ fn render(t: chat_render::Template, g: chat_render::Gen, ov: chat_render::Overri
 }
 
 // The grammar of the parser built, lazy or not.
-fn build_grammar(lazy: bool) {
-    chat_render::grammar_lazy = lazy;
+fn build_grammar(lazy: bool) { build_grammar_as(lazy, lazy); }
+
+// The grammar the parser builds lazy (build_lazy), and whether the sampler
+// treats it as lazy: a grammar that scans for its triggers itself runs from
+// the first token.
+fn build_grammar_as(grammar_lazy: bool, build_lazy: bool) {
+    chat_render::grammar_lazy = grammar_lazy;
     json_schema::begin_grammar();
-    peg::build_grammar(chat_render::parser, lazy);
+    peg::build_grammar(chat_render::parser, build_lazy);
     json_schema::end_grammar(chat_render::grammar);
 }
 
@@ -201,7 +204,7 @@ fn init_lfm2(t: chat_render::Template, g: chat_render::Gen, tool_list_tokens: bo
     } else {
         // rule("tool-calls", trigger_rule("tool-call", literal(START) + python_style_tool_calls(...) + literal(END)))
         let l2 = peg::literal(TOOL_CALL_END);
-        let ps = chat_peg::python_style_tool_calls(tools_v, g.parallel_tool_calls, true);
+        let ps = chat_peg::python_style_tool_calls(tools_v, g.parallel_tool_calls, true, true);
         let l1 = peg::literal(TOOL_CALL_START);
         let tool_calls = peg::rule("tool-calls", peg::trigger_rule("tool-call", peg::chain([peg::ci(l1), peg::ci(ps), peg::ci(l2)])), false);
         let content = chat_peg::content(peg::until(TOOL_CALL_START));
@@ -267,19 +270,18 @@ fn init_minicpm5(t: chat_render::Template, g: chat_render::Gen) {
         var a = -1;
         {
             let cl = chat_peg::tool_arg_close(peg::literal("</param>"));
-            let l2 = peg::literal("]]>");
             let sv = chat_peg::tool_arg_string_value(peg::until("]]>"));
-            let ac = peg::ac(peg::seq2(sv, l2), "]]>");
+            let th = peg::through_s(sv, "]]>");
             let l1 = peg::literal("<![CDATA[");
-            a = peg::chain([peg::ci(l1), peg::ci(ac), peg::ci(cl)]);
+            a = peg::chain([peg::ci(l1), peg::ci(th), peg::ci(cl)]);
         }
         var b = -1;
         {
             let cl = chat_peg::tool_arg_close(peg::literal("</param>"));
             let sv = chat_peg::tool_arg_string_value(peg::until("</param>"));
-            let ac = peg::ac(peg::seq2(sv, cl), "</param>");
+            let th = peg::through(sv, cl);
             let n = peg::negate(peg::literal("<![CDATA["));
-            b = peg::seq2(n, ac);
+            b = peg::seq2(n, th);
         }
         let string_value = peg::choice([a, b]);
         var tool_choice = peg::choice([]);
@@ -381,33 +383,29 @@ fn init_qwen3_coder(t: chat_render::Template, g: chat_render::Gen) {
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
-    var starts: u8[>..] = [];
-    chat_render::list_push(starts, "<tool_call>");
-    if is_qwen3_coder && tools {
-        for i in json_schema::json_len(tools_v) {
-            let func = function_of(i);
-            guard func >= 0 else { continue; }
-            chat_render::list_push(starts, str("<function=", chat_peg::jstr(chat_peg::jget(func, "name")), ">"));
-        }
-    }
     peg::begin();
+    peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
     let generation_prompt = peg::literal(GEN_PREFIX);
     // the template strips the newline before </think>, so it stays out of the reasoning
-    let think_body = peg::until_one_of(["\n</think>", "</think>", "<tool_call>"]);
-    let c3 = peg::peek(peg::literal("<tool_call>"));
-    let c2 = peg::literal("</think>");
-    let c1 = peg::literal("\n</think>");
-    let think_close = peg::choice2(peg::choice2(c1, c2), c3);
+    let te1 = peg::token("</think>");
+    let te2 = peg::token("</think>");
+    let ten = peg::literal("\n");
+    let think_end = peg::choice2(peg::seq2(ten, te2), te1);
+    let tb = peg::token("<tool_call>");
+    let think_body = peg::until_p(peg::choice2(think_end, tb));
+    let think_close = peg::choice2(think_end, peg::peek(peg::token("<tool_call>")));
     var reasoning_extracted = -1;
     {
         let r = chat_peg::reasoning(think_body);
         let s = peg::space();
-        reasoning_extracted = peg::optional(peg::chain([peg::cs("<think>"), peg::ci(s), peg::ci(r), peg::ci(think_close)]));
+        let tk = peg::token("<think>");
+        reasoning_extracted = peg::optional(peg::chain([peg::ci(tk), peg::ci(s), peg::ci(r), peg::ci(think_close)]));
     }
     var reasoning_skipped = -1;
     {
         let s = peg::space();
-        reasoning_skipped = peg::optional(peg::chain([peg::cs("<think>"), peg::ci(s), peg::ci(think_body), peg::ci(think_close)]));
+        let tk = peg::token("<think>");
+        reasoning_skipped = peg::optional(peg::chain([peg::ci(tk), peg::ci(s), peg::ci(think_body), peg::ci(think_close)]));
     }
     var reasoning = peg::eps();
     if supports_reasoning && extract { reasoning = reasoning_extracted; }
@@ -422,7 +420,11 @@ fn init_qwen3_coder(t: chat_render::Template, g: chat_render::Gen) {
     } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
         let arg_close = chat_peg::tool_arg_close(peg::literal("\n</parameter>\n"));
         let sv = chat_peg::tool_arg_string_value(peg::until("\n</parameter>\n"));
-        let arg_string = peg::rule("xml-arg-string", peg::ac(peg::seq2(sv, arg_close), "\n</parameter>\n"), false);
+        let arg_string = peg::rule("xml-arg-string", peg::through(sv, arg_close), false);
+        let min_calls = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { 1 } else { 0 };
+        let more = if g.parallel_tool_calls { peg::zero_or_more(peg::ref("tool-call")) } else { peg::eps() };
+        var starts = peg::token("<tool_call>");
+        var tool_calls = peg::choice([]);
         var tool_choice = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
             let func = function_of(i);
@@ -465,68 +467,191 @@ fn init_qwen3_coder(t: chat_render::Template, g: chat_render::Gen) {
             // required arguments in any order: Qwen does not always keep it
             var args = chat_peg::permute(str("tool-", i, "-args"), required_args);
             if optional_args.len > 0 { args = peg::seq2(args, peg::zero_or_more(peg::choice(optional_args))); }
-            // tool(tool_open("<function=" + tool_name(name) + ">\n") + tool_args(args) + tool_close("</function>\n"))
+            // opener: tool_open("<function=" + tool_name(name) + ">")
+            let tn = chat_peg::tool_name(peg::literal(name));
+            let opener = chat_peg::tool_open(peg::chain([peg::cs("<function="), peg::ci(tn), peg::cs(">")]));
+            // body: "\n" + tool_args(args) + tool_close("</function>\n")
             let tc = chat_peg::tool_close(peg::literal("</function>\n"));
             let ta = chat_peg::tool_args(args);
-            let tn = chat_peg::tool_name(peg::literal(name));
-            let open = chat_peg::tool_open(peg::chain([peg::cs("<function="), peg::ci(tn), peg::cs(">\n")]));
-            let fp = chat_peg::tool(peg::chain([peg::ci(open), peg::ci(ta), peg::ci(tc)]));
-            let r = peg::rule(str("tool-", i), fp, false);
+            let nl = peg::literal("\n");
+            let body = peg::chain([peg::ci(nl), peg::ci(ta), peg::ci(tc)]);
+            let r = peg::rule(str("tool-", i), chat_peg::tool(peg::seq2(opener, body)), false);
             tool_choice = peg::choice2(tool_choice, r);
+            if is_qwen3_coder {
+                // Qwen3-Coder models sometimes leave out <tool_call>: the whole <function=name>
+                // opener is a trigger too (not <function alone, as #include <functional>)
+                let s = peg::space();
+                let et = peg::token("</tool_call>");
+                let rest = peg::chain([peg::ci(body), peg::ci(et), peg::ci(s), peg::ci(more)]);
+                let tr = peg::trigger_rule_sr(str("tool-calls-", i), opener, rest);
+                tool_calls = peg::choice2(tool_calls, tr);
+                starts = peg::choice2(starts, opener);
+            }
         }
-        let min_calls = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { 1 } else { 0 };
         let s = peg::space();
-        let tool_call_body = peg::chain([peg::ci(tool_choice), peg::cs("</tool_call>"), peg::ci(s)]);
-        let tool_call = peg::rule("tool-call", peg::chain([peg::cs("<tool_call>\n"), peg::ci(tool_call_body)]), false);
-        var tool_call_first = tool_call;
-        if is_qwen3_coder {
-            let o = peg::optional(peg::literal("<tool_call>\n"));
-            tool_call_first = peg::rule("tool-call-first", peg::seq2(o, tool_call_body), false);
+        let et = peg::token("</tool_call>");
+        let tool_call_body = peg::chain([peg::ci(tool_choice), peg::ci(et), peg::ci(s)]);
+        {
+            let nl = peg::literal("\n");
+            let st = peg::token("<tool_call>");
+            peg::rule("tool-call", peg::chain([peg::ci(st), peg::ci(nl), peg::ci(tool_call_body)]), false);
         }
-        var calls = tool_call_first;
-        if g.parallel_tool_calls {
-            let z = peg::zero_or_more(tool_call);
-            calls = peg::seq2(tool_call_first, z);
+        {
+            let nl = peg::literal("\n");
+            let rest = peg::chain([peg::ci(nl), peg::ci(tool_call_body), peg::ci(more)]);
+            let st = peg::token("<tool_call>");
+            let tr = peg::trigger_rule_sr("tool-calls", st, rest);
+            tool_calls = peg::choice2(tool_calls, tr);
         }
-        let tool_calls = peg::trigger_rule("tool-call-root", peg::repeat(calls, min_calls, 1));
-        // content stops before the one or two newlines that separate it from the calls
-        var ends: u8[>..] = [];
-        var start = 0;
-        for i in starts.len {
-            guard starts[i] == 0 else { continue; }
-            let st = starts[start..i];
-            chat_render::list_push(ends, str("\n\n", st));
-            chat_render::list_push(ends, str("\n", st));
-            chat_render::list_push(ends, st);
-            start = i + 1;
-        }
-        var ends_list: const u8[:][>..] = [];
-        var s0 = 0;
-        for i in ends.len {
-            guard ends[i] == 0 else { continue; }
-            ends_list.push(ends[s0..i]);
-            s0 = i + 1;
-        }
-        let c = chat_peg::content(peg::until_one_of(ends_list));
+        // the templates separate content from the calls with one or two newlines: the content stops before them
+        let b1 = peg::seq2(peg::literal("\n"), starts);
+        let a1 = peg::seq2(peg::literal("\n\n"), starts);
+        let content_end = peg::choice2(peg::choice2(a1, b1), starts);
+        // a << b << c: C++17 makes the left operand of << first
+        let c = chat_peg::content(peg::until_p(content_end));
         let rc = peg::spaced(reasoning, c);
-        let body = peg::spaced(rc, tool_calls);
-        root = peg::seq2(generation_prompt, body);
+        let rep = peg::repeat(tool_calls, min_calls, 1);
+        root = peg::seq2(generation_prompt, peg::spaced(rc, rep));
     } else {
         let c = chat_peg::content(peg::rest());
         root = peg::seq2(generation_prompt, peg::spaced(reasoning, c));
     }
     chat_render::parser = peg::build(root);
     if include {
-        let lazy = tools && g.tool_choice == chat_render::TOOL_CHOICE_AUTO;
-        build_grammar(lazy);
-        if lazy {
-            var start = 0;
-            for i in starts.len {
-                guard starts[i] == 0 else { continue; }
-                chat_render::add_trigger(chat_render::TRIGGER_WORD, starts[start..i]);
-                start = i + 1;
-            }
+        // the grammar scans for the triggers itself, so the sampler runs it from the first token
+        build_grammar_as(false, !rf && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
+    }
+}
+
+//
+// Inkling 1 and 2 (inkling.cpp): the assistant turn is a list of blocks,
+// each closed by <|end_message|>:
+//   <|message_model|><|content_thinking|>...<|end_message|>
+//   <|message_model|><|content_text|>...<|end_message|>
+//   <|message_model|>NAME<|content_invoke_tool_json|>{"name":"NAME","args":{...}}<|end_message|>
+// Not ported: the media markers moved out of the text blocks (no media here).
+//
+
+// tool_open("{") << json_member("name", "\"" + tool_name(json_name) + "\"") << ","
+//   << json_member("args", tool_args(json())) << tool_close("}") + end
+fn inkling_tool_body(json_name: i64, end: i64) -> i64 {
+    let open = chat_peg::tool_open(peg::literal("{"));
+    let q2 = peg::literal("\"");
+    let tn = chat_peg::tool_name(json_name);
+    let q1 = peg::literal("\"");
+    let name_member = peg::json_member("name", peg::chain([peg::ci(q1), peg::ci(tn), peg::ci(q2)]));
+    let a = peg::spaced(open, name_member);
+    let b = peg::spaced(a, peg::literal(","));
+    let args_member = peg::json_member("args", chat_peg::tool_args(peg::json()));
+    let c = peg::spaced(b, args_member);
+    let close = peg::seq2(chat_peg::tool_close(peg::literal("}")), end);
+    return peg::spaced(c, close);
+}
+
+fn init_inkling(t: chat_render::Template, g: chat_render::Gen) {
+    let HEADER = "<|message_model|>";
+    let THINK = "<|content_thinking|>";
+    let TEXT = "<|content_text|>";
+    let TOOL_JSON = "<|content_invoke_tool_json|>";
+    let END = "<|end_message|>";
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { .. }, gp);
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    for tk in [HEADER, THINK, TEXT, TOOL_JSON, END] { preserve(tk); }
+    chat_render::thinking_start.append(THINK);
+    chat_render::list_push(chat_render::thinking_ends, END);
+    chat_render::assistant_start.append(HEADER);
+    chat_render::user_start.append("<|message_user|>");
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        if g.continue_reasoning.len > 0 {
+            gp.append(HEADER);
+            gp.append(THINK);
+            gp.append(g.continue_reasoning);
         }
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+            if gp.len > 0 { gp.append(END); }
+            gp.append(HEADER);
+            gp.append(TEXT);
+            gp.append(g.continue_content);
+        }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    let tools = has_tools();
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let use_tools = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    peg::begin();
+    peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
+    let header = peg::token(HEADER);
+    let end = peg::token(END);
+    let think = peg::token(THINK);
+    var thinking = -1;
+    if extract {
+        let r = chat_peg::reasoning(peg::until_p(end));
+        thinking = peg::rule("thinking", peg::chain([peg::ci(think), peg::ci(r), peg::ci(end)]), false);
+    } else {
+        let b = chat_peg::content(peg::seq2(peg::until_p(end), end));
+        let a = peg::atomic(chat_peg::content(think));
+        thinking = peg::rule("thinking", peg::seq2(a, b), false);
+    }
+    var text = -1;
+    {
+        let c = chat_peg::content(peg::until_p(end));
+        let tt = peg::token(TEXT);
+        text = peg::rule("text", peg::chain([peg::ci(tt), peg::ci(c), peg::ci(end)]), false);
+    }
+    var root = -1;
+    if rf {
+        let j = peg::json();
+        let node = json_schema::build_document(schema_v);
+        let response_format = peg::rule("response-format", chat_peg::content(peg::schema(j, "response-format-schema", node, false)), false);
+        let tt = peg::token(TEXT);
+        let z = peg::zero_or_more(peg::seq2(header, thinking));
+        root = peg::chain([peg::ci(z), peg::ci(header), peg::ci(tt), peg::ci(response_format), peg::ci(end)]);
+    } else {
+        let blocks = peg::zero_or_more(peg::seq2(header, peg::choice2(thinking, text)));
+        if !use_tools {
+            root = blocks;
+        } else if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+            let tool_json = peg::token(TOOL_JSON);
+            var tool_choice = peg::choice([]);
+            for i in json_schema::json_len(tools_v) {
+                let func = function_of(i);
+                guard func >= 0 else { continue; }
+                let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+                var quoted: u8[>..] = [];
+                json_schema::json_string(quoted, name);
+                // the research model writes no name before the tool call token
+                let json_name = peg::literal(quoted[1..quoted.len - 1]);
+                let body = inkling_tool_body(json_name, end);
+                let on = peg::optional(peg::literal(name));
+                let r = peg::rule(str("tool-", i), chat_peg::tool(peg::chain([peg::ci(on), peg::ci(tool_json), peg::ci(body)])), false);
+                tool_choice = peg::choice2(tool_choice, r);
+            }
+            var calls = tool_choice;
+            if g.parallel_tool_calls {
+                let z = peg::zero_or_more(peg::seq2(header, tool_choice));
+                calls = peg::seq2(tool_choice, z);
+            }
+            root = peg::chain([peg::ci(blocks), peg::ci(header), peg::ci(calls)]);
+        } else {
+            let tool_json = peg::token(TOOL_JSON);
+            let name = peg::until_p(tool_json);
+            let body = inkling_tool_body(peg::string_content('"'), end);
+            let tp = chat_peg::tool(peg::chain([peg::ci(name), peg::ci(tool_json), peg::ci(body)]));
+            let next = peg::rule("tool-call", peg::seq2(header, tp), false);
+            let more = if g.parallel_tool_calls { peg::zero_or_more(next) } else { peg::eps() };
+            let tr = peg::trigger_rule_sr("tool-calls", tool_json, peg::seq2(body, more));
+            let calls = peg::chain([peg::ci(header), peg::ci(name), peg::ci(tr)]);
+            root = peg::seq2(blocks, peg::optional(calls));
+        }
+    }
+    chat_render::parser = peg::build(root);
+    if rf || use_tools {
+        build_grammar_as(false, !rf && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
     }
 }
 
@@ -543,7 +668,7 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     if h == H_MINICPM5 { init_minicpm5(t, g); return; }
     if h == H_QWEN3_CODER { init_qwen3_coder(t, g); return; }
     if h == H_GEMMA4 { init_gemma4(t, g); return; }
-    if h == H_GEMMA4_LEGACY { init_gemma4_legacy(t, g); return; }
+    if h == H_INKLING { init_inkling(t, g); return; }
     if h == H_TRANSLATE_GEMMA { init_translate_gemma(t, g); return; }
     if h == H_GIGACHAT_V3 { init_gigachat_v3(t, g); return; }
     if h == H_FUNCTIONARY_V3_2 { init_functionary_v3_2(t, g); return; }
@@ -557,8 +682,8 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     if h == H_LING3 { init_ling3(t, g); return; }
     if h == H_K2_HORIZON { init_k2_horizon(t, g); return; }
     if h == H_MINIMAX_M3 { init_minimax_m3(t, g); return; }
-    if h == H_MUSE_GLIMMER { init_muse(t, g, false); return; }
-    if h == H_MUSE_SPARK { init_muse(t, g, true); return; }
+    if h == H_MUSE_GLIMMER { init_muse_glimmer(t, g); return; }
+    if h == H_MUSE_SPARK { init_muse_spark(t, g); return; }
     if h == H_HARMONY_XML { init_harmony_xml(t, g); return; }
     json_schema::fail(str("the dedicated handler ", handler_name(h), " is not ported yet"));
 }
@@ -573,18 +698,6 @@ fn try_init(t: chat_render::Template, g: chat_render::Gen) -> bool {
     return ok;
 }
 
-//
-// Gemma 4 (gemma4.cpp)
-//
-
-fn has_content(m: i64) -> bool {
-    let c = jinja::obj_get_name(m, "content");
-    if c < 0 || jinja::kind(c) == jinja::K_NONE { return false; }
-    if jinja::kind(c) == jinja::K_STRING { return jinja::sbytes(c).len > 0; }
-    if jinja::kind(c) == jinja::K_ARRAY { return jinja::arr_len(c) > 0; }
-    return false;
-}
-
 fn has_tool_calls(m: i64) -> bool {
     let tc = jinja::obj_get_name(m, "tool_calls");
     return tc >= 0 && jinja::kind(tc) == jinja::K_ARRAY && jinja::arr_len(tc) > 0;
@@ -595,83 +708,360 @@ fn role_of(m: i64) -> const u8[:] {
     return if r >= 0 && jinja::kind(r) == jinja::K_STRING { jinja::sbytes(r) } else { "" };
 }
 
-// convert_tool_responses_gemma4: an assistant's tool calls, the tool
-// results after them and the assistant's answer as one message with a
-// tool_responses field. It throws jinja::Fail.
-fn convert_tool_responses_gemma4(messages: i64) -> i64 {
-    let result = jinja::mk_array();
-    var i = 0;
-    let n = jinja::arr_len(messages);
-    while i < n {
-        let msg = jinja::arr_at(messages, i);
-        if role_of(msg) != "assistant" || !has_tool_calls(msg) {
-            jinja::arr_push(result, msg);
-            i++;
-            continue;
-        }
-        let tool_calls = jinja::mk_array();
-        let tool_responses = jinja::mk_array();
-        var content = -1;
-        var reasoning = -1;
-        let rc = jinja::obj_get_name(msg, "reasoning_content");
-        if rc >= 0 && jinja::kind(rc) == jinja::K_STRING { reasoning = rc; }
-        let tcs = jinja::obj_get_name(msg, "tool_calls");
-        for k in jinja::arr_len(tcs) { jinja::arr_push(tool_calls, jinja::arr_at(tcs, k)); }
-        i++;
-        while i < n && role_of(jinja::arr_at(messages, i)) == "tool" {
-            let curr = jinja::arr_at(messages, i);
-            var response = jinja::mk_none();
-            let c = jinja::obj_get_name(curr, "content");
-            if c >= 0 {
-                if jinja::kind(c) == jinja::K_STRING {
-                    // the content as JSON, or as it is
-                    response = c;
-                    let text = str(jinja::sbytes(c));
-                    var parsed = -1;
-                    fn parse_it() { parsed = jinja::from_json(text, false); }
-                    exception::try<jinja::Fail>(parse_it);
-                    if parsed >= 0 { response = parsed; }
-                } else {
-                    response = c;
-                }
-            }
-            // the name of the call it answers, or its id
-            var name = str("");
-            let idx = jinja::arr_len(tool_responses);
-            if idx < jinja::arr_len(tool_calls) {
-                let tc = jinja::arr_at(tool_calls, idx);
-                let f = jinja::obj_get_name(tc, "function");
-                if f >= 0 && jinja::kind(f) == jinja::K_OBJECT {
-                    let nm = jinja::obj_get_name(f, "name");
-                    if nm >= 0 && jinja::kind(nm) == jinja::K_STRING { name = str(jinja::sbytes(nm)); }
-                }
-            }
-            if name.len == 0 {
-                let id = jinja::obj_get_name(curr, "tool_call_id");
-                if id >= 0 && jinja::kind(id) == jinja::K_STRING { name = str(jinja::sbytes(id)); }
-            }
-            let entry = jinja::mk_object();
-            jinja::obj_set_name(entry, "name", jinja::mk_str(name, false));
-            jinja::obj_set_name(entry, "response", response);
-            jinja::arr_push(tool_responses, entry);
-            i++;
-        }
-        if i < n && role_of(jinja::arr_at(messages, i)) == "assistant" {
-            let next = jinja::arr_at(messages, i);
-            if !has_tool_calls(next) && has_content(next) {
-                content = jinja::obj_get_name(next, "content");
-                i++;
-            }
-        }
-        let built = jinja::mk_object();
-        jinja::obj_set_name(built, "role", jinja::mk_str("assistant", false));
-        jinja::obj_set_name(built, "tool_calls", tool_calls);
-        if jinja::arr_len(tool_responses) > 0 { jinja::obj_set_name(built, "tool_responses", tool_responses); }
-        if content >= 0 && jinja::kind(content) != jinja::K_NONE { jinja::obj_set_name(built, "content", content); }
-        if reasoning >= 0 { jinja::obj_set_name(built, "reasoning_content", reasoning); }
-        jinja::arr_push(result, built);
+//
+// Gemma 4 (gemma4.cpp)
+//
+
+// The tags of the Gemma 4 argument syntax, which the mapper reads; the
+// rules may wrap them freely (common_chat_peg_gemma4_mapper).
+let G4_STRING = "gemma4-string";
+let G4_STRING_CONTENT = "gemma4-string-content";
+let G4_NUMBER = "gemma4-number";
+let G4_BOOL = "gemma4-bool";
+let G4_NULL = "gemma4-null";
+let G4_ARRAY = "gemma4-array";
+let G4_DICT = "gemma4-dict";
+let G4_DICT_KV = "gemma4-dict-kv";
+let G4_DICT_KEY = "gemma4-dict-key";
+let G4_DICT_KEY_NAME = "gemma4-dict-key-name";
+
+// The rules of Gemma 4's values (gemma4_value_rules).
+fn gemma4_value_rules() {
+    let string_delim = peg::token("<|\"|>");
+    {
+        let sc = peg::tag(G4_STRING_CONTENT, peg::until_p(string_delim));
+        peg::rule("gemma4-string", peg::tag(G4_STRING, peg::chain([peg::ci(string_delim), peg::ci(sc), peg::ci(string_delim)])), false);
     }
-    return result;
+    peg::rule("gemma4-bool", peg::tag(G4_BOOL, peg::json_bool()), false);
+    peg::rule("gemma4-null", peg::tag(G4_NULL, peg::json_null()), false);
+    peg::rule("gemma4-number", peg::tag(G4_NUMBER, peg::json_number()), false);
+    // keys are bare in the template, but Gemma 4 sometimes quotes them
+    {
+        let colon = peg::literal(":");
+        let an = peg::tag(G4_DICT_KEY_NAME, peg::until_p(string_delim));
+        let a = peg::chain([peg::ci(string_delim), peg::ci(an), peg::ci(string_delim)]);
+        let b3 = peg::literal("\"");
+        let bn = peg::tag(G4_DICT_KEY_NAME, peg::chars("[^\"]", 1, -1));
+        let b1 = peg::literal("\"");
+        let b = peg::chain([peg::ci(b1), peg::ci(bn), peg::ci(b3)]);
+        let c3 = peg::literal("'");
+        let cn = peg::tag(G4_DICT_KEY_NAME, peg::chars("[^']", 1, -1));
+        let c1 = peg::literal("'");
+        let c = peg::chain([peg::ci(c1), peg::ci(cn), peg::ci(c3)]);
+        let d = peg::tag(G4_DICT_KEY_NAME, peg::chars("[^:}]", 1, -1));
+        let ch = peg::choice([a, b, c, d]);
+        peg::rule("gemma4-dict-key", peg::tag(G4_DICT_KEY, peg::seq2(ch, colon)), false);
+    }
+    {
+        let v = peg::ref("gemma4-value");
+        let s = peg::space();
+        let k = peg::ref("gemma4-dict-key");
+        peg::rule("gemma4-dict-kv", peg::tag(G4_DICT_KV, peg::chain([peg::ci(k), peg::ci(s), peg::ci(v)])), false);
+    }
+    if peg::rule_open("gemma4-dict", false) < 0 {
+        let ws = peg::space();
+        let member = peg::ref("gemma4-dict-kv");
+        let comma = peg::literal(",");
+        let members = peg::seq([member, peg::zero_or_more(peg::seq([comma, ws, member]))]);
+        let open = peg::literal("{");
+        let close1 = peg::literal("}");
+        let close2 = peg::literal("}");
+        peg::rule_close("gemma4-dict", peg::tag(G4_DICT, peg::seq([open, ws, peg::choice([close1, peg::seq([members, ws, close2])])])), false);
+    }
+    if peg::rule_open("gemma4-array", false) < 0 {
+        let ws = peg::space();
+        let value = peg::ref("gemma4-value");
+        let comma = peg::literal(",");
+        let elements = peg::seq([value, peg::zero_or_more(peg::seq([comma, ws, value]))]);
+        let open = peg::literal("[");
+        let close1 = peg::literal("]");
+        let close2 = peg::literal("]");
+        peg::rule_close("gemma4-array", peg::tag(G4_ARRAY, peg::seq([open, ws, peg::choice([close1, peg::seq([elements, ws, close2])])])), false);
+    }
+    if peg::rule_open("gemma4-value", false) < 0 {
+        let a = peg::ref("gemma4-string");
+        let b = peg::ref("gemma4-dict");
+        let c = peg::ref("gemma4-array");
+        let d = peg::ref("gemma4-number");
+        let e = peg::ref("gemma4-bool");
+        let f = peg::ref("gemma4-null");
+        peg::rule_close("gemma4-value", peg::choice([a, b, c, d, e, f]), false);
+    }
+}
+
+//
+// gemma4_schema_parser: a parser of a tool's arguments in the shape of its
+// parameter schema (Gemma 4's delimiters keep json-schema-to-grammar out).
+// Rule names are kept in g4_text, a run per visit, and passed by place.
+//
+
+var g4_text: u8[>..<] = [];
+var g4_props: i64[>..<] = [];
+var g4_depth = 0;
+// the $ref targets met, and the rule each got
+var g4_ref_targets: i64[>..<] = [];
+var g4_ref_text: u8[>..<] = [];
+var g4_ref_at: i64[>..<] = [];
+
+fn g4_name(at: i64, len: i64) -> const u8[:] { g4_text[at..at + len] }
+
+// A name made from the one at (at, len) and a suffix, at the top of g4_text.
+fn g4_child_name(at: i64, len: i64, suffix: const u8[:]) -> i64, i64 {
+    let at0 = g4_text.len;
+    for i in len { g4_text.push(g4_text[at + i]); }
+    g4_text.append(suffix);
+    return at0, g4_text.len - at0;
+}
+
+// Whether a schema has a shape of its own, rather than taking any value.
+recursive fn g4_shaped(node: i64) -> bool {
+    let nd = json_schema::nodes[node];
+    let k = nd.kind;
+    if k == json_schema::K_REF { return nd.target >= 0; }
+    if k == json_schema::K_ANY_OF {
+        for i in nd.kids_n { if g4_shaped(json_schema::kids[nd.kids_at + i]) { return true; } }
+        return false;
+    }
+    if k == json_schema::K_ALL_OF { return nd.kids_n == 1 && g4_shaped(json_schema::kids[nd.kids_at]); }
+    return k == json_schema::K_ARRAY || k == json_schema::K_TUPLE || k == json_schema::K_OBJECT;
+}
+
+fn g4_key_name(key: const u8[:]) -> i64 { peg::tag(G4_DICT_KEY_NAME, peg::literal(key)) }
+
+// A key: bare as the template writes it for an identifier, else quoted with
+// either quote or the string delimiter, as models do.
+fn g4_key(key: const u8[:]) -> i64 {
+    var identifier = key.len > 0 && !(key[0] >= '0' && key[0] <= '9');
+    for c in key {
+        let alnum = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        if !alnum && c != '_' { identifier = false; }
+    }
+    if identifier {
+        let colon = peg::literal(":");
+        return peg::tag(G4_DICT_KEY, peg::seq2(g4_key_name(key), colon));
+    }
+    var alts = peg::choice([]);
+    if key.len > 0 && find(key, ":") < 0 && find(key, "}") < 0 && key[0] != '\'' && key[0] != '"' && key[0] != '<' {
+        // unambiguous bare
+        alts = peg::choice2(alts, g4_key_name(key));
+    }
+    {
+        let e = peg::token("<|\"|>");
+        let n = g4_key_name(key);
+        let s = peg::token("<|\"|>");
+        alts = peg::choice2(alts, peg::chain([peg::ci(s), peg::ci(n), peg::ci(e)]));
+    }
+    if find(key, "'") < 0 {
+        let e = peg::literal("'");
+        let n = g4_key_name(key);
+        let s = peg::literal("'");
+        alts = peg::choice2(alts, peg::chain([peg::ci(s), peg::ci(n), peg::ci(e)]));
+    }
+    if find(key, "\"") < 0 {
+        let e = peg::literal("\"");
+        let n = g4_key_name(key);
+        let s = peg::literal("\"");
+        alts = peg::choice2(alts, peg::chain([peg::ci(s), peg::ci(n), peg::ci(e)]));
+    }
+    let colon = peg::literal(":");
+    return peg::tag(G4_DICT_KEY, peg::seq2(alts, colon));
+}
+
+recursive fn g4_visit(node: i64, at: i64, len: i64) -> i64 {
+    g4_depth++;
+    if g4_depth > json_schema::LIMIT {
+        json_schema::fail(str("JSON schema is nested more than ", json_schema::LIMIT, " levels deep"));
+    }
+    let k = json_schema::nodes[node].kind;
+    var r = -1;
+    if k == json_schema::K_REF { r = g4_visit_ref(node); }
+    else if k == json_schema::K_ANY_OF { r = g4_visit_any_of(node, at, len); }
+    else if k == json_schema::K_ALL_OF {
+        let nd = json_schema::nodes[node];
+        r = if nd.kids_n == 1 { g4_visit(json_schema::kids[nd.kids_at], at, len) } else { peg::ref("gemma4-value") };
+    }
+    else if k == json_schema::K_ARRAY { r = g4_visit_array(node, at, len); }
+    else if k == json_schema::K_TUPLE { r = g4_visit_tuple(node, at, len); }
+    else if k == json_schema::K_OBJECT { r = g4_visit_object(node, at, len); }
+    else { r = peg::ref("gemma4-value"); }
+    g4_depth--;
+    return r;
+}
+
+// A $ref target reached from several places gets one rule, named by the
+// order it was first seen in.
+recursive fn g4_visit_ref(node: i64) -> i64 {
+    let target = json_schema::nodes[node].target;
+    if target < 0 { return peg::ref("gemma4-value"); }
+    for tg, i in g4_ref_targets {
+        if tg == target { return peg::ref(g4_ref_text[g4_ref_at[i]..g4_ref_at[i + 1]]); }
+    }
+    // root + "-ref-" + count: the root's name is the first run of g4_text
+    let n = g4_ref_targets.len;
+    g4_ref_targets.push(target);
+    let rat = g4_ref_text.len;
+    for i in g4_root_len { g4_ref_text.push(g4_text[i]); }
+    g4_ref_text.append(str("-ref-", n));
+    if g4_ref_at.len == 0 { g4_ref_at.push(0); }
+    g4_ref_at.push(g4_ref_text.len);
+    let rlen = g4_ref_text.len - rat;
+    if peg::rule_open(g4_ref_text[rat..rat + rlen], false) >= 0 { return peg::ref(g4_ref_text[rat..rat + rlen]); }
+    let vat = g4_text.len;
+    for i in rlen { g4_text.push(g4_ref_text[rat + i]); }
+    g4_text.append("-value");
+    let p = g4_visit(target, vat, g4_text.len - vat);
+    g4_text.resize(vat);
+    return peg::rule_close(g4_ref_text[rat..rat + rlen], p, false);
+}
+
+var g4_root_len = 0;
+
+// Shaped alternatives first, then any other one as a generic value.
+recursive fn g4_visit_any_of(node: i64, at: i64, len: i64) -> i64 {
+    if !g4_shaped(node) { return peg::ref("gemma4-value"); }
+    let nd = json_schema::nodes[node];
+    if nd.kids_n == 1 { return g4_visit(json_schema::kids[nd.kids_at], at, len); }
+    var alts = peg::choice([]);
+    var loose = false;
+    for i in nd.kids_n {
+        let kid = json_schema::kids[json_schema::nodes[node].kids_at + i];
+        if g4_shaped(kid) {
+            let ca, cl = g4_child_name(at, len, str("-", i));
+            let v = g4_visit(kid, ca, cl);
+            g4_text.resize(ca);
+            alts = peg::choice2(alts, v);
+        } else {
+            loose = true;
+        }
+    }
+    if loose { alts = peg::choice2(alts, peg::ref("gemma4-value")); }
+    return peg::rule(g4_name(at, len), alts, false);
+}
+
+recursive fn g4_visit_array(node: i64, at: i64, len: i64) -> i64 {
+    let ws = peg::space();
+    let items = json_schema::nodes[node].items;
+    var item = -1;
+    if items >= 0 && g4_shaped(items) {
+        let ca, cl = g4_child_name(at, len, "-item");
+        item = g4_visit(items, ca, cl);
+        g4_text.resize(ca);
+    } else {
+        item = peg::ref("gemma4-value");
+    }
+    let c = peg::literal(",");
+    let z = peg::zero_or_more(peg::chain([peg::ci(c), peg::ci(ws), peg::ci(item)]));
+    let elements = peg::seq2(item, z);
+    // literal("[") + ws + (literal("]") | (elements + ws + literal("]")))
+    let e2 = peg::literal("]");
+    let full = peg::chain([peg::ci(elements), peg::ci(ws), peg::ci(e2)]);
+    let e1 = peg::literal("]");
+    let ch = peg::choice2(e1, full);
+    let o = peg::literal("[");
+    return peg::rule(g4_name(at, len), peg::tag(G4_ARRAY, peg::chain([peg::ci(o), peg::ci(ws), peg::ci(ch)])), false);
+}
+
+recursive fn g4_visit_tuple(node: i64, at: i64, len: i64) -> i64 {
+    let ws = peg::space();
+    var items = peg::seq([]);
+    for i in json_schema::nodes[node].kids_n {
+        if i > 0 {
+            let c = peg::literal(",");
+            items = peg::chain([peg::ci(items), peg::ci(c), peg::ci(ws)]);
+        }
+        let kid = json_schema::kids[json_schema::nodes[node].kids_at + i];
+        let ca, cl = g4_child_name(at, len, str("-", i));
+        let v = g4_visit(kid, ca, cl);
+        g4_text.resize(ca);
+        items = peg::seq2(items, v);
+    }
+    let e = peg::literal("]");
+    let o = peg::literal("[");
+    return peg::rule(g4_name(at, len), peg::tag(G4_ARRAY, peg::chain([peg::ci(o), peg::ci(ws), peg::ci(items), peg::ci(ws), peg::ci(e)])), false);
+}
+
+fn lower_less(a: const u8[:], b: const u8[:]) -> bool {
+    for i in min(a.len, b.len) {
+        let x = if a[i] >= 'A' && a[i] <= 'Z' { a[i] + 32 } else { a[i] };
+        let y = if b[i] >= 'A' && b[i] <= 'Z' { b[i] + 32 } else { b[i] };
+        if x != y { return x < y; }
+    }
+    return a.len < b.len;
+}
+
+// The properties in the order the template sorts them (case-insensitive),
+// each required or optional, then any others the schema allows.
+recursive fn g4_visit_object(node: i64, at: i64, len: i64) -> i64 {
+    let ws = peg::space();
+    let n = json_schema::prop_count(node);
+    let mark = g4_props.len;
+    for k in n { g4_props.push(k); }
+    stable_sort(g4_props[mark..g4_props.len]) { a, b => lower_less(json_schema::prop_name(node, a), json_schema::prop_name(node, b)) };
+    let additional = json_schema::nodes[node].additional >= 0;
+    if n == 0 {
+        g4_props.resize(mark);
+        if additional { return peg::ref("gemma4-dict"); }
+        let e = peg::literal("}");
+        let o = peg::literal("{");
+        return peg::rule(g4_name(at, len), peg::tag(G4_DICT, peg::chain([peg::ci(o), peg::ci(ws), peg::ci(e)])), false);
+    }
+    var rest = -1;
+    var first = -1;
+    if additional {
+        let kv = peg::ref("gemma4-dict-kv");
+        let c = peg::literal(",");
+        rest = peg::zero_or_more(peg::chain([peg::ci(c), peg::ci(ws), peg::ci(kv)]));
+        first = peg::optional(peg::seq2(kv, rest));
+    }
+    var i = n;
+    while i > 0 {
+        i--;
+        let k = g4_props[mark + i];
+        let pnode = json_schema::prop_node(node, k);
+        let required = json_schema::prop_required(node, k);
+        let ca, cl = g4_child_name(at, len, str("-", i));
+        let v = g4_visit(pnode, ca, cl);
+        g4_text.resize(ca);
+        let key = g4_key(json_schema::prop_name(node, k));
+        let kv = peg::tag(G4_DICT_KV, peg::chain([peg::ci(key), peg::ci(ws), peg::ci(v)]));
+        var rest_i = -1;
+        var first_i = -1;
+        {
+            let c = peg::literal(",");
+            let r0 = peg::chain([peg::ci(c), peg::ci(ws), peg::ci(kv)]);
+            rest_i = if rest >= 0 { peg::seq2(r0, rest) } else { r0 };
+        }
+        first_i = if rest >= 0 { peg::seq2(kv, rest) } else { kv };
+        if !required {
+            let c = peg::literal(",");
+            let r0 = peg::optional(peg::chain([peg::ci(c), peg::ci(ws), peg::ci(kv)]));
+            rest_i = if rest >= 0 { peg::seq2(r0, rest) } else { r0 };
+            first_i = if first >= 0 { peg::choice2(first_i, first) } else { peg::optional(first_i) };
+        }
+        if i > 0 {
+            let ra, rl = g4_child_name(at, len, str("-rest-", i));
+            rest = peg::rule(g4_name(ra, rl), rest_i, false);
+            g4_text.resize(ra);
+        }
+        first = first_i;
+    }
+    g4_props.resize(mark);
+    let e = peg::literal("}");
+    let o = peg::literal("{");
+    return peg::rule(g4_name(at, len), peg::tag(G4_DICT, peg::chain([peg::ci(o), peg::ci(ws), peg::ci(first), peg::ci(ws), peg::ci(e)])), false);
+}
+
+// The arguments' parser of a tool whose parameters are an object schema.
+fn g4_schema_parser(root_name: const u8[:], node: i64) -> i64 {
+    g4_text.clear();
+    g4_text.append(root_name);
+    g4_root_len = root_name.len;
+    g4_props.clear();
+    g4_depth = 0;
+    g4_ref_targets.clear();
+    g4_ref_text.clear();
+    g4_ref_at.clear();
+    return g4_visit(node, 0, root_name.len);
 }
 
 fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
@@ -688,6 +1078,8 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append("<|channel>thought");
     chat_render::list_push(chat_render::thinking_ends, "<channel|>");
+    // a tool call may start before the thought channel is closed; <channel|> stays first, the budget sampler forces it
+    chat_render::list_push(chat_render::thinking_ends, "<|tool_call>");
     preserve("<|channel>");
     preserve("<channel|>");
     preserve("<|tool_call>");
@@ -709,28 +1101,31 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
     let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
     let extract = g.reasoning_format != chat_render::REASONING_NONE;
     peg::begin();
-    let start = peg::rule("start", peg::optional(peg::literal("<|turn>model\n")), false);
+    peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
+    let sm = peg::literal("model\n");
+    let start = peg::rule("start", peg::optional(peg::seq2(peg::token("<|turn>"), sm)), false);
+    let channel_start = peg::token("<|channel>");
+    let channel_end = peg::token("<channel|>");
+    let think_start = peg::seq2(channel_start, peg::literal("thought"));
+    let tool_call_start = peg::token("<|tool_call>");
+    // the model may start a tool call before closing the thought channel
+    let think_end = peg::choice2(channel_end, peg::peek(tool_call_start));
     if extract {
-        let l2 = peg::literal("<channel|>");
-        let r = chat_peg::reasoning(peg::until("<channel|>"));
+        let r = chat_peg::reasoning(peg::until_p(peg::choice2(channel_end, tool_call_start)));
         let s = peg::space();
-        let l1 = peg::literal("<|channel>thought");
-        peg::rule("thought", peg::chain([peg::ci(l1), peg::ci(s), peg::ci(r), peg::ci(l2)]), false);
+        peg::rule("thought", peg::chain([peg::ci(think_start), peg::ci(s), peg::ci(r), peg::ci(think_end)]), false);
     } else {
-        let l2 = peg::literal("<channel|>");
-        let u = peg::until("<channel|>");
+        let u = peg::until_p(peg::choice2(channel_end, tool_call_start));
         let s = peg::space();
-        let l1 = peg::literal("<|channel>thought");
-        peg::rule("thought", chat_peg::content(peg::chain([peg::ci(l1), peg::ci(s), peg::ci(u), peg::ci(l2)])), false);
+        peg::rule("thought", chat_peg::content(peg::chain([peg::ci(think_start), peg::ci(s), peg::ci(u), peg::ci(think_end)])), false);
     }
-    // gbnf(zero_or_more(literal("<|channel>") + negate(literal("thought"))), "")
+    // gbnf(zero_or_more(channel_start + negate(literal("thought"))), "")
     let nt = peg::negate(peg::literal("thought"));
-    let lc = peg::literal("<|channel>");
-    let consume_empty_channels = peg::gbnf(peg::zero_or_more(peg::seq2(lc, nt)), "");
-    // (peek("<|channel>") + consume_empty_channels + ref("thought")) | negate("<|channel>")
-    let no_channel = peg::negate(peg::literal("<|channel>"));
+    let consume_empty_channels = peg::gbnf(peg::zero_or_more(peg::seq2(channel_start, nt)), "");
+    // (peek(channel_start) + consume_empty_channels + ref("thought")) | negate(channel_start)
+    let no_channel = peg::negate(channel_start);
     let tref = peg::ref("thought");
-    let pk = peg::peek(peg::literal("<|channel>"));
+    let pk = peg::peek(channel_start);
     let thought = peg::choice2(peg::chain([peg::ci(pk), peg::ci(consume_empty_channels), peg::ci(tref)]), no_channel);
     var root = -1;
     if rf {
@@ -745,112 +1140,52 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
         let o = peg::optional(thought);
         root = peg::chain([peg::ci(start), peg::ci(o), peg::ci(response_format)]);
     } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
-        // the rules gemma4_to_json walks
-        peg::rule("gemma4-string-content", peg::until("<|\"|>"), false);
-        {
-            let l2 = peg::literal("<|\"|>");
-            let r = peg::ref("gemma4-string-content");
-            let l1 = peg::literal("<|\"|>");
-            peg::rule("gemma4-string", peg::chain([peg::ci(l1), peg::ci(r), peg::ci(l2)]), false);
-        }
-        peg::rule("gemma4-bool", peg::json_bool(), false);
-        peg::rule("gemma4-null", peg::json_null(), false);
-        peg::rule("gemma4-number", peg::json_number(), false);
-        {
-            let colon = peg::literal(":");
-            let name = peg::rule("gemma4-dict-key-name", peg::chars("[^:}]", 1, -1), false);
-            peg::rule("gemma4-dict-key", peg::seq2(name, colon), false);
-        }
-        {
-            let v = peg::ref("gemma4-value");
-            let s = peg::space();
-            let k = peg::ref("gemma4-dict-key");
-            peg::rule("gemma4-dict-kv", peg::chain([peg::ci(k), peg::ci(s), peg::ci(v)]), false);
-        }
-        if peg::rule_open("gemma4-dict", false) < 0 {
-            let ws = peg::space();
-            let member = peg::ref("gemma4-dict-kv");
-            let comma = peg::literal(",");
-            let members = peg::seq([member, peg::zero_or_more(peg::seq([comma, ws, member]))]);
-            let open = peg::literal("{");
-            let close1 = peg::literal("}");
-            let close2 = peg::literal("}");
-            peg::rule_close("gemma4-dict", peg::seq([open, ws, peg::choice([close1, peg::seq([members, ws, close2])])]), false);
-        }
-        if peg::rule_open("gemma4-array", false) < 0 {
-            let ws = peg::space();
-            let value = peg::ref("gemma4-value");
-            let comma = peg::literal(",");
-            let elements = peg::seq([value, peg::zero_or_more(peg::seq([comma, ws, value]))]);
-            let open = peg::literal("[");
-            let close1 = peg::literal("]");
-            let close2 = peg::literal("]");
-            peg::rule_close("gemma4-array", peg::seq([open, ws, peg::choice([close1, peg::seq([elements, ws, close2])])]), false);
-        }
-        if peg::rule_open("gemma4-value", false) < 0 {
-            let a = peg::ref("gemma4-string");
-            let b = peg::ref("gemma4-dict");
-            let c = peg::ref("gemma4-array");
-            let d = peg::ref("gemma4-number");
-            let e = peg::ref("gemma4-bool");
-            let f = peg::ref("gemma4-null");
-            peg::rule_close("gemma4-value", peg::choice([a, b, c, d, e, f]), false);
-        }
+        gemma4_value_rules();
         var tool_choice = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
             let func = function_of(i);
             guard func >= 0 else { continue; }
             let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
-            // tool(sequence({ tool_open(tool_name(literal(name)) + peek(literal("{"))), tool_args(ref("gemma4-dict")) }))
+            // the arguments in the shape of the parameters when they are an object, else any dict
+            var args = peg::ref("gemma4-dict");
+            let doc = chat_peg::params_schema(func);
+            if doc >= 0 && json_schema::nodes[doc].kind == json_schema::K_OBJECT {
+                args = g4_schema_parser(str("tool-", i, "-args"), doc);
+            }
             let pk2 = peg::peek(peg::literal("{"));
             let open = chat_peg::tool_open(peg::seq2(chat_peg::tool_name(peg::literal(name)), pk2));
-            let args = chat_peg::tool_args(peg::ref("gemma4-dict"));
-            let r = peg::rule(str("tool-", i), chat_peg::tool(peg::seq([open, args])), false);
+            let ta = chat_peg::tool_args(args);
+            let r = peg::rule(str("tool-", i), chat_peg::tool(peg::seq([open, ta])), false);
             tool_choice = peg::choice2(tool_choice, r);
         }
-        let min_calls = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { 1 } else { 0 };
-        let max_calls = if g.parallel_tool_calls { -1 } else { 1 };
-        let call = peg::chain([peg::cs("<|tool_call>call:"), peg::ci(tool_choice), peg::cs("<tool_call|>")]);
-        let tool_call = peg::trigger_rule("tool-call", peg::repeat(call, min_calls, max_calls));
+        let tce = peg::token("<tool_call|>");
+        let tcl = peg::literal("call:");
+        let tool_call_rest = peg::chain([peg::ci(tcl), peg::ci(tool_choice), peg::ci(tce)]);
+        let tool_call = peg::rule("tool-call", peg::seq2(tool_call_start, tool_call_rest), false);
+        let more = if g.parallel_tool_calls { peg::zero_or_more(tool_call) } else { peg::eps() };
+        let tool_calls = peg::trigger_rule_sr("tool-calls", tool_call_start, peg::seq2(tool_call_rest, more));
         if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
-            root = peg::chain([peg::ci(start), peg::ci(thought), peg::ci(tool_call)]);
+            root = peg::chain([peg::ci(start), peg::ci(thought), peg::ci(tool_calls)]);
         } else {
-            let scan = peg::rule("scan-to-toolcall", peg::until("<|tool_call>"), false);
-            let content = peg::rule("content", chat_peg::content(peg::until_one_of(["<|channel>", "<channel|>", "<|tool_call>"])), false);
+            let scan = peg::rule("scan-to-toolcall", peg::until_p(tool_call_start), false);
+            let cu = peg::until_p(peg::choice([channel_start, channel_end, tool_call_start]));
+            let content = peg::rule("content", chat_peg::content(cu), false);
             let message = peg::rule("message", peg::seq2(thought, content), false);
+            let ot = peg::optional(tool_calls);
             let z = peg::zero_or_more(message);
-            root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(scan), peg::ci(tool_call)]);
+            root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(scan), peg::ci(ot)]);
         }
     } else {
         // the content may end with an empty thought block, or a stray <channel|>
-        let content = peg::rule("content", chat_peg::content(peg::until_one_of(["<|channel>", "<channel|>"])), false);
+        let cu = peg::until_p(peg::choice2(channel_start, channel_end));
+        let content = peg::rule("content", chat_peg::content(cu), false);
         let message = peg::rule("message", peg::seq2(thought, content), false);
         root = peg::seq2(start, peg::one_or_more(message));
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, "<|tool_call>");
+        build_grammar_as(false, !(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
     }
-}
-
-// The old Gemma 4 templates: the tool results folded into the assistant's message.
-var gemma4_messages: u8[>..] = [];
-
-fn init_gemma4_legacy(t: chat_render::Template, g: chat_render::Gen) {
-    var adjusted: u8[>..] = [];
-    var ok = false;
-    fn convert() {
-        jinja::reset();
-        let arr = jinja::from_json(g.messages, false);
-        chat_render::dump(adjusted, convert_tool_responses_gemma4(arr));
-        ok = true;
-    }
-    exception::try<jinja::Fail>(convert);
-    if !ok { json_schema::fail(jinja::err); }
-    var g2 = g;
-    g2.messages = adjusted;
-    init_gemma4(t, g2);
 }
 
 //
@@ -860,52 +1195,63 @@ fn init_gemma4_legacy(t: chat_render::Template, g: chat_render::Gen) {
 fn node_partial(n: i64) -> bool { peg::nodes[n].partial }
 fn node_kids(n: i64) -> i64 { peg::nodes[n].kids_n }
 
+// The nearest descendants with the tag, through the rules wrapped around them, onto out.
+recursive fn gemma4_collect(n: i64, tag: const u8[:], out: i64[>..<]&) {
+    for k in node_kids(n) {
+        let c = peg::node_child(n, k);
+        if peg::node_tag(c) == tag { out.push(c); } else { gemma4_collect(c, tag, out); }
+    }
+}
+
+var g4_members: i64[>..<] = [];
+
 recursive fn gemma4_to_json(out: u8[>..]&, n: i64) {
     let text = peg::node_text(n);
     if text.len == 0 { return; }
-    let rule = peg::node_rule(n);
-    if rule == "gemma4-number" || rule == "gemma4-bool" || rule == "gemma4-null" { out.append(text); return; }
-    if rule == "gemma4-string-content" { chat_peg::escape_inner(out, text); return; }
-    if rule == "gemma4-string" {
-        out.push('"');
-        if node_kids(n) > 0 {
-            gemma4_to_json(out, peg::node_child(n, 0));
-            if !node_partial(n) { out.push('"'); }
-        }
+    let tag = peg::node_tag(n);
+    if tag == G4_NUMBER || tag == G4_BOOL || tag == G4_NULL { out.append(text); return; }
+    if tag == G4_STRING_CONTENT {
+        var sanitized: u8[>..] = [];
+        peg::sanitized_text(n, sanitized);
+        chat_peg::escape_inner(out, sanitized);
         return;
     }
-    if rule == "gemma4-array" || rule == "gemma4-dict" {
-        let is_dict = rule == "gemma4-dict";
-        out.push(if is_dict { '{' } else { '[' });
+    if tag == G4_STRING {
+        out.push('"');
+        for k in node_kids(n) { gemma4_to_json(out, peg::node_child(n, k)); }
+        if !node_partial(n) { out.push('"'); }
+        return;
+    }
+    if tag == G4_ARRAY {
+        out.push('[');
         for k in node_kids(n) {
             if k > 0 { out.push(','); }
             gemma4_to_json(out, peg::node_child(n, k));
         }
-        if !node_partial(n) { out.push(if is_dict { '}' } else { ']' }); }
+        if !node_partial(n) { out.push(']'); }
         return;
     }
-    if rule == "gemma4-dict-key-name" { out.append(text); return; }
-    if rule == "gemma4-dict-key" {
+    if tag == G4_DICT_KEY {
+        let name_id = peg::find_by_tag(n, G4_DICT_KEY_NAME, 1000000);
         out.push('"');
-        if node_kids(n) > 0 {
-            // the key's JSON at the end of out, then escaped in its place
-            let mark = out.len;
-            gemma4_to_json(out, peg::node_child(n, 0));
-            let inner = str(out[mark..]);
-            out.resize(mark);
-            chat_peg::escape_inner(out, inner);
-        }
+        if name_id >= 0 { chat_peg::escape_inner(out, peg::node_text(name_id)); }
         if !node_partial(n) { out.append("\":"); }
         return;
     }
-    if rule == "gemma4-dict-kv" {
-        for k in node_kids(n) { gemma4_to_json(out, peg::node_child(n, k)); }
+    if tag == G4_DICT {
+        let mark = g4_members.len;
+        gemma4_collect(n, G4_DICT_KV, g4_members);
+        out.push('{');
+        for k in g4_members.len - mark {
+            if k > 0 { out.push(','); }
+            gemma4_to_json(out, g4_members[mark + k]);
+        }
+        g4_members.resize(mark);
+        if !node_partial(n) { out.push('}'); }
         return;
     }
-    if rule == "gemma4-value" {
-        if node_kids(n) > 0 { gemma4_to_json(out, peg::node_child(n, 0)); }
-        return;
-    }
+    // members, rules and other wrappers
+    for k in node_kids(n) { gemma4_to_json(out, peg::node_child(n, k)); }
 }
 
 recursive fn gemma4_visit(n: i64) {
@@ -1487,6 +1833,8 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append("[THINK]");
     chat_render::list_push(chat_render::thinking_ends, "[/THINK]");
+    // a tool call may come inside the reasoning block
+    chat_render::list_push(chat_render::thinking_ends, "[TOOL_CALLS]");
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { has_messages: true, messages: adjusted, .. }, gp);
     chat_render::format = chat_render::FORMAT_PEG_NATIVE;
@@ -1503,8 +1851,12 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
     let generation_prompt = peg::eps();
     var reasoning = -1;
     if extract {
-        let r = chat_peg::reasoning(peg::until("[/THINK]"));
-        reasoning = peg::optional(peg::chain([peg::cs("[THINK]"), peg::ci(r), peg::cs("[/THINK]")]));
+        // [THINK] reasoning, ended by [/THINK] or by a tool call
+        let ce = peg::literal("[/THINK]");
+        let ct = peg::peek(peg::literal("[TOOL_CALLS]"));
+        let close = peg::choice([ce, ct]);
+        let r = chat_peg::reasoning(peg::until_one_of(["[/THINK]", "[TOOL_CALLS]"]));
+        reasoning = peg::optional(peg::chain([peg::cs("[THINK]"), peg::ci(r), peg::ci(close)]));
     } else {
         reasoning = peg::eps();
     }
@@ -1547,7 +1899,7 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(tools && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
+        build_grammar(!rf && tools && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
         chat_render::add_trigger(chat_render::TRIGGER_WORD, "[TOOL_CALLS]");
     }
 }
@@ -1650,19 +2002,30 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
     let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
     let extract = g.reasoning_format != chat_render::REASONING_NONE;
     peg::begin();
-    let start = peg::rule("start", peg::literal("<|start|>assistant"), false);
-    let end = peg::rule("end", peg::literal("<|end|>"), false);
-    let content = peg::rule("message-content", peg::until("<|end|>"), false);
-    // literal("<|channel|>") + (literal("commentary") | literal("analysis"))
+    peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
+    // the operands of + are made right to left (GCC); << and {...} left to right
+    let la = peg::literal("assistant");
+    let start_assistant = peg::seq2(peg::token("<|start|>"), la);
+    let start = peg::rule("start", start_assistant, false);
+    let end = peg::rule("end", peg::token("<|end|>"), false);
+    let content = peg::rule("message-content", peg::until_p(peg::token("<|end|>")), false);
     let an = peg::literal("analysis");
     let co = peg::literal("commentary");
     let ca = peg::choice2(co, an);
-    let channel = peg::seq2(peg::literal("<|channel|>"), ca);
+    let channel = peg::seq2(peg::token("<|channel|>"), ca);
     let constrain_type = peg::chars("[A-Za-z0-9_-]", 1, -1);
+    let cto = peg::optional(peg::token("<|constrain|>"));
+    let cts = peg::chars("[ ]", 1, -1);
+    let constraint = peg::optional(peg::chain([peg::ci(cts), peg::ci(cto), peg::ci(constrain_type)]));
     // gpt-oss-20b may put this commentary before the channels
     let so = peg::optional(peg::literal(" to=assistant"));
-    let stray = peg::optional(peg::seq2(peg::literal("<|channel|>commentary"), so));
-    let start_analysis = peg::seq2(stray, peg::literal("<|channel|>analysis<|message|>"));
+    let sc = peg::literal("commentary");
+    let st = peg::token("<|channel|>");
+    let stray = peg::optional(peg::chain([peg::ci(st), peg::ci(sc), peg::ci(so)]));
+    let sam = peg::token("<|message|>");
+    let saa = peg::literal("analysis");
+    let sac = peg::token("<|channel|>");
+    let start_analysis = peg::chain([peg::ci(stray), peg::ci(sac), peg::ci(saa), peg::ci(sam)]);
     if extract {
         let r = chat_peg::reasoning(content);
         peg::rule("analysis", peg::chain([peg::ci(start_analysis), peg::ci(r), peg::ci(end)]), false);
@@ -1670,12 +2033,22 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
         peg::rule("analysis", chat_peg::content(peg::chain([peg::ci(start_analysis), peg::ci(content), peg::ci(end)])), false);
     }
     let analysis = peg::ref("analysis");
-    let pc = chat_peg::content(content);
-    let pl = peg::literal("<|channel|>commentary<|message|>");
-    let preamble = peg::rule("preamble", peg::chain([peg::ci(pl), peg::ci(pc), peg::ci(end)]), false);
-    let fc = chat_peg::content(content);
-    let fl = peg::literal("<|channel|>final<|message|>");
-    let final_msg = peg::rule("final", peg::chain([peg::ci(stray), peg::ci(fl), peg::ci(fc)]), false);
+    var preamble = -1;
+    {
+        let pc = chat_peg::content(content);
+        let pm = peg::token("<|message|>");
+        let pl = peg::literal("commentary");
+        let pt = peg::token("<|channel|>");
+        preamble = peg::rule("preamble", peg::chain([peg::ci(pt), peg::ci(pl), peg::ci(pm), peg::ci(pc), peg::ci(end)]), false);
+    }
+    var final_msg = -1;
+    {
+        let fc = chat_peg::content(content);
+        let fm = peg::token("<|message|>");
+        let fl = peg::literal("final");
+        let ft = peg::token("<|channel|>");
+        final_msg = peg::rule("final", peg::chain([peg::ci(stray), peg::ci(ft), peg::ci(fl), peg::ci(constraint), peg::ci(fm), peg::ci(fc)]), false);
+    }
     // unsolicited tool calls (builtin functions) consumed
     let ul = peg::literal(" to=");
     let uo = peg::optional(channel);
@@ -1683,47 +2056,54 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
     let any = peg::rule("any", peg::choice2(preamble, analysis), false);
     var root = -1;
     if rf {
-        let o = peg::optional(peg::literal("<|constrain|>"));
-        let s = peg::space();
-        let constraint = peg::optional(peg::chain([peg::ci(s), peg::ci(o), peg::ci(constrain_type)]));
         let j = peg::json();
         let node = json_schema::build_document(schema_v);
         let c = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
-        let l2 = peg::literal("<|message|>");
-        let l1 = peg::literal("<|channel|>final");
-        let response_format = peg::rule("response-format", peg::chain([peg::ci(l1), peg::ci(constraint), peg::ci(l2), peg::ci(c)]), false);
+        let rm = peg::token("<|message|>");
+        let rl = peg::literal("final");
+        let rt = peg::token("<|channel|>");
+        let response_format = peg::rule("response-format", peg::chain([peg::ci(rt), peg::ci(rl), peg::ci(constraint), peg::ci(rm), peg::ci(c)]), false);
         let z = peg::zero_or_more(peg::seq2(start, analysis));
         root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
     } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
-        var tool_choice = peg::choice([]);
+        var in_role = peg::choice([]);
+        var in_channel = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
             let func = function_of(i);
             guard func >= 0 else { continue; }
             let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
-            let tn = chat_peg::tool_name(peg::literal(name));
-            let func_name = peg::seq2(peg::literal(" to=functions."), tn);
-            let o = peg::optional(peg::literal("<|constrain|>"));
-            let s = peg::space();
-            let constraint = peg::optional(peg::chain([peg::ci(s), peg::ci(o), peg::ci(constrain_type)]));
+            let func_name = chat_peg::tool_name(peg::literal(name));
             let j = peg::json();
             let node = chat_peg::params_schema(func);
             let args = chat_peg::tool_args(peg::schema(j, str("tool-", i, "-schema"), node, false));
-            // the recipient in the role header, or in the channel header
-            let m1 = peg::literal("<|message|>");
-            let in_role = chat_peg::tool(peg::seq2(chat_peg::tool_open(peg::chain([peg::ci(func_name), peg::ci(channel), peg::ci(constraint), peg::ci(m1)])), args));
-            let m2 = peg::literal("<|message|>");
-            let in_channel = chat_peg::tool(peg::seq2(chat_peg::tool_open(peg::chain([peg::ci(channel), peg::ci(func_name), peg::ci(constraint), peg::ci(m2)])), args));
-            let r = peg::rule(str("tool-", i), peg::choice2(in_role, in_channel), false);
-            tool_choice = peg::choice2(tool_choice, r);
+            // the recipient in the role header: <|start|>assistant to=functions.NAME<|channel|>...[constraint]<|message|>ARGS
+            {
+                let m = peg::token("<|message|>");
+                let at = peg::atomic(peg::chain([peg::ci(func_name), peg::ci(channel), peg::ci(constraint), peg::ci(m)]));
+                let r = peg::rule(str("tool-", i, "-in-role"), peg::seq2(at, args), false);
+                in_role = peg::choice2(in_role, r);
+            }
+            // in the channel header: <|start|>assistant<|channel|>... to=functions.NAME[constraint]<|message|>ARGS
+            {
+                let m = peg::token("<|message|>");
+                let at = peg::atomic(peg::chain([peg::ci(func_name), peg::ci(constraint), peg::ci(m)]));
+                let r = peg::rule(str("tool-", i, "-in-channel"), peg::seq2(at, args), false);
+                in_channel = peg::choice2(in_channel, r);
+            }
         }
-        let tool_call = peg::trigger_rule("tool-call", tool_choice);
+        // the recipient prefix is the trigger: the grammar constrains the name after it
+        let to_functions = chat_peg::tool_open(peg::literal(" to=functions."));
+        let t1 = peg::trigger_rule_sr("tool-call-in-role", peg::seq2(start_assistant, to_functions), in_role);
+        let s2 = peg::seq2(peg::seq2(start_assistant, channel), to_functions);
+        let t2 = peg::trigger_rule_sr("tool-call-in-channel", s2, in_channel);
+        let tool_call = peg::choice([t1, t2]);
         if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
             let z = peg::zero_or_more(peg::seq2(start, any));
-            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(tool_call)]);
+            root = peg::seq2(z, tool_call);
         } else {
-            let ch = peg::choice2(tool_call, final_msg);
+            let ch = peg::choice2(tool_call, peg::seq2(start, final_msg));
             let z = peg::zero_or_more(peg::seq2(start, any));
-            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(ch)]);
+            root = peg::seq2(z, ch);
         }
     } else {
         let ch = peg::choice2(final_msg, unsolicited);
@@ -1732,11 +2112,8 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^\\s+to$");
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^<\\|channel\\|>(?:commentary|analysis)\\s+to=functions$");
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant(\\s+to)");
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant(<\\|channel\\|>(?:commentary|analysis)\\s+to)");
+        // the grammar scans for the triggers itself, so the sampler runs it from the first token
+        build_grammar_as(false, !rf && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
     }
 }
 
@@ -2151,7 +2528,7 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(tools && !require_tools);
+        build_grammar(!rf && tools && !require_tools);
         chat_render::add_trigger(chat_render::TRIGGER_WORD, FC_START);
     }
 }
@@ -2323,11 +2700,11 @@ fn init_ling3(t: chat_render::Template, g: chat_render::Gen) {
 // K2 Horizon (k2-horizon.cpp)
 //
 
-// optional(THINK_START + space() + ac(body + think_end, ends))
-fn k2h_think_block(think_start: const u8[:], body: i64, think_end: i64, ends: const u8[:][:]) -> i64 {
-    let ac = peg::ac_one_of(peg::seq2(body, think_end), ends);
+// optional(THINK_START + space() + through(body, think_end))
+fn k2h_think_block(think_start: const u8[:], body: i64, think_end: i64) -> i64 {
+    let th = peg::through(body, think_end);
     let s = peg::space();
-    return peg::optional(peg::chain([peg::cs(think_start), peg::ci(s), peg::ci(ac)]));
+    return peg::optional(peg::chain([peg::cs(think_start), peg::ci(s), peg::ci(th)]));
 }
 
 fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
@@ -2372,7 +2749,11 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
     let ARG_VAL_END = "</ifm|arg_value>";
     chat_render::thinking_start.append(THINK_START);
     chat_render::list_push(chat_render::thinking_ends, THINK_END);
+    // the models sometimes close medium and low reasoning with the generic </ifm|think>
+    let generic_end = think != "ifm|think";
+    if generic_end { chat_render::list_push(chat_render::thinking_ends, "</ifm|think>"); }
     preserve(THINK_END);
+    if generic_end { preserve("</ifm|think>"); }
     preserve(THINK_START);
     for tk in [SECTION_START, SECTION_END, CALL_START, CALL_END, ARG_KEY, ARG_KEY_END, ARG_TYPE, ARG_TYPE_END, ARG_VAL, ARG_VAL_END] { preserve(tk); }
     chat_render::assistant_start.append("<|ifm|im_start|>assistant");
@@ -2393,6 +2774,7 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::gen_prompt.append(gp);
     var ends: const u8[:][>..] = [];
     ends.push(THINK_END);
+    if generic_end { ends.push("</ifm|think>"); }
     peg::begin();
     let generation_prompt = peg::literal(GEN_PREFIX);
     var think_end = peg::choice([]);
@@ -2401,14 +2783,14 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
     var reasoning = -1;
     if extract {
         let r = chat_peg::reasoning(think_body);
-        reasoning = k2h_think_block(THINK_START, r, think_end, ends);
+        reasoning = k2h_think_block(THINK_START, r, think_end);
     } else {
         reasoning = peg::eps();
     }
     var root = -1;
     if rf {
         // the answer is bare JSON: the think block goes even when not extracted
-        let thoughts = if extract { reasoning } else { k2h_think_block(THINK_START, think_body, think_end, ends) };
+        let thoughts = if extract { reasoning } else { k2h_think_block(THINK_START, think_body, think_end) };
         let j = peg::json();
         let node = json_schema::build_document(schema_v);
         let c = chat_peg::content(peg::schema(j, "response-format", node, false));
@@ -2423,7 +2805,7 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
         } else {
             let arg_close = chat_peg::tool_arg_close(peg::literal(ARG_VAL_END));
             let sv = chat_peg::tool_arg_string_value(peg::until(ARG_VAL_END));
-            let arg_string = peg::rule("xml-arg-string", peg::ac(peg::seq2(sv, arg_close), ARG_VAL_END), false);
+            let arg_string = peg::rule("xml-arg-string", peg::through(sv, arg_close), false);
             // the models leave out <ifm|arg_type> even when asked for xml_typed
             var arg_type = -1;
             if call_format == "xml_typed" {
@@ -2498,7 +2880,7 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
         let le = peg::literal(SECTION_END);
         let tool_calls = peg::trigger_rule("tool-calls", peg::repeat(peg::spaced(a, le), if required { 1 } else { 0 }, 1));
         // the thinking stays inline when a required call skips the content parser
-        if required && !extract { reasoning = chat_peg::content(k2h_think_block(THINK_START, think_body, think_end, ends)); }
+        if required && !extract { reasoning = chat_peg::content(k2h_think_block(THINK_START, think_body, think_end)); }
         // a required call comes right after the reasoning
         let content = if required { peg::eps() } else { chat_peg::content(peg::until(SECTION_START)) };
         let b = peg::spaced(reasoning, content);
@@ -2540,7 +2922,6 @@ fn mmn(r: R2) -> const u8[:] { mm_names[r.at..r.at + r.len] }
 
 // until and ac of a name, copied out of mm_names first
 fn mm_until(r: R2) -> i64 { let c = str(mmn(r)); return peg::until(c); }
-fn mm_ac(p: i64, r: R2) -> i64 { let c = str(mmn(r)); return peg::ac(p, c); }
 
 fn mm_text(b: const u8[:]) -> R2 {
     let at0 = mm_names.len;
@@ -2568,7 +2949,7 @@ recursive fn mm3_value_of(n: i64, name: R2, close: R2) -> i64 {
     // a string takes anything: a union with a string in it is a string
     if json_schema::may_be_string(n) {
         let sv = chat_peg::tool_arg_string_value(mm_until(close));
-        return mm_ac(peg::seq2(sv, close_tag), close);
+        return peg::through(sv, close_tag);
     }
     let kind = json_schema::node_kind(n);
     if kind == json_schema::K_ANY_OF {
@@ -2701,19 +3082,17 @@ fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
     if extract {
         var think_block = -1;
         if g.enable_thinking {
-            // THINK_START + space() + ac(reasoning(until(THINK_END)) + THINK_END, THINK_END)
-            let l2 = peg::literal(THINK_END);
+            // THINK_START + space() + through(reasoning(until(THINK_END)), THINK_END)
             let r = chat_peg::reasoning(peg::until(THINK_END));
-            let ac = peg::ac(peg::seq2(r, l2), THINK_END);
+            let th = peg::through_s(r, THINK_END);
             let s = peg::space();
             let l = peg::literal(THINK_START);
-            think_block = peg::chain([peg::ci(l), peg::ci(s), peg::ci(ac)]);
+            think_block = peg::chain([peg::ci(l), peg::ci(s), peg::ci(th)]);
         } else {
-            let l2 = peg::literal(THINK_END);
             let u = peg::until(THINK_END);
-            let ac = peg::ac(peg::seq2(u, l2), THINK_END);
+            let th = peg::through_s(u, THINK_END);
             let l = peg::literal(THINK_START);
-            think_block = peg::seq2(l, ac);
+            think_block = peg::seq2(l, th);
         }
         // a turn without reasoning starts with a bare </mm:think>
         reasoning = peg::optional(peg::choice([think_block, peg::literal(THINK_END)]));
@@ -2812,7 +3191,9 @@ recursive fn mm3_value_to_json(out: u8[>..]&, id: i64, closed: bool) {
     if tg == TOOL_ARG_ARRAY { mm3_container_to_json(out, id, false, closed); return; }
     if tg == chat_peg::TOOL_ARG_STRING_VALUE {
         out.push('"');
-        chat_peg::escape_inner(out, peg::node_text(id));
+        var sanitized: u8[>..] = [];
+        peg::sanitized_text(id, sanitized);
+        chat_peg::escape_inner(out, sanitized);
         if closed { out.push('"'); }
         return;
     }
@@ -2872,13 +3253,150 @@ fn map_minimax_m3() {
     for n in peg::result_nodes { mm3_visit(n); }
 }
 
+// Muse Glimmer (muse-glimmer.cpp): every message starts with its recipient
+// header, so the grammar is not lazy, and the special tokens are matched as
+// tokens.
+fn init_muse_glimmer(t: chat_render::Template, g: chat_render::Gen) {
+    var gp: u8[>..] = [];
+    render(t, g, chat_render::Override { .. }, gp);
+    // the generation prompt is just the assistant's start: the model writes its recipient
+    gp.clear();
+    gp.append("<|start|>assistant");
+    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::supports_thinking = true;
+    for tk in ["<|start|>", "<|message|>", "<|eom|>", "<atem:function_calls>", "<atem:invoke", "<atem:parameter",
+               "</atem:parameter>", "</atem:invoke>", "</atem:function_calls>"] { preserve(tk); }
+    chat_render::assistant_start.append("<|start|>assistant");
+    chat_render::user_start.append("<|start|>user");
+    if chat_render::has_continuation(g) {
+        gp.clear();
+        gp.append("<|start|>assistant to=self<|message|>");
+        gp.append(g.continue_reasoning);
+        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+            gp.append("<|eom|><|start|>assistant to=user<|message|>");
+            gp.append(g.continue_content);
+        }
+        chat_render::append_part(gp, false);
+    }
+    chat_render::gen_prompt.append(gp);
+    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let tools = has_tools();
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    peg::begin();
+    peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
+    let start_token = peg::token("<|start|>");
+    let message = peg::token("<|message|>");
+    let eom = peg::token("<|eom|>");
+    let start = peg::rule("start", peg::seq2(start_token, peg::literal("assistant")), false);
+    var root = -1;
+    if !extract && !include {
+        root = peg::seq2(start, chat_peg::content(peg::rest()));
+    } else {
+        {
+            let body = if extract { chat_peg::reasoning(peg::until_p(eom)) } else { chat_peg::content(peg::until_p(eom)) };
+            let l = peg::literal(" to=self");
+            peg::rule("analysis", peg::chain([peg::ci(l), peg::ci(message), peg::ci(body), peg::ci(eom)]), false);
+        }
+        let analysis = peg::ref("analysis");
+        let recipient = peg::optional(peg::literal(" to=user"));
+        let fc = chat_peg::content(peg::until_p(eom));
+        let final_msg = peg::rule("final", peg::chain([peg::ci(recipient), peg::ci(message), peg::ci(fc)]), false);
+        if rf {
+            let j = peg::json();
+            let node = json_schema::build_document(schema_v);
+            let response_json = chat_peg::content(peg::schema(j, "response-format-schema", node, false));
+            let l2 = peg::literal("```");
+            let s2 = peg::space();
+            let s1 = peg::space();
+            let l1 = peg::literal("```json");
+            let fenced = peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(response_json), peg::ci(s2), peg::ci(l2)]);
+            let ch = peg::choice2(fenced, response_json);
+            let response_format = peg::rule("response-format", peg::chain([peg::ci(recipient), peg::ci(message), peg::ci(ch)]), false);
+            let z = peg::zero_or_more(peg::seq2(start, analysis));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
+        } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+            let cl0 = chat_peg::tool_arg_close(peg::literal("</atem:parameter>"));
+            let sv0 = chat_peg::tool_arg_string_value(peg::until("</atem:parameter>"));
+            let string_value = peg::through(sv0, cl0);
+            var tool_choice = peg::choice([]);
+            for i in json_schema::json_len(tools_v) {
+                let func = function_of(i);
+                guard func >= 0 else { continue; }
+                let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
+                var arg_rules: i64[>..] = [];
+                let root_node = chat_peg::params_schema(func);
+                for k in json_schema::prop_count(root_node) {
+                    let pname = str(json_schema::prop_name(root_node, k));
+                    let pnode = json_schema::prop_node(root_node, k);
+                    var value_parser = peg::eps();
+                    if json_schema::may_be_string(pnode) {
+                        value_parser = string_value;
+                    } else {
+                        let cl = chat_peg::tool_arg_close(peg::literal("</atem:parameter>"));
+                        let j = peg::json();
+                        let jv = chat_peg::tool_arg_json_value(peg::schema(j, str("tool-", i, "-arg-", k, "-schema"), pnode, false));
+                        value_parser = peg::seq2(jv, cl);
+                    }
+                    let l2 = peg::literal("\">");
+                    let tan = chat_peg::tool_arg_name(peg::literal(pname));
+                    let l1 = peg::literal("<atem:parameter name=\"");
+                    let open = chat_peg::tool_arg_open(peg::chain([peg::ci(l1), peg::ci(tan), peg::ci(l2)]));
+                    arg_rules.push(chat_peg::tool_arg(peg::seq2(open, value_parser)));
+                }
+                var args = peg::eps();
+                if arg_rules.len > 0 {
+                    let s = peg::space();
+                    args = peg::zero_or_more(peg::seq2(peg::choice(arg_rules), s));
+                }
+                // tool_open(start_token + "assistant to=" + tool_name(name) + message)
+                let tn = chat_peg::tool_name(peg::literal(name));
+                let la = peg::literal("assistant to=");
+                let open = chat_peg::tool_open(peg::chain([peg::ci(start_token), peg::ci(la), peg::ci(tn), peg::ci(message)]));
+                // "<atem:function_calls>" + space() + "<atem:invoke name=\"NAME\">" + space() << tool_args(args) << tool_close(...)
+                let b4 = peg::space();
+                let b3 = peg::literal(str("<atem:invoke name=\"", name, "\">"));
+                let b2 = peg::space();
+                let b1 = peg::literal("<atem:function_calls>");
+                let head = peg::chain([peg::ci(b1), peg::ci(b2), peg::ci(b3), peg::ci(b4)]);
+                let x = peg::spaced(head, chat_peg::tool_args(args));
+                let c3 = peg::literal("</atem:function_calls>");
+                let c2 = peg::space();
+                let c1 = peg::literal("</atem:invoke>");
+                let tc = chat_peg::tool_close(peg::chain([peg::ci(c1), peg::ci(c2), peg::ci(c3)]));
+                let body = peg::rule(str("tool-", i), peg::spaced(x, tc), false);
+                tool_choice = peg::choice2(tool_choice, peg::seq2(open, body));
+            }
+            let more = if g.parallel_tool_calls { peg::zero_or_more(peg::seq2(eom, tool_choice)) } else { peg::eps() };
+            let tool_calls = peg::rule("tool-calls", peg::seq2(tool_choice, more), false);
+            if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+                let z = peg::zero_or_more(peg::seq2(start, analysis));
+                root = peg::seq2(z, tool_calls);
+            } else {
+                let trailing = peg::optional(peg::seq2(eom, tool_calls));
+                let ch = peg::choice2(tool_calls, peg::chain([peg::ci(start), peg::ci(final_msg), peg::ci(trailing)]));
+                let z = peg::zero_or_more(peg::seq2(start, analysis));
+                root = peg::seq2(z, ch);
+            }
+        } else {
+            let z = peg::zero_or_more(peg::seq2(start, analysis));
+            root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(final_msg)]);
+        }
+    }
+    chat_render::parser = peg::build(root);
+    if include {
+        // every message starts with its recipient: the grammar is not lazy, and allows only self, user or a tool
+        build_grammar(false);
+    }
+}
+
 //
-// Muse Glimmer and Muse Spark (muse-glimmer.cpp, muse-spark.cpp): each
-// assistant message "<|start|>assistant to=<recipient><|message|>...", ended
-// by <|eom|> (more follow) or <|eot|>; Spark adds commentary asides
+// Muse Spark (muse-spark.cpp): each assistant message
+// "<|start|>assistant to=<recipient><|message|>...", ended by <|eom|> (more
+// follow) or <|eot|>, and commentary asides
 //
 
-fn init_muse(t: chat_render::Template, g: chat_render::Gen, spark: bool) {
+fn init_muse_spark(t: chat_render::Template, g: chat_render::Gen) {
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
     // the generation prompt is just the assistant's start: the model writes its recipient
@@ -2903,7 +3421,7 @@ fn init_muse(t: chat_render::Template, g: chat_render::Gen, spark: bool) {
     chat_render::gen_prompt.append(gp);
     let extract = g.reasoning_format != chat_render::REASONING_NONE;
     let tools = has_tools();
-    let rf = !spark && schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
     let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
     peg::begin();
     let start = peg::rule("start", peg::literal("<|start|>assistant"), false);
@@ -2918,15 +3436,12 @@ fn init_muse(t: chat_render::Template, g: chat_render::Gen, spark: bool) {
             peg::rule("analysis", peg::chain([peg::ci(l1), peg::ci(body), peg::ci(l2)]), false);
         }
         let analysis = peg::ref("analysis");
-        // Spark: commentary, content the user sees mid turn, ended by <|eom|>
-        var aside = analysis;
-        if spark {
-            let l2 = peg::literal("<|eom|>");
-            let c = chat_peg::content(peg::until("<|eom|>"));
-            let l1 = peg::literal(" to=commentary<|message|>");
-            let preamble = peg::rule("preamble", peg::chain([peg::ci(l1), peg::ci(c), peg::ci(l2)]), false);
-            aside = peg::rule("aside", peg::choice2(analysis, preamble), false);
-        }
+        // commentary, content the user sees mid turn, ended by <|eom|>
+        let l2 = peg::literal("<|eom|>");
+        let pc = chat_peg::content(peg::until("<|eom|>"));
+        let l1 = peg::literal(" to=commentary<|message|>");
+        let preamble = peg::rule("preamble", peg::chain([peg::ci(l1), peg::ci(pc), peg::ci(l2)]), false);
+        let aside = peg::rule("aside", peg::choice2(analysis, preamble), false);
         let recipient = peg::optional(peg::literal(" to=user"));
         let fc = chat_peg::content(peg::until_one_of(["<|eot|>", "<|eom|>"]));
         let fl = peg::literal("<|message|>");
@@ -2948,7 +3463,7 @@ fn init_muse(t: chat_render::Template, g: chat_render::Gen, spark: bool) {
         } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
             let cl0 = chat_peg::tool_arg_close(peg::literal("</atem:parameter>"));
             let sv0 = chat_peg::tool_arg_string_value(peg::until("</atem:parameter>"));
-            let string_value = peg::ac(peg::seq2(sv0, cl0), "</atem:parameter>");
+            let string_value = peg::through(sv0, cl0);
             var tool_choice = peg::choice([]);
             for i in json_schema::json_len(tools_v) {
                 let func = function_of(i);
@@ -3024,13 +3539,8 @@ fn init_muse(t: chat_render::Template, g: chat_render::Gen, spark: bool) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        if spark {
-            build_grammar(g.tool_choice != chat_render::TOOL_CHOICE_REQUIRED);
-            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant( to=(?!self<\\|message\\|>)(?!commentary<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
-        } else {
-            build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "(?:^|<\\|start\\|>assistant)( to=(?!self<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
-        }
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
+        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant( to=(?!self<\\|message\\|>)(?!commentary<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
     }
 }
 
@@ -3136,8 +3646,16 @@ fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
         let b = peg::seq2(nl, pk);
         let a = peg::literal(PARAM_CLOSE);
         let arg_close = chat_peg::tool_arg_close(peg::gbnf(peg::choice2(a, b), gb));
-        let sv = chat_peg::tool_arg_string_value(peg::until_one_of(string_ends));
-        let arg_string = peg::rule("rfl-arg-string", peg::ac(peg::seq2(sv, arg_close), PARAM_CLOSE), false);
+        let string_value = chat_peg::tool_arg_string_value(peg::until_one_of(string_ends));
+        let tc = chat_peg::tool_arg_close(peg::literal(PARAM_CLOSE));
+        var arg_string = peg::rule("rfl-arg-string", peg::through(string_value, tc), false);
+        // the parser also accepts a value with no closing tag, the grammar still requires the closing tag
+        let mo = peg::optional(peg::literal("\n"));
+        let mp = peg::peek(peg::seq2(mo, next_open));
+        let mn = peg::literal("\n");
+        let mc = chat_peg::tool_arg_close(peg::seq2(mn, mp));
+        let missing_close = peg::seq2(string_value, mc);
+        arg_string = peg::gbnf(peg::choice2(arg_string, missing_close), "rfl-arg-string");
         let arg_sep = peg::optional(peg::literal("\n"));
         var call_close_gbnf = gbnf_literal("<|end|>");
         for e in eog_list { call_close_gbnf.append(" | "); call_close_gbnf.append(gbnf_literal(e)); }

@@ -70,6 +70,7 @@ let PRE_DOMYN_SMALL = 63;
 let PRE_NEMOTRON_3_5_EMBD = 64;
 let PRE_SOPRANO = 65;
 let PRE_TEKKEN_NUM3 = 66;
+let PRE_ZONOS3 = 67;
 
 // What a BPE vocab's tokenizer.ggml.pre name sets; false for an unknown name.
 // The empty name (default, with a warning) is handled by the caller.
@@ -184,7 +185,7 @@ fn apply_pre_name(name: const u8[:]) -> bool {
         clean_spaces = false;
         return true;
     }
-    if name == "qwen2" || name == "deepseek-r1-qwen" || name == "kormo" || name == "f2llmv2" {
+    if name == "qwen2" || name == "deepseek-r1-qwen" || name == "kormo" || name == "f2llmv2" || name == "domyn-edge" {
         pre_type = PRE_QWEN2;
         clean_spaces = false;
         return true;
@@ -306,6 +307,13 @@ fn apply_pre_name(name: const u8[:]) -> bool {
         clean_spaces = false;
         return true;
     }
+    if name == "inkling2" {
+        pre_type = PRE_GPT4O;
+        special_bos_id = TOKEN_NULL;
+        clean_spaces = false;
+        ignore_merges = true;
+        return true;
+    }
     if name == "granite-embed-multi-97m" {
         pre_type = PRE_GRANITE_EMB_MULTI;
         clean_spaces = false;
@@ -415,6 +423,11 @@ fn apply_pre_name(name: const u8[:]) -> bool {
     }
     if name == "soprano" {
         pre_type = PRE_SOPRANO;
+        return true;
+    }
+    if name == "zonos3" {
+        pre_type = PRE_ZONOS3;
+        clean_spaces = false;
         return true;
     }
     return false;
@@ -568,9 +581,12 @@ let PRE_REGEXES_37 = [
     "\\s+|[\\p{L}\\p{N}_]+|[^\\p{L}\\p{N}_\\s]+",
 ];
 let PRE_REGEXES_38 = [
-    "\\S+",
+    "\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]{2,}[\\r\\n/]*| +(?!\\S)",
 ];
 let PRE_REGEXES_39 = [
+    "\\S+",
+];
+let PRE_REGEXES_40 = [
     "[\\p{P}\\$\\+<=>\\^~\\|]+",
     "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)",
     "\\p{N}+",
@@ -618,6 +634,7 @@ fn pre_regexes(t: i64) -> const u8[:][:], bool {
     if t == PRE_MINICPM5 { return PRE_REGEXES_35, true; }
     if t == PRE_K2_HORIZON { return PRE_REGEXES_36, true; }
     if t == PRE_SOPRANO { return PRE_REGEXES_37, false; }
-    if t == PRE_WHITESPACE { return PRE_REGEXES_38, false; }
-    return PRE_REGEXES_39, true;
+    if t == PRE_ZONOS3 { return PRE_REGEXES_38, true; }
+    if t == PRE_WHITESPACE { return PRE_REGEXES_39, false; }
+    return PRE_REGEXES_40, true;
 }

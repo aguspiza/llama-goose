@@ -61,88 +61,208 @@ fn gbnf_tests() {
     }
     fresh();
     check_gbnf("until grammar", peg::until("</tag>"), false, str(
-        "root ::= until-0\n", SPACE,
-        "until-0 ::= | [<] until-0-01 | [^<] until-0\n",
-        "until-0-01 ::= | [<] until-0-01 | [/] until-0-02 | [^/<] until-0\n",
-        "until-0-02 ::= | [<] until-0-01 | [t] until-0-03 | [^<t] until-0\n",
-        "until-0-03 ::= | [<] until-0-01 | [a] until-0-04 | [^<a] until-0\n",
-        "until-0-04 ::= | [<] until-0-01 | [g] until-0-05 | [^<g] until-0\n",
-        "until-0-05 ::= | [<] until-0-01 | [^<>] until-0\n"));
+        "root ::= until-1\n", SPACE,
+        "until-1 ::= | [<] until-1-01 | [^<] until-1\n",
+        "until-1-01 ::= | [<] until-1-01 | [/] until-1-02 | [^/<] until-1\n",
+        "until-1-02 ::= | [<] until-1-01 | [t] until-1-03 | [^<t] until-1\n",
+        "until-1-03 ::= | [<] until-1-01 | [a] until-1-04 | [^<a] until-1\n",
+        "until-1-04 ::= | [<] until-1-01 | [g] until-1-05 | [^<g] until-1\n",
+        "until-1-05 ::= | [<] until-1-01 | [^<>] until-1\n"));
     fresh();
     check_gbnf("until grammar overlapping delimiter", peg::until("\n</parameter>\n"), false, str(
-        "root ::= until-0\n", SPACE,
-        "until-0 ::= | [\\n] until-0-01 | [^\\n] until-0\n",
-        "until-0-01 ::= | [\\n] until-0-01 | [<] until-0-02 | [^\\n<] until-0\n",
-        "until-0-02 ::= | [\\n] until-0-01 | [/] until-0-03 | [^\\n/] until-0\n",
-        "until-0-03 ::= | [\\n] until-0-01 | [p] until-0-04 | [^\\np] until-0\n",
-        "until-0-04 ::= | [\\n] until-0-01 | [a] until-0-05 | [^\\na] until-0\n",
-        "until-0-05 ::= | [\\n] until-0-01 | [r] until-0-06 | [^\\nr] until-0\n",
-        "until-0-06 ::= | [\\n] until-0-01 | [a] until-0-07 | [^\\na] until-0\n",
-        "until-0-07 ::= | [\\n] until-0-01 | [m] until-0-08 | [^\\nm] until-0\n",
-        "until-0-08 ::= | [\\n] until-0-01 | [e] until-0-09 | [^\\ne] until-0\n",
-        "until-0-09 ::= | [\\n] until-0-01 | [t] until-0-10 | [^\\nt] until-0\n",
-        "until-0-10 ::= | [\\n] until-0-01 | [e] until-0-11 | [^\\ne] until-0\n",
-        "until-0-11 ::= | [\\n] until-0-01 | [r] until-0-12 | [^\\nr] until-0\n",
-        "until-0-12 ::= | [\\n] until-0-01 | [>] until-0-13 | [^\\n>] until-0\n",
-        "until-0-13 ::= | [^\\n] until-0\n"));
+        "root ::= until-1\n", SPACE,
+        "until-1 ::= | [\\n] until-1-01 | [^\\n] until-1\n",
+        "until-1-01 ::= | [\\n] until-1-01 | [<] until-1-02 | [^\\n<] until-1\n",
+        "until-1-02 ::= | [\\n] until-1-01 | [/] until-1-03 | [^\\n/] until-1\n",
+        "until-1-03 ::= | [\\n] until-1-01 | [p] until-1-04 | [^\\np] until-1\n",
+        "until-1-04 ::= | [\\n] until-1-01 | [a] until-1-05 | [^\\na] until-1\n",
+        "until-1-05 ::= | [\\n] until-1-01 | [r] until-1-06 | [^\\nr] until-1\n",
+        "until-1-06 ::= | [\\n] until-1-01 | [a] until-1-07 | [^\\na] until-1\n",
+        "until-1-07 ::= | [\\n] until-1-01 | [m] until-1-08 | [^\\nm] until-1\n",
+        "until-1-08 ::= | [\\n] until-1-01 | [e] until-1-09 | [^\\ne] until-1\n",
+        "until-1-09 ::= | [\\n] until-1-01 | [t] until-1-10 | [^\\nt] until-1\n",
+        "until-1-10 ::= | [\\n] until-1-01 | [e] until-1-11 | [^\\ne] until-1\n",
+        "until-1-11 ::= | [\\n] until-1-01 | [r] until-1-12 | [^\\nr] until-1\n",
+        "until-1-12 ::= | [\\n] until-1-01 | [>] until-1-13 | [^\\n>] until-1\n",
+        "until-1-13 ::= | [^\\n] until-1\n"));
     fresh();
     check_gbnf("until grammar unicode delimiter", peg::until("<｜DSML｜"), false, str(
-        "root ::= until-0\n", SPACE,
-        "until-0 ::= | [<] until-0-01 | [^<] until-0\n",
-        "until-0-01 ::= | [<] until-0-01 | [\\uFF5C] until-0-02 | [^<\\uFF5C] until-0\n",
-        "until-0-02 ::= | [<] until-0-01 | [D] until-0-03 | [^<D] until-0\n",
-        "until-0-03 ::= | [<] until-0-01 | [S] until-0-04 | [^<S] until-0\n",
-        "until-0-04 ::= | [<] until-0-01 | [M] until-0-05 | [^<M] until-0\n",
-        "until-0-05 ::= | [<] until-0-01 | [L] until-0-06 | [^<L] until-0\n",
-        "until-0-06 ::= | [<] until-0-01 | [^<\\uFF5C] until-0\n"));
+        "root ::= until-1\n", SPACE,
+        "until-1 ::= | [<] until-1-01 | [^<] until-1\n",
+        "until-1-01 ::= | [<] until-1-01 | [\\uFF5C] until-1-02 | [^<\\uFF5C] until-1\n",
+        "until-1-02 ::= | [<] until-1-01 | [D] until-1-03 | [^<D] until-1\n",
+        "until-1-03 ::= | [<] until-1-01 | [S] until-1-04 | [^<S] until-1\n",
+        "until-1-04 ::= | [<] until-1-01 | [M] until-1-05 | [^<M] until-1\n",
+        "until-1-05 ::= | [<] until-1-01 | [L] until-1-06 | [^<L] until-1\n",
+        "until-1-06 ::= | [<] until-1-01 | [^<\\uFF5C] until-1\n"));
     fresh();
     check_gbnf("until grammar multiple delimiters", peg::until_one_of(["ab", "cd", "ef"]), false, str(
-        "root ::= until-0\n", SPACE,
-        "until-0 ::= | [a] until-0-01 | [c] until-0-03 | [e] until-0-05 | [^ace] until-0\n",
-        "until-0-01 ::= | [a] until-0-01 | [c] until-0-03 | [e] until-0-05 | [^abce] until-0\n",
-        "until-0-03 ::= | [a] until-0-01 | [c] until-0-03 | [e] until-0-05 | [^acde] until-0\n",
-        "until-0-05 ::= | [a] until-0-01 | [c] until-0-03 | [e] until-0-05 | [^acef] until-0\n"));
+        "root ::= until-3\n", SPACE,
+        "until-3 ::= | [a] until-3-01 | [c] until-3-03 | [e] until-3-05 | [^ace] until-3\n",
+        "until-3-01 ::= | [a] until-3-01 | [c] until-3-03 | [e] until-3-05 | [^abce] until-3\n",
+        "until-3-03 ::= | [a] until-3-01 | [c] until-3-03 | [e] until-3-05 | [^acde] until-3\n",
+        "until-3-05 ::= | [a] until-3-01 | [c] until-3-03 | [e] until-3-05 | [^acef] until-3\n"));
+    fresh();
+    check_gbnf("through grammar", peg::through_s(peg::until("</tag>"), "</tag>"), false, str(
+        "root ::= until-3\n", SPACE,
+        "until-3 ::= [<] until-3-01 | [^<] until-3\n",
+        "until-3-01 ::= [<] until-3-01 | [/] until-3-02 | [^/<] until-3\n",
+        "until-3-02 ::= [<] until-3-01 | [t] until-3-03 | [^<t] until-3\n",
+        "until-3-03 ::= [<] until-3-01 | [a] until-3-04 | [^<a] until-3\n",
+        "until-3-04 ::= [<] until-3-01 | [g] until-3-05 | [^<g] until-3\n",
+        "until-3-05 ::= [>] | [<] until-3-01 | [^<>] until-3\n"));
+    fresh();
+    check_gbnf("through grammar terminates at first delimiter", peg::through_s(peg::until("\n</parameter>\n"), "\n</parameter>\n"), false, str(
+        "root ::= until-3\n", SPACE,
+        "until-3 ::= [\\n] until-3-01 | [^\\n] until-3\n",
+        "until-3-01 ::= [\\n] until-3-01 | [<] until-3-02 | [^\\n<] until-3\n",
+        "until-3-02 ::= [\\n] until-3-01 | [/] until-3-03 | [^\\n/] until-3\n",
+        "until-3-03 ::= [\\n] until-3-01 | [p] until-3-04 | [^\\np] until-3\n",
+        "until-3-04 ::= [\\n] until-3-01 | [a] until-3-05 | [^\\na] until-3\n",
+        "until-3-05 ::= [\\n] until-3-01 | [r] until-3-06 | [^\\nr] until-3\n",
+        "until-3-06 ::= [\\n] until-3-01 | [a] until-3-07 | [^\\na] until-3\n",
+        "until-3-07 ::= [\\n] until-3-01 | [m] until-3-08 | [^\\nm] until-3\n",
+        "until-3-08 ::= [\\n] until-3-01 | [e] until-3-09 | [^\\ne] until-3\n",
+        "until-3-09 ::= [\\n] until-3-01 | [t] until-3-10 | [^\\nt] until-3\n",
+        "until-3-10 ::= [\\n] until-3-01 | [e] until-3-11 | [^\\ne] until-3\n",
+        "until-3-11 ::= [\\n] until-3-01 | [r] until-3-12 | [^\\nr] until-3\n",
+        "until-3-12 ::= [\\n] until-3-01 | [>] until-3-13 | [^\\n>] until-3\n",
+        "until-3-13 ::= [\\n] | [^\\n] until-3\n"));
     fresh();
     {
-        let u = peg::until("</tag>");
-        let l = peg::literal("</tag>");
-        check_gbnf("ac grammar", peg::ac(peg::seq2(u, l), "</tag>"), false, str(
-            "ac-3 ::= [<] ac-3-01 | [^<] ac-3\n",
-            "ac-3-01 ::= [<] ac-3-01 | [/] ac-3-02 | [^/<] ac-3\n",
-            "ac-3-02 ::= [<] ac-3-01 | [t] ac-3-03 | [^<t] ac-3\n",
-            "ac-3-03 ::= [<] ac-3-01 | [a] ac-3-04 | [^<a] ac-3\n",
-            "ac-3-04 ::= [<] ac-3-01 | [g] ac-3-05 | [^<g] ac-3\n",
-            "ac-3-05 ::= [>] | [<] ac-3-01 | [^<>] ac-3\n",
-            "root ::= ac-3\n", SPACE));
+        let e = peg::eps();
+        let ab = peg::literal("ab");
+        let cd = peg::literal("cd");
+        let ef = peg::literal("ef");
+        check_gbnf("through grammar multiple delimiters", peg::through_b(e, [peg::Branch { delim: ab }, peg::Branch { delim: cd }, peg::Branch { delim: ef }], false), false, str(
+            "root ::= until-4\n", SPACE,
+            "until-4 ::= [a] until-4-01 | [c] until-4-03 | [e] until-4-05 | [^ace] until-4\n",
+            "until-4-01 ::= [b] | [a] until-4-01 | [c] until-4-03 | [e] until-4-05 | [^abce] until-4\n",
+            "until-4-03 ::= [d] | [a] until-4-01 | [c] until-4-03 | [e] until-4-05 | [^acde] until-4\n",
+            "until-4-05 ::= [f] | [a] until-4-01 | [c] until-4-03 | [e] until-4-05 | [^acef] until-4\n"));
     }
     fresh();
     {
-        let u = peg::until("\n</parameter>\n");
-        let l = peg::literal("\n</parameter>\n");
-        check_gbnf("ac grammar terminates at first delimiter", peg::ac(peg::seq2(u, l), "\n</parameter>\n"), false, str(
-            "ac-3 ::= [\\n] ac-3-01 | [^\\n] ac-3\n",
-            "ac-3-01 ::= [\\n] ac-3-01 | [<] ac-3-02 | [^\\n<] ac-3\n",
-            "ac-3-02 ::= [\\n] ac-3-01 | [/] ac-3-03 | [^\\n/] ac-3\n",
-            "ac-3-03 ::= [\\n] ac-3-01 | [p] ac-3-04 | [^\\np] ac-3\n",
-            "ac-3-04 ::= [\\n] ac-3-01 | [a] ac-3-05 | [^\\na] ac-3\n",
-            "ac-3-05 ::= [\\n] ac-3-01 | [r] ac-3-06 | [^\\nr] ac-3\n",
-            "ac-3-06 ::= [\\n] ac-3-01 | [a] ac-3-07 | [^\\na] ac-3\n",
-            "ac-3-07 ::= [\\n] ac-3-01 | [m] ac-3-08 | [^\\nm] ac-3\n",
-            "ac-3-08 ::= [\\n] ac-3-01 | [e] ac-3-09 | [^\\ne] ac-3\n",
-            "ac-3-09 ::= [\\n] ac-3-01 | [t] ac-3-10 | [^\\nt] ac-3\n",
-            "ac-3-10 ::= [\\n] ac-3-01 | [e] ac-3-11 | [^\\ne] ac-3\n",
-            "ac-3-11 ::= [\\n] ac-3-01 | [r] ac-3-12 | [^\\nr] ac-3\n",
-            "ac-3-12 ::= [\\n] ac-3-01 | [>] ac-3-13 | [^\\n>] ac-3\n",
-            "ac-3-13 ::= [\\n] | [^\\n] ac-3\n",
-            "root ::= ac-3\n", SPACE));
+        // (a + b) | cd: cd, then b, then a
+        let cd = peg::literal("cd");
+        let b = peg::literal("b");
+        let a = peg::literal("a");
+        let ch = peg::choice2(peg::seq2(a, b), cd);
+        check_gbnf("until grammar with parser delimiters", peg::until_p(ch), false, str(
+            "root ::= until-5\n", SPACE,
+            "until-5 ::= | [a] until-5-01 | [c] until-5-03 | [^ac] until-5\n",
+            "until-5-01 ::= | [a] until-5-01 | [c] until-5-03 | [^abc] until-5\n",
+            "until-5-03 ::= | [a] until-5-01 | [c] until-5-03 | [^acd] until-5\n"));
     }
     fresh();
-    check_gbnf("ac grammar multiple delimiters", peg::ac_one_of(peg::eps(), ["ab", "cd", "ef"]), false, str(
-        "ac-1 ::= [a] ac-1-01 | [c] ac-1-03 | [e] ac-1-05 | [^ace] ac-1\n",
-        "ac-1-01 ::= [b] | [a] ac-1-01 | [c] ac-1-03 | [e] ac-1-05 | [^abce] ac-1\n",
-        "ac-1-03 ::= [d] | [a] ac-1-01 | [c] ac-1-03 | [e] ac-1-05 | [^acde] ac-1\n",
-        "ac-1-05 ::= [f] | [a] ac-1-01 | [c] ac-1-03 | [e] ac-1-05 | [^acef] ac-1\n",
-        "root ::= ac-1\n", SPACE));
+    {
+        let b = peg::atomic(peg::literal("b"));
+        let a = peg::literal("a");
+        let tg = peg::tag("open", peg::seq2(a, b));
+        check_gbnf("delimiters see through tags and atomics", peg::until_p(tg), false, str(
+            "root ::= until-5\n", SPACE,
+            "until-5 ::= | [a] until-5-01 | [^a] until-5\n",
+            "until-5-01 ::= | [a] until-5-01 | [^ab] until-5\n"));
+    }
+    fresh();
+    {
+        let d = peg::literal("d");
+        let b = peg::literal("b");
+        let ch = peg::choice2(b, d);
+        let a = peg::literal("a");
+        check_gbnf("delimiters expand a choice in a sequence", peg::until_p(peg::seq2(a, ch)), false, str(
+            "root ::= until-5\n", SPACE,
+            "until-5 ::= | [a] until-5-01 | [^a] until-5\n",
+            "until-5-01 ::= | [a] until-5-01 | [^abd] until-5\n"));
+    }
+    fresh();
+    {
+        let e = peg::eps();
+        let ab = peg::literal("ab");
+        let x = peg::literal("x");
+        let cd = peg::literal("cd");
+        check_gbnf("through grammar branches continue with their rest", peg::through_b(e, [peg::Branch { delim: ab, rest: x }, peg::Branch { delim: cd }], false), false, str(
+            "root ::= until-4\n", SPACE,
+            "until-4 ::= [a] until-4-01 | [c] until-4-03 | [^ac] until-4\n",
+            "until-4-01 ::= [b] until-4-rest-0 | [a] until-4-01 | [c] until-4-03 | [^abc] until-4\n",
+            "until-4-03 ::= [d] | [a] until-4-01 | [c] until-4-03 | [^acd] until-4\n",
+            "until-4-rest-0 ::= \"x\"\n"));
+    }
+    fresh();
+    {
+        let e = peg::eps();
+        let ab = peg::literal("ab");
+        let x = peg::literal("x");
+        check_gbnf("through grammar optional may end before a delimiter", peg::through_b(e, [peg::Branch { delim: ab, rest: x }], true), false, str(
+            "root ::= until-3\n", SPACE,
+            "until-3 ::= | [a] until-3-01 | [^a] until-3\n",
+            "until-3-01 ::= | [b] until-3-rest-0 | [a] until-3-01 | [^ab] until-3\n",
+            "until-3-rest-0 ::= \"x\"\n"));
+    }
+    for lazy in [false, true] {
+        fresh();
+        let ab = peg::literal("ab");
+        let cd = peg::literal("cd");
+        let scan = peg::until_p(peg::choice2(ab, cd));
+        let two = peg::trigger_rule_sr("two", cd, peg::literal("y"));
+        let one = peg::trigger_rule_sr("one", ab, peg::literal("x"));
+        let root = peg::seq2(scan, peg::choice2(one, two));
+        if !lazy {
+            check_gbnf("trigger rules emit their start and rest when not lazy", root, false, str(
+                "one ::= \"ab\" \"x\"\n",
+                "root ::= until-3 (one | two)\n", SPACE,
+                "two ::= \"cd\" \"y\"\n",
+                "until-3 ::= | [a] until-3-01 | [c] until-3-03 | [^ac] until-3\n",
+                "until-3-01 ::= | [a] until-3-01 | [c] until-3-03 | [^abc] until-3\n",
+                "until-3-03 ::= | [a] until-3-01 | [c] until-3-03 | [^acd] until-3\n"));
+        } else {
+            check_gbnf("trigger rules make the lazy grammar scan for their starts", root, true, str(
+                "one-rest ::= \"x\"\n",
+                "root ::= trigger\n", SPACE,
+                "trigger ::= | [a] trigger-01 | [c] trigger-03 | [^ac] trigger\n",
+                "trigger-01 ::= | [b] one-rest | [a] trigger-01 | [c] trigger-03 | [^abc] trigger\n",
+                "trigger-03 ::= | [d] two-rest | [a] trigger-01 | [c] trigger-03 | [^acd] trigger\n",
+                "two-rest ::= \"y\"\n"));
+        }
+    }
+    fresh();
+    {
+        peg::set_tokens(["<a>", "<b>"], [1, 2]);
+        let x = peg::literal("x");
+        let start = peg::seq2(peg::token("<a>"), x);
+        let tool = peg::trigger_rule_sr("tool", start, peg::token("<b>"));
+        let root = peg::seq2(peg::until_p(start), tool);
+        check_gbnf("scanning grammar lets other named tokens through", root, true, str(
+            "root ::= trigger\n", SPACE,
+            "tool-rest ::= <[2]>\n",
+            "trigger ::= | <[1]> trigger-01 | (. | <[2]>) trigger\n",
+            "trigger-01 ::= | [x] tool-rest | <[1]> trigger-01 | ([^x] | <[2]>) trigger\n"));
+        peg::clear_tokens();
+    }
+    fresh();
+    {
+        peg::set_tokens(["<a>", "<b>"], [1, 2]);
+        let one = peg::tokens(["<a>", "<b>"], false);
+        let other = peg::tokens(["<a>", "<b>"], true);
+        check_gbnf("token sets", peg::seq2(one, other), false, str("root ::= (<[1]> | <[2]>) !<[1-2]>\n", SPACE));
+        peg::clear_tokens();
+    }
+    fresh();
+    {
+        let e = peg::eps();
+        let xab = peg::literal("xab");
+        let one = peg::literal("1");
+        let ab = peg::literal("ab");
+        let two = peg::literal("2");
+        check_gbnf("through grammar suffix delimiter offers both rests", peg::through_b(e, [peg::Branch { delim: xab, rest: one }, peg::Branch { delim: ab, rest: two }], false), false, str(
+            "root ::= until-5\n", SPACE,
+            "until-5 ::= [x] until-5-01 | [a] until-5-04 | [^ax] until-5\n",
+            "until-5-01 ::= [x] until-5-01 | [a] until-5-02 | [^ax] until-5\n",
+            "until-5-02 ::= [b] (until-5-rest-0 | until-5-rest-1) | [x] until-5-01 | [a] until-5-04 | [^abx] until-5\n",
+            "until-5-04 ::= [b] until-5-rest-1 | [x] until-5-01 | [a] until-5-04 | [^abx] until-5\n",
+            "until-5-rest-0 ::= \"1\"\n",
+            "until-5-rest-1 ::= \"2\"\n"));
+    }
     fresh();
     {
         let a = peg::literal("a");

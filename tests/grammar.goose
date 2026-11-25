@@ -39,18 +39,21 @@ fn dump(symbols: u8[>..]&, rules: u8[>..]&) {
 }
 
 // test-grammar-integration's match_string: the input's characters (and
-// 0xff-marked token ids) accepted in turn; whether the grammar can end there.
-fn match_string(input: const u8[:]) -> bool {
+// 0xff-marked tokens: the id, the piece's length, the piece) accepted in
+// turn; whether the grammar can end there. masks gets whether the sampler
+// mask allowed each token tried.
+fn match_string(input: const u8[:], masks: u8[>..]&) -> bool {
     var off = 0;
     var piece: u8[>..] = [];
     while off < input.len {
         piece.clear();
         var token: i32 = 0;
-        if input[off] == 0xff && off + 5 <= input.len {
+        if input[off] == 0xff && off + 6 <= input.len && off + 6 + input[off + 5] <= input.len {
             let v: u32 = (input[off + 1] as u32 << 24) | (input[off + 2] as u32 << 16) | (input[off + 3] as u32 << 8) | input[off + 4];
             token = v as! i32;
-            format(piece, "<[", v, "]>");
-            off += 5;
+            let n: i64 = input[off + 5];
+            piece.append(input[off + 6..off + 6 + n]);
+            off += 6 + n;
         } else {
             let cpt, next, ok = unicode::cpt_from_utf8(input, off);
             if ok {
@@ -61,6 +64,7 @@ fn match_string(input: const u8[:]) -> bool {
                 off += 1;
             }
         }
+        masks.push(if grammar::piece_allowed(token, piece) { '1' } else { '0' });
         if !grammar::accept_token(token, piece) { return false; }
     }
     return grammar::can_end();
@@ -117,12 +121,14 @@ fn main() {
         } else {
             let input = field();
             let matched = field() == "1";
+            let masks = field();
             g_ok = grammar::init(gtext, "root", false);
-            let got = g_ok && match_string(input);
-            if got != matched {
+            var got_masks: u8[>..] = [];
+            let got = g_ok && match_string(input, got_masks);
+            if got != matched || got_masks != masks {
                 failed++;
                 print("FAIL match ", if matched { "(should match)" } else { "(should not match)" }, ": ", input);
-                if verbose { print("  grammar: ", gtext); }
+                if verbose { print("  grammar: ", gtext, "\n  masks: llama.cpp ", masks, ", goose ", got_masks); }
             }
         }
     }

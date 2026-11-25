@@ -620,6 +620,12 @@ fn normalize_quotes(out: u8[>..]&, input: const u8[:]) {
             i++;
             continue;
         }
+        // models can write raw control characters inside strings: escaped, the JSON stays valid
+        if (in_single || in_double) && c < 0x20 {
+            escape_inner(out, input[i..i + 1]);
+            i++;
+            continue;
+        }
         if c == '"' {
             if in_single { out.append("\\\""); } else { in_double = !in_double; out.push(c); }
         } else if c == '\'' {
@@ -663,7 +669,9 @@ fn map_node(n: i64) {
         closing_quote_pending = false;
     }
     if tag_name == TOOL_ID && cur != CUR_NONE {
-        var x = trim_trailing(text);
+        var sanitized: u8[>..] = [];
+        peg::sanitized_text(n, sanitized);
+        var x = trim_trailing(sanitized);
         if x.len >= 2 && x[0] == '"' && x[x.len - 1] == '"' { x = x[1..x.len - 1]; }
         let id = str(x);
         if cur == CUR_PENDING { pend_id.clear(); pend_id.append(id); } else { last_id.clear(); last_id.append(id); }
@@ -701,15 +709,17 @@ fn map_node(n: i64) {
     let is_value = tag_name == TOOL_ARG_VALUE;
     let is_string_value = tag_name == TOOL_ARG_STRING_VALUE;
     if (is_value || is_string_value) && cur != CUR_NONE {
+        var value: u8[>..] = [];
+        peg::sanitized_text(n, value);
         var add: u8[>..] = [];
-        if text.len == 0 && is_string_value {
+        if value.len == 0 && is_string_value {
             add.push('"');
             closing_quote_pending = true;
-        } else if text.len > 0 && is_string_value {
+        } else if value.len > 0 && is_string_value {
             if !closing_quote_pending { add.push('"'); closing_quote_pending = true; }
-            escape_inner(add, text);
-        } else if text.len > 0 {
-            normalize_quotes(add, text);
+            escape_inner(add, value);
+        } else if value.len > 0 {
+            normalize_quotes(add, value);
         }
         args_target_append(add);
     }
@@ -852,7 +862,8 @@ recursive fn python_or_json_value() -> i64 {
 }
 
 // python_style_tool_calls: [name(arg1="value1", arg2=123), ...]
-fn python_style_tool_calls(tools: i64, parallel_tool_calls: bool, allow_json_literals: bool) -> i64 {
+// allow_undeclared: also calls to names not in tools (any identifier, any arguments).
+fn python_style_tool_calls(tools: i64, parallel_tool_calls: bool, allow_json_literals: bool, allow_undeclared: bool = false) -> i64 {
     if tools < 0 || json_schema::json_kind(tools) != json_schema::J_ARRAY || json_schema::json_len(tools) == 0 { return peg::eps(); }
     var tool_choices = peg::choice([]);
     for i in json_schema::json_len(tools) {
@@ -906,6 +917,29 @@ fn python_style_tool_calls(tools: i64, parallel_tool_calls: bool, allow_json_lit
         let to = tool_open(peg::seq2(tool_name(peg::literal(name)), paren));
         let tp = tool(peg::chain([peg::ci(to), peg::ci(s1), peg::ci(ta), peg::ci(s2), peg::ci(tc)]));
         let r = peg::rule(str("tool-", i), tp, false);
+        tool_choices = peg::choice2(tool_choices, r);
+    }
+    // last, so that declared tools win when parsing
+    if allow_undeclared {
+        let ic2 = peg::chars("[a-zA-Z0-9_.]", 0, -1);
+        let ic1 = peg::chars("[a-zA-Z_]", 1, 1);
+        let ident = peg::rule("tool-undeclared-ident", peg::seq2(ic1, ic2), false);
+        let value = tool_arg_value(if allow_json_literals { python_or_json_value() } else { peg::python_value() });
+        let close = tool_arg_close(peg::eps());
+        let eq = peg::literal("=");
+        let open = tool_arg_open(peg::seq2(tool_arg_name(ident), eq));
+        let arg = tool_arg(peg::chain([peg::ci(open), peg::ci(value), peg::ci(close)]));
+        let s = peg::space();
+        let z = peg::zero_or_more(peg::chain([peg::cs(","), peg::ci(s), peg::ci(arg)]));
+        let args = peg::optional(peg::seq2(arg, z));
+        let tc = tool_close(peg::literal(")"));
+        let s2 = peg::space();
+        let ta = tool_args(args);
+        let s1 = peg::space();
+        let paren = peg::literal("(");
+        let to = tool_open(peg::seq2(tool_name(ident), paren));
+        let tp = tool(peg::chain([peg::ci(to), peg::ci(s1), peg::ci(ta), peg::ci(s2), peg::ci(tc)]));
+        let r = peg::rule("tool-undeclared", tp, false);
         tool_choices = peg::choice2(tool_choices, r);
     }
     if parallel_tool_calls {

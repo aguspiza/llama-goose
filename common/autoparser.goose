@@ -1691,7 +1691,9 @@ fn build_tools_tag_json() -> i64 {
 
 // analyze_tools::build_tool_parser_tag_tagged
 fn build_tools_tag_tagged() -> i64 {
-    let until_suffix = peg::rule("until-suffix", peg::until(a_value_suffix), false);
+    // a raw string value needs a suffix to end on: without one it is parsed as JSON
+    let raw_strings = a_value_suffix.len > 0;
+    let until_suffix = if raw_strings { peg::rule("until-suffix", peg::until(a_value_suffix), false) } else { peg::eps() };
     var tool_choice = peg::choice([]);
     for i in json_schema::json_len(tools_v) {
         let tool = json_schema::json_at(tools_v, i);
@@ -1706,10 +1708,10 @@ fn build_tools_tag_tagged() -> i64 {
             let pnode = json_schema::prop_node(root, k);
             // the value, as a string or as JSON
             var x = -1;
-            if json_schema::may_be_string(pnode) {
+            if raw_strings && json_schema::may_be_string(pnode) {
                 let cl = chat_peg::tool_arg_close(peg::literal(a_value_suffix));
                 let sv = chat_peg::tool_arg_string_value(until_suffix);
-                x = peg::ac(peg::seq2(sv, cl), a_value_suffix);
+                x = peg::through(sv, cl);
             } else {
                 let cl = chat_peg::tool_arg_close(peg::literal(a_value_suffix));
                 let j = peg::json();
@@ -1850,6 +1852,14 @@ fn build_parser(generation_prompt: const u8[:]) -> i64 {
 // peg_generator::generate_parser for template t, analyzed before (the
 // analysis must be the module's state), with the inputs g: the prompt in
 // chat_render's prompt, the rest in its params. It throws json_schema::Fail.
+// s with the regex's special characters escaped (regex_escape).
+fn regex_escape(out: u8[>..]&, s: const u8[:]) {
+    for c in s {
+        if find(".^$|()*+?[]{}\\", [c]) >= 0 { out.push('\\'); }
+        out.push(c);
+    }
+}
+
 fn generate(g: chat_render::Gen) {
     g_tool_choice = g.tool_choice;
     g_parallel = g.parallel_tool_calls;
@@ -1886,15 +1896,27 @@ fn generate(g: chat_render::Gen) {
     chat_render::parser = build_parser(parser_gp);
     let tools_ok = f_mode != TOOLS_NONE && has_tools();
     let trigger = if section_start.len > 0 { str(section_start) } else { str(per_call_start) };
+    // bare JSON calls with no start marker (Llama 3.x): the lazy grammar triggers on the call's opening
+    var trigger_pattern: u8[>..] = [];
+    let top_level_name = (function_field.len == 0 || function_field == "function") && find(name_field, ".") < 0;
+    if trigger.len == 0 && f_mode == TOOLS_JSON_NATIVE && !fun_name_is_key && !tools_array_wrapped && top_level_name {
+        trigger_pattern.append("\\{\\s*\"");
+        regex_escape(trigger_pattern, name_field);
+        trigger_pattern.append("\"\\s*:");
+    }
     let rf = has_response_format();
-    let include = rf || (tools_ok && ((g_tool_choice == chat_render::TOOL_CHOICE_AUTO && trigger.len > 0) || g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED));
+    let include = rf || (tools_ok && ((g_tool_choice == chat_render::TOOL_CHOICE_AUTO && (trigger.len > 0 || trigger_pattern.len > 0)) || g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED));
     if include {
         chat_render::grammar_lazy = !rf && g_tool_choice == chat_render::TOOL_CHOICE_AUTO;
         json_schema::begin_grammar();
         peg::build_grammar(chat_render::parser, chat_render::grammar_lazy);
         json_schema::end_grammar(chat_render::grammar);
         if chat_render::grammar_lazy {
-            chat_render::add_trigger(chat_render::TRIGGER_WORD, trigger);
+            if trigger.len > 0 {
+                chat_render::add_trigger(chat_render::TRIGGER_WORD, trigger);
+            } else {
+                chat_render::add_trigger(chat_render::TRIGGER_PATTERN, trigger_pattern);
+            }
             if openai_wrapper_trigger { chat_render::add_trigger(chat_render::TRIGGER_WORD, "{\"type\": \"function\","); }
         }
     }

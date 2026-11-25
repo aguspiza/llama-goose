@@ -89,75 +89,115 @@ fn put_utf8(out: u8[>..]&, cp: u32) {
 // tries (common_trie, common_aho_corasick)
 //
 
-// A trie node: its first child and next sibling (children by code point),
-// its code point, and the pattern ending at it.
-struct TNode { first: i64 = -1, next: i64 = -1, cp: u32 = 0, pattern: i32 = -1 }
+// A symbol: a code point, or SYM_TOKEN and a token id (common_trie::symbol);
+// code points come first in their order.
+let SYM_TOKEN: u64 = 4294967296;
+
+fn sym_cp(cp: u32) -> u64 { cp }
+fn sym_tok(id: i64) -> u64 { SYM_TOKEN + (id as! u32) }
+fn sym_is_token(x: u64) -> bool { x >= SYM_TOKEN }
+fn sym_value(x: u64) -> i64 { (x % SYM_TOKEN) as! i64 }
+
+// A trie node: its first child and next sibling (children by symbol), its
+// symbol, and the pattern (or the value marked) ending at it.
+struct TNode { first: i64 = -1, next: i64 = -1, sym: u64 = 0, pattern: i32 = -1 }
 
 var tn: TNode[>..<] = [];
 var n_patterns: i32 = 0;
+// the token ids the patterns use, sorted: at those the input is read a token at a time
+var trie_tokens: i64[>..<] = [];
 
 fn trie_clear() {
     tn.clear();
     tn.push(TNode { .. });
     n_patterns = 0;
+    trie_tokens.clear();
 }
 
-fn trie_find(n: i64, cp: u32) -> i64 {
+fn trie_find(n: i64, x: u64) -> i64 {
     var c = tn[n].first;
-    while c >= 0 && tn[c].cp < cp { c = tn[c].next; }
-    if c >= 0 && tn[c].cp == cp { return c; }
+    while c >= 0 && tn[c].sym < x { c = tn[c].next; }
+    if c >= 0 && tn[c].sym == x { return c; }
     return -1;
 }
 
-fn trie_child(n: i64, cp: u32) -> i64 {
+// xs with v at index i, the rest moved up.
+fn insert_at(xs: i64[>..<]&, i: i64, v: i64) {
+    xs.push(v);
+    var j = xs.len - 1;
+    while j > i { xs[j] = xs[j - 1]; j--; }
+    xs[i] = v;
+}
+
+fn has_trie_token(id: i64) -> bool {
+    let i = lower_bound(trie_tokens) { it < id };
+    return i < trie_tokens.len && trie_tokens[i] == id;
+}
+
+// The child of n on symbol x, made if missing (extend).
+fn trie_child(n: i64, x: u64) -> i64 {
+    if sym_is_token(x) {
+        let id = sym_value(x);
+        let i = lower_bound(trie_tokens) { it < id };
+        if i == trie_tokens.len || trie_tokens[i] != id { insert_at(trie_tokens, i, id); }
+    }
     var prev = -1;
     var c = tn[n].first;
-    while c >= 0 && tn[c].cp < cp { prev = c; c = tn[c].next; }
-    if c >= 0 && tn[c].cp == cp { return c; }
-    tn.push(TNode { cp: cp, next: c, .. });
+    while c >= 0 && tn[c].sym < x { prev = c; c = tn[c].next; }
+    if c >= 0 && tn[c].sym == x { return c; }
+    tn.push(TNode { sym: x, next: c, .. });
     let nc = tn.len - 1;
     if prev < 0 { tn[n].first = nc; } else { tn[prev].next = nc; }
     return nc;
 }
 
-// A word, as code points up to the first that does not decode.
-fn trie_insert(word: const u8[:]) {
-    var cur = 0;
-    var pos = 0;
-    while pos < word.len {
-        let st, cp, n = utf8_at(word, pos);
-        if st != UTF8_SUCCESS { break; }
-        cur = trie_child(cur, cp);
-        pos += n;
-    }
-    if tn[cur].pattern < 0 { tn[cur].pattern = n_patterns; n_patterns++; }
+// Marks node as a pattern's end with value; the value already there, if any (mark).
+fn trie_mark(node: i64, value: i32) -> i32 {
+    if tn[node].pattern < 0 { tn[node].pattern = value; }
+    return tn[node].pattern;
 }
 
 let NO_MATCH = 0;
 let PARTIAL_MATCH = 1;
 let COMPLETE_MATCH = 2;
 
-// Whether a word starts at s[start] (check_at).
-fn trie_check_at(s: const u8[:], start: i64) -> i32 {
-    var cur = 0;
-    var pos = start;
-    while pos < s.len {
-        let st, cp, n = utf8_at(s, pos);
-        if st != UTF8_SUCCESS { break; }
-        let c = trie_find(cur, cp);
-        if c < 0 { return NO_MATCH; }
-        cur = c;
-        pos += n;
-        if tn[cur].pattern >= 0 { return COMPLETE_MATCH; }
+// The symbol at input[pos] (next): the token there if a pattern uses it,
+// with its bytes up to the next token; else a code point. Its status,
+// symbol and length.
+fn trie_next(pos: i64) -> i32, u64, i64 {
+    if trie_tokens.len > 0 && pos < itok.len {
+        let id: i64 = itok[pos];
+        if id >= 0 && has_trie_token(id) {
+            var end = pos + 1;
+            while end < itok.len && itok[end] < 0 { end++; }
+            return UTF8_SUCCESS, sym_tok(id), end - pos;
+        }
     }
-    return if cur != 0 { PARTIAL_MATCH } else { NO_MATCH };
+    let st, cp, n = utf8_at(input, pos);
+    return st, sym_cp(cp), n;
+}
+
+// Whether a pattern starts at input[start] (check_at).
+fn trie_check_at(start: i64) -> i32 {
+    var cur_node = 0;
+    var pos = start;
+    while pos < input.len {
+        let st, x, n = trie_next(pos);
+        if st != UTF8_SUCCESS { break; }
+        let c = trie_find(cur_node, x);
+        if c < 0 { return NO_MATCH; }
+        cur_node = c;
+        pos += n;
+        if tn[cur_node].pattern >= 0 { return COMPLETE_MATCH; }
+    }
+    return if cur_node != 0 { PARTIAL_MATCH } else { NO_MATCH };
 }
 
 // The Aho-Corasick automaton of the trie: failure links, longest match per
 // state, and the alphabet in order.
 var ac_fail: i64[>..<] = [];
 var ac_match: i32[>..<] = [];
-var ac_alpha: u32[>..<] = [];
+var ac_alpha: u64[>..<] = [];
 
 fn ac_build() {
     let n = tn.len;
@@ -174,8 +214,8 @@ fn ac_build() {
         while v >= 0 {
             if u != 0 {
                 var f = ac_fail[u];
-                while f != 0 && trie_find(f, tn[v].cp) < 0 { f = ac_fail[f]; }
-                let it = trie_find(f, tn[v].cp);
+                while f != 0 && trie_find(f, tn[v].sym) < 0 { f = ac_fail[f]; }
+                let it = trie_find(f, tn[v].sym);
                 ac_fail[v] = if it >= 0 && it != v { it } else { 0 };
             }
             order.push(v);
@@ -186,7 +226,7 @@ fn ac_build() {
         ac_match[u] = if tn[u].pattern >= 0 { tn[u].pattern } else if u != 0 { ac_match[ac_fail[u]] } else { -1 };
     }
     ac_alpha.clear();
-    for k in 1..n { ac_alpha.push(tn[k].cp); }
+    for k in 1..n { ac_alpha.push(tn[k].sym); }
     stable_sort(ac_alpha) { a, b => a < b };
     var w = 0;
     for k in ac_alpha.len {
@@ -195,10 +235,10 @@ fn ac_build() {
     ac_alpha.resize(w);
 }
 
-fn ac_next(state: i64, cp: u32) -> i64 {
-    var s = state;
-    while s != 0 && trie_find(s, cp) < 0 { s = ac_fail[s]; }
-    let it = trie_find(s, cp);
+fn ac_next(state: i64, x: u64) -> i64 {
+    var st = state;
+    while st != 0 && trie_find(st, x) < 0 { st = ac_fail[st]; }
+    let it = trie_find(st, x);
     return if it >= 0 { it } else { 0 };
 }
 
@@ -226,12 +266,17 @@ let P_REF = 16;
 let P_ATOMIC = 17;
 let P_TAG = 18;
 let P_GBNF = 19;
-let P_AC = 20;
+let P_TOKEN = 20;        // lo: the token id, s: its piece
+let P_TOKEN_NOT = 21;    // one token not among kids[kids_at..kids_at + kids_n] (ids)
 
-// A parser. child: its one child. kids_at, kids_n: a sequence's or choice's
-// children (in kids), an until's or ac's delimiters (in delims), a chars'
-// ranges (in ranges). s: a literal, a chars' pattern, a rule's or ref's
-// name, a tag, a gbnf's grammar, a schema's name.
+// A parser. child: its one child (an until's content, with incl). kids_at,
+// kids_n: a sequence's or choice's children (in kids), an until's branches
+// (in kids, a delimiter and its rest parser, -1 for none, each), a chars'
+// ranges (in ranges). s: a literal, a token's piece, a chars' pattern, a
+// rule's or ref's name, a tag, a gbnf's grammar, a schema's name. incl: an
+// until that consumes its first delimiter and parses that branch's rest
+// (through); opt: then the input may end before a delimiter. start_p,
+// rest_p: a trigger rule's start and rest.
 struct P {
     kind: u8,
     child: i64 = -1,
@@ -245,6 +290,10 @@ struct P {
     trigger: bool = false,
     node: i64 = -1,
     raw: bool = false,
+    incl: bool = false,
+    opt: bool = false,
+    start_p: i64 = -1,
+    rest_p: i64 = -1,
 }
 
 struct CharRange { lo: u32, hi: u32 }
@@ -253,7 +302,6 @@ struct Arena { base: i64, root: i64 = -1 }
 
 var ps: P[>..] = [];
 var kids: i64[>..] = [];
-var delims: S[>..] = [];
 var ranges: CharRange[>..] = [];
 var rules: Rule[>..] = [];
 var arenas: Arena[>..] = [];
@@ -265,7 +313,6 @@ fn reset() {
     pt.clear();
     ps.clear();
     kids.clear();
-    delims.clear();
     ranges.clear();
     rules.clear();
     arenas.clear();
@@ -336,21 +383,101 @@ fn choice2(a: i64, b: i64) -> i64 { choice([a, b]) }
 // a << b: a, spaces, b
 fn spaced(a: i64, b: i64) -> i64 { let sp = space(); return seq([a, sp, b]); }
 
+// Everything up to the first delimiter (not consumed): a literal each.
 fn until_one_of(ds: const u8[:][:]) -> i64 {
-    let at0 = delims.len;
-    for d in ds { delims.push(lit(d)); }
+    let at0 = kids.len;
+    for d in ds { kids.push(-1); kids.push(-1); }
+    for d, i in ds {
+        let l = literal(d);
+        kids[at0 + 2 * i] = l;
+    }
     return add(P { kind: P_UNTIL, kids_at: at0, kids_n: ds.len, .. });
 }
 fn until(d: const u8[:]) -> i64 { until_one_of([d]) }
-fn rest() -> i64 { add(P { kind: P_UNTIL, kids_at: delims.len, kids_n: 0, .. }) }
+// Everything.
+fn rest() -> i64 { add(P { kind: P_UNTIL, kids_at: kids.len, kids_n: 0, .. }) }
 
-fn ac_one_of(p: i64, ds: const u8[:][:]) -> i64 {
-    if ds.len == 0 { abort("ac parser requires at least one delimiter"); }
-    let at0 = delims.len;
-    for d in ds { delims.push(lit(d)); }
-    return add(P { kind: P_AC, child: p, kids_at: at0, kids_n: ds.len, .. });
+// Everything up to the delimiter, a sequence of literals and tokens, or of
+// choices of them (until(parser)).
+fn until_p(delimiter: i64) -> i64 {
+    let at0 = kids.len;
+    kids.push(delimiter);
+    kids.push(-1);
+    return add(P { kind: P_UNTIL, kids_at: at0, kids_n: 1, .. });
 }
-fn ac(p: i64, d: const u8[:]) -> i64 { ac_one_of(p, [d]) }
+
+// A delimiter of through, and the parser that follows it once it is consumed.
+struct Branch { delim: i64, rest: i64 = -1 }
+
+// content, then the first delimiter, then the rest of its branch:
+// C (D1 R1 | D2 R2 | ...). optional: the input may end before a delimiter.
+fn through_b(content: i64, branches: const Branch[:], optional: bool) -> i64 {
+    if branches.len == 0 { abort("through requires at least one branch"); }
+    let at0 = kids.len;
+    for b in branches { kids.push(b.delim); kids.push(b.rest); }
+    return add(P { kind: P_UNTIL, child: content, kids_at: at0, kids_n: branches.len, incl: true, opt: optional, .. });
+}
+fn through(content: i64, delimiter: i64) -> i64 { through_b(content, [Branch { delim: delimiter }], false) }
+fn through_s(content: i64, delimiter: const u8[:]) -> i64 { let l = literal(delimiter); return through(content, l); }
+
+// The special tokens (common_peg_tokens): their pieces and ids, and whether
+// the parsers built now know them (a builder made with the tokens).
+var tok_text: u8[>..] = [];
+var tok_at: i64[>..] = [];
+var tok_ids: i64[>..] = [];
+var use_tokens = false;
+
+// The special tokens, known to the parsers built from now on.
+fn set_tokens(pieces: const u8[:][:], ids: const i64[:]) {
+    tok_text.clear();
+    tok_at.clear();
+    tok_ids.clear();
+    for pc, i in pieces {
+        tok_at.push(tok_text.len);
+        tok_text.append(pc);
+        tok_ids.push(ids[i]);
+    }
+    tok_at.push(tok_text.len);
+    use_tokens = true;
+}
+
+fn clear_tokens() { tok_text.clear(); tok_at.clear(); tok_ids.clear(); use_tokens = false; }
+
+fn n_tokens() -> i64 { tok_ids.len }
+fn token_piece(i: i64) -> const u8[:] { tok_text[tok_at[i]..tok_at[i + 1]] }
+fn token_id_at(i: i64) -> i64 { tok_ids[i] }
+
+// The id of a special token's piece, or -1 (token_id); -1 too while the
+// parsers being built do not know the tokens.
+fn token_id(piece: const u8[:]) -> i64 {
+    guard use_tokens else { return -1; }
+    for id, i in tok_ids { if tok_text[tok_at[i]..tok_at[i + 1]] == piece { return id; } }
+    return -1;
+}
+
+// A token; a literal if the piece is not a token the builder knows.
+fn token(piece: const u8[:]) -> i64 {
+    let id = token_id(piece);
+    if id < 0 { return literal(piece); }
+    let x = lit(piece);
+    return add(P { kind: P_TOKEN, lo: id, s: x, .. });
+}
+
+// One of the tokens; negate_it: one token that is none of them (each must be known).
+fn tokens(pieces: const u8[:][:], negate_it: bool) -> i64 {
+    if !negate_it {
+        var alts: i64[>..] = [];
+        for pc in pieces { alts.push(token(pc)); }
+        return choice(alts);
+    }
+    let at0 = kids.len;
+    for pc in pieces {
+        let id = token_id(pc);
+        if id < 0 { abort(str("token is not registered with the builder: ", pc)); }
+        kids.push(id);
+    }
+    return add(P { kind: P_TOKEN_NOT, kids_at: at0, kids_n: pieces.len, .. });
+}
 
 fn is_hex_digit(c: u8) -> bool { (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') }
 
@@ -457,6 +584,17 @@ fn rule_close(name: const u8[:], p: i64, trigger: bool) -> i64 {
 
 fn trigger_rule(name: const u8[:], p: i64) -> i64 { rule(name, p, true) }
 
+// A trigger rule of start then rest: a lazy grammar scans for the start of
+// any such rule, then allows only its rest. The start is limited as an
+// until's delimiter.
+fn trigger_rule_sr(name: const u8[:], start_p: i64, rest_p: i64) -> i64 {
+    let nm = clean_name(name);
+    let sq = seq2(start_p, rest_p);
+    let id = add(P { kind: P_RULE, child: sq, s: nm, trigger: true, start_p: start_p, rest_p: rest_p, .. });
+    set_rule(nm, id);
+    return add(P { kind: P_REF, s: nm, .. });
+}
+
 // A parser with the schema node its GBNF comes from.
 fn schema(p: i64, name: const u8[:], node: i64, raw: bool) -> i64 {
     let x = lit(name);
@@ -477,8 +615,15 @@ fn build(root: i64) -> i64 {
         let k = ps[id].kind;
         if k == P_SEQUENCE || k == P_CHOICE {
             for j in ps[id].kids_n { kids[ps[id].kids_at + j] = resolve(kids[ps[id].kids_at + j]); }
+        } else if k == P_UNTIL {
+            for j in 2 * ps[id].kids_n { kids[ps[id].kids_at + j] = resolve(kids[ps[id].kids_at + j]); }
+            ps[id].child = resolve(ps[id].child);
         } else if ps[id].child >= 0 {
             ps[id].child = resolve(ps[id].child);
+        }
+        if k == P_RULE && ps[id].start_p >= 0 {
+            ps[id].start_p = resolve(ps[id].start_p);
+            ps[id].rest_p = resolve(ps[id].rest_p);
         }
     }
     arenas[a].root = resolve(root);
@@ -525,10 +670,12 @@ fn json_number() -> i64 {
     let int_part = choice([zero, seq([digit1_9, more])]);
     let dot = literal(".");
     let frac = seq([dot, digits]);
+    // the items of sequence({...}) are made in order
     let e1 = literal("e");
     let e2 = literal("E");
+    let e = choice([e1, e2]);
     let sign = optional(chars("[+-]", 1, 1));
-    let exp = seq([choice([e1, e2]), sign, digits]);
+    let exp = seq([e, sign, digits]);
     // only commit the number when the next character cannot extend it
     let not_cont = negate(chars("[0-9.eE+-]", 1, 1));
     let minus = optional(literal("-"));
@@ -717,6 +864,8 @@ struct Node {
 }
 
 var input: u8[>..] = [];
+// the token each byte of input starts, -1 for the rest of a token's piece and for text
+var itok: i32[>..] = [];
 var flags = 0;
 var nodes: Node[>..] = [];
 var akids: i64[>..] = [];
@@ -774,13 +923,101 @@ fn escape_sequence(start: i64, pos0: i64, delimiter: u8) -> Res {
     return res(FAIL, start, start);
 }
 
-fn exec_until(p: P, start: i64) -> Res {
+// Node sets of insert_delimiter, a run each, sorted.
+var dset: i64[>..<] = [];
+struct DRun { at: i64, n: i64 }
+var druns: DRun[>..<] = [];
+
+fn dset_add(run_at: i64, node: i64) {
+    var i = run_at;
+    while i < dset.len && dset[i] < node { i++; }
+    if i < dset.len && dset[i] == node { return; }
+    insert_at(dset, i, node);
+}
+
+// The delimiters parser id matches, into the trie from each node of the run
+// dset[at..at + n]: the end nodes, a run at the top of dset (insert_delimiter).
+// A choice adds each branch's; a sequence joins every combination.
+recursive fn insert_delimiter(id: i64, at: i64, n: i64) -> i64, i64 {
+    let p = ps[id];
+    let k = p.kind;
+    if k == P_TAG || k == P_ATOMIC { return insert_delimiter(p.child, at, n); }
+    if k == P_LITERAL || k == P_TOKEN {
+        let out = dset.len;
+        for i in n {
+            var node = dset[at + i];
+            if k == P_TOKEN {
+                node = trie_child(node, sym_tok(p.lo));
+            } else {
+                let lt = t(p.s);
+                var pos = 0;
+                while pos < lt.len {
+                    let st, cp, m = utf8_at(lt, pos);
+                    if st != UTF8_SUCCESS { break; }
+                    node = trie_child(node, sym_cp(cp));
+                    pos += m;
+                }
+            }
+            dset_add(out, node);
+        }
+        return out, dset.len - out;
+    }
+    if k == P_CHOICE {
+        let rmark = druns.len;
+        for j in p.kids_n {
+            let a2, n2 = insert_delimiter(kids[p.kids_at + j], at, n);
+            druns.push(DRun { at: a2, n: n2 });
+        }
+        let out = dset.len;
+        for r in rmark..druns.len {
+            let dr = druns[r];
+            for i in dr.n { dset_add(out, dset[dr.at + i]); }
+        }
+        druns.resize(rmark);
+        return out, dset.len - out;
+    }
+    if k == P_SEQUENCE {
+        var fa = at;
+        var fnn = n;
+        for j in p.kids_n {
+            let a2, n2 = insert_delimiter(kids[p.kids_at + j], fa, fnn);
+            fa = a2;
+            fnn = n2;
+        }
+        return fa, fnn;
+    }
+    fail("a delimiter may only be a sequence of literals, tokens, and choices of them, possibly wrapped in tags and atomics");
+    return at, n;
+}
+
+// The trie of an until's delimiters, each end valued by its branch
+// (build_until_matcher).
+fn build_matcher(p: P) {
     trie_clear();
-    for k in p.kids_n { trie_insert(t(delims[p.kids_at + k])); }
+    for b in p.kids_n {
+        let mark = dset.len;
+        dset.push(0);
+        let a, n = insert_delimiter(kids[p.kids_at + 2 * b], mark, 1);
+        for i in n {
+            let end = dset[a + i];
+            if end == 0 { fail("delimiter must not match the empty string"); }
+            // nothing follows a delimiter without incl, so the first branch to claim it wins
+            let owner = trie_mark(end, b as! i32);
+            if owner != b as! i32 && p.incl {
+                fail(str("until branches ", owner, " and ", b, " must not share a delimiter"));
+            }
+        }
+        dset.resize(mark);
+    }
+}
+
+recursive fn exec_until(p: P, start: i64) -> Res {
+    if p.incl { return exec_through(p, start); }
+    build_matcher(p);
     var pos = start;
     var last_valid = start;
     while pos < input.len {
-        let st, cp, n = utf8_at(input, pos);
+        let st, x, n = trie_next(pos);
         if st == UTF8_INCOMPLETE && lenient() { return res(NEED_MORE_INPUT, start, last_valid); }
         if st != UTF8_SUCCESS {
             // a delimiter cannot start inside bytes that fail to decode
@@ -789,7 +1026,7 @@ fn exec_until(p: P, start: i64) -> Res {
             last_valid = pos;
             continue;
         }
-        let m = trie_check_at(input, pos);
+        let m = trie_check_at(pos);
         if m == COMPLETE_MATCH { return res(SUCCESS, start, pos); }
         if m == PARTIAL_MATCH && !complete() { return res(SUCCESS, start, pos); }
         pos += n;
@@ -797,6 +1034,37 @@ fn exec_until(p: P, start: i64) -> Res {
     }
     if last_valid == input.len && lenient() { return res(NEED_MORE_INPUT, start, last_valid); }
     return res(SUCCESS, start, last_valid);
+}
+
+// The content, then the first branch whose delimiter and rest follow it,
+// C (D1 R1 | D2 R2 | ...) (parse_through).
+recursive fn exec_through(p: P, start: i64) -> Res {
+    let nmark = rn.len;
+    let imark = ri.len;
+    let content = exec(p.child, start);
+    if content.kind != SUCCESS { return content; }
+    let pos = content.end;
+    let cm = rn.len;
+    let cim = ri.len;
+    for b in p.kids_n {
+        var end = pos;
+        var matched = true;
+        for which in 2 {
+            let id = kids[p.kids_at + 2 * b + which];
+            guard id >= 0 else { continue; }
+            let r = exec(id, end);
+            if r.kind == FAIL { matched = false; break; }
+            end = r.end;
+            if r.kind == NEED_MORE_INPUT { return res(NEED_MORE_INPUT, start, end); }
+        }
+        if matched { return res(SUCCESS, start, end); }
+        drop_to(cm, cim);
+    }
+    if p.opt && pos == input.len {
+        return res(if lenient() { NEED_MORE_INPUT } else { SUCCESS }, start, pos);
+    }
+    drop_to(nmark, imark);
+    return res(FAIL, start, pos);
 }
 
 fn exec_chars(p: P, start: i64) -> Res {
@@ -874,6 +1142,25 @@ recursive fn exec(id: i64, pos: i64) -> Res {
             if input[q] != c { return res(FAIL, pos, pos); }
             q++;
         }
+        return res(SUCCESS, pos, q);
+    }
+    if k == P_TOKEN || k == P_TOKEN_NOT {
+        if pos >= input.len {
+            if !lenient() { return res(FAIL, pos, pos); }
+            return res(NEED_MORE_INPUT, pos, pos);
+        }
+        let id: i64 = if pos < itok.len { itok[pos] } else { -1 };
+        var ok = false;
+        if k == P_TOKEN {
+            ok = id == p.lo;
+        } else {
+            ok = id >= 0;
+            for j in p.kids_n { if kids[p.kids_at + j] == id { ok = false; } }
+        }
+        if !ok { return res(FAIL, pos, pos); }
+        // the rest of the piece, up to the next token or the end
+        var q = pos + 1;
+        while q < input.len && itok[q] < 0 { q++; }
         return res(SUCCESS, pos, q);
     }
     if k == P_SEQUENCE {
@@ -973,7 +1260,7 @@ recursive fn exec(id: i64, pos: i64) -> Res {
         if r.kind == NEED_MORE_INPUT { rn.resize(nmark); }
         return r;
     }
-    // schema, gbnf, ac: their child parses
+    // schema, gbnf: their child parses
     return exec(p.child, pos);
 }
 
@@ -991,6 +1278,17 @@ var result_invalid: Invalid[>..] = [];
 fn parse(a: i64, text: const u8[:], parse_flags: i64, start_pos: i64) -> Res, bool {
     input.clear();
     input.append(text);
+    itok.clear();
+    itok.resize(input.len, -1);
+    return parse_input(a, parse_flags, start_pos);
+}
+
+// parse, of text whose bytes start the tokens toks (-1 for none).
+fn parse_tokens(a: i64, text: const u8[:], toks: const i32[:], parse_flags: i64, start_pos: i64) -> Res, bool {
+    input.clear();
+    input.append(text);
+    itok.clear();
+    itok.append(toks);
     return parse_input(a, parse_flags, start_pos);
 }
 
@@ -1132,65 +1430,195 @@ fn state_name(out: u8[>..]&, prefix: const u8[:], s: i64) {
     format(out, s);
 }
 
-// The rules of the Aho-Corasick automaton of the delimiters (gbnf_ac_grammar):
-// including, everything up to and including the first delimiter; else
-// everything without any delimiter.
-fn ac_grammar(prefix: const u8[:], p: P, including: bool) -> json_schema::Str {
-    trie_clear();
-    for k in p.kids_n { trie_insert(t(delims[p.kids_at + k])); }
+// A token set, <[1,5-9]>, runs of consecutive ids as ranges (gbnf_token_set).
+fn token_set(out: u8[>..]&, ids: const i64[:], negate_it: bool) {
+    out.append(if negate_it { "!<[" } else { "<[" });
+    var i = 0;
+    while i < ids.len {
+        var j = i;
+        while j + 1 < ids.len && ids[j + 1] == ids[j] + 1 { j++; }
+        if i > 0 { out.push(','); }
+        format(out, ids[i]);
+        if j > i { out.push('-'); format(out, ids[j]); }
+        i = j + 1;
+    }
+    out.append("]>");
+}
+
+// The alternatives of a set of symbols (gbnf_ac_symbols::alternatives): one
+// for the code points, one for the tokens, each followed by next if given;
+// onto alts, each its own string in abuf.
+struct Alt { at: i64, len: i64 }
+var abuf: u8[>..<] = [];
+
+fn push_alt(alts: Alt[>..]&, text: const u8[:]) {
+    alts.push(Alt { at: abuf.len, len: text.len });
+    abuf.append(text);
+}
+
+fn sym_alternatives(alts: Alt[>..]&, syms: const u64[:], next: const u8[:]) {
+    var cps: u32[>..] = [];
+    var ids: i64[>..] = [];
+    for x in syms { if sym_is_token(x) { ids.push(sym_value(x)); } else { cps.push(sym_value(x) as! u32); } }
+    var a: u8[>..] = [];
+    if cps.len > 0 {
+        char_class(a, cps, false);
+        if next.len > 0 { a.push(' '); a.append(next); }
+        push_alt(alts, a);
+    }
+    if ids.len > 0 {
+        a.clear();
+        token_set(a, ids, false);
+        if next.len > 0 { a.push(' '); a.append(next); }
+        push_alt(alts, a);
+    }
+}
+
+var reach_tokens: i64[>..<] = [];
+
+// The rules of the Aho-Corasick automaton of the trie (gbnf_ac_grammar).
+// Excluding: everything without a pattern. Including: up to the first
+// pattern, then the rest rule of that pattern's value (rests, empty for
+// none); optional: or nothing more. Returns the start state's name.
+fn ac_grammar(prefix: const u8[:], including: bool, optional: bool, rests: const json_schema::Str[:]) -> json_schema::Str {
     ac_build();
+    // with only tokens in the alphabet, the grammar steps a whole token at a time
+    var token_only = true;
+    for x in ac_alpha { if !sym_is_token(x) { token_only = false; } }
     var rhs: u8[>..] = [];
     var nm: u8[>..] = [];
-    var completing: u32[>..] = [];
-    var specific: u32[>..] = [];
-    var dests: i64[>..] = [];       // the bucket of each char of the alphabet (-1 none)
+    var dests: i64[>..] = [];       // the destination of each symbol of the alphabet
+    var specific: u64[>..] = [];
+    var group: u64[>..] = [];
+    var order: i64[>..] = [];
+    var term_cps: u64[>..] = [];
+    var term_ids: u64[>..] = [];
+    var alts: Alt[>..] = [];
+    var rest_names: Alt[>..] = [];
+    var next: u8[>..] = [];
+    var fallback: u8[>..] = [];
     for q in tn.len {
         if ac_match[q] >= 0 { continue; }
-        completing.clear();
-        specific.clear();
         dests.clear();
-        for c in ac_alpha {
-            let d = ac_next(q, c);
-            if ac_match[d] >= 0 {
-                completing.push(c);
-                specific.push(c);
-                dests.push(-1);
-            } else if d != 0 {
-                specific.push(c);
-                dests.push(d);
-            } else {
-                dests.push(-1);
+        specific.clear();
+        for x in ac_alpha {
+            let d = ac_next(q, x);
+            dests.push(d);
+            if ac_match[d] >= 0 || d != 0 { specific.push(x); }
+        }
+        // every other symbol goes back to the start
+        fallback.clear();
+        var spec_cps: u32[>..] = [];
+        var spec_ids: i64[>..] = [];
+        for x in specific { if sym_is_token(x) { spec_ids.push(sym_value(x)); } else { spec_cps.push(sym_value(x) as! u32); } }
+        if token_only {
+            token_set(fallback, spec_ids, true);
+        } else {
+            if spec_cps.len == 0 { fallback.push('.'); } else { char_class(fallback, spec_cps, true); }
+            // char rules never match a token named by a token rule: the other named tokens by name
+            var others: i64[>..] = [];
+            for id in reach_tokens {
+                var named = false;
+                for sid in spec_ids { if sid == id { named = true; } }
+                if !named { others.push(id); }
+            }
+            if others.len > 0 {
+                var f2: u8[>..] = [];
+                f2.push('(');
+                f2.append(fallback);
+                f2.append(" | ");
+                token_set(f2, others, false);
+                f2.push(')');
+                fallback.clear();
+                fallback.append(f2);
             }
         }
-        // the buckets by destination state, in order
-        var order: i64[>..] = [];
-        for d in dests { if d >= 0 { var seen = false; for o in order { if o == d { seen = true; } } if !seen { order.push(d); } } }
+        fallback.push(' ');
+        state_name(fallback, prefix, 0);
+        abuf.clear();
+        alts.clear();
+        // the destinations, in order: those that complete a pattern, then the others
+        order.clear();
+        for d in dests { var seen = false; for o in order { if o == d { seen = true; } } if !seen { order.push(d); } }
         stable_sort(order) { a, b => a < b };
-        rhs.clear();
-        if !including { rhs.append("|"); }
-        var first = true;
-        if including && completing.len > 0 { char_class(rhs, completing, false); first = false; }
-        var bucket: u32[>..] = [];
-        for d in order {
-            bucket.clear();
-            for c, i in ac_alpha { if dests[i] == d { bucket.push(c); } }
-            if including { if !first { rhs.append(" | "); } } else { rhs.push(' '); }
-            first = false;
-            char_class(rhs, bucket, false);
-            rhs.push(' ');
-            state_name(rhs, prefix, d);
-            if !including { rhs.append(" |"); }
+        if including {
+            term_cps.clear();
+            term_ids.clear();
+            for d in order {
+                guard ac_match[d] >= 0 else { continue; }
+                group.clear();
+                for x, i in ac_alpha { if dests[i] == d { group.push(x); } }
+                // the rests of every pattern ending here, the longest and those by suffix links
+                rest_names.clear();
+                var terminal = false;
+                var st = d;
+                while st != 0 {
+                    let pat = tn[st].pattern;
+                    if pat >= 0 {
+                        let rname = jt(rests[pat]);
+                        if rname.len == 0 {
+                            terminal = true;
+                        } else {
+                            var dup = false;
+                            for r in rest_names { if abuf[r.at..r.at + r.len] == rname { dup = true; } }
+                            if !dup { push_alt(rest_names, rname); }
+                        }
+                    }
+                    st = ac_fail[st];
+                }
+                if rest_names.len > 0 {
+                    next.clear();
+                    if rest_names.len == 1 {
+                        next.append(abuf[rest_names[0].at..rest_names[0].at + rest_names[0].len]);
+                    } else {
+                        next.push('(');
+                        for r, i in rest_names {
+                            if i > 0 { next.append(" | "); }
+                            next.append(abuf[r.at..r.at + r.len]);
+                        }
+                        next.push(')');
+                    }
+                    sym_alternatives(alts, group, next);
+                }
+                if terminal {
+                    for x in group { if sym_is_token(x) { term_ids.push(x); } else { term_cps.push(x); } }
+                }
+            }
+            var term: u64[>..] = [];
+            term.append(term_cps);
+            term.append(term_ids);
+            sym_alternatives(alts, term, "");
         }
-        if including { if !first { rhs.append(" | "); } } else { rhs.push(' '); }
-        char_class(rhs, specific, true);
-        rhs.push(' ');
-        state_name(rhs, prefix, 0);
+        for d in order {
+            guard ac_match[d] < 0 && d != 0 else { continue; }
+            group.clear();
+            for x, i in ac_alpha { if dests[i] == d { group.push(x); } }
+            next.clear();
+            state_name(next, prefix, d);
+            sym_alternatives(alts, group, next);
+        }
+        rhs.clear();
+        if including {
+            if optional { rhs.append("| "); }
+            for a, i in alts {
+                rhs.append(abuf[a.at..a.at + a.len]);
+                rhs.append(" | ");
+            }
+            rhs.append(fallback);
+        } else {
+            rhs.push('|');
+            for a in alts {
+                rhs.push(' ');
+                rhs.append(abuf[a.at..a.at + a.len]);
+                rhs.append(" |");
+            }
+            rhs.push(' ');
+            rhs.append(fallback);
+        }
         nm.clear();
         state_name(nm, prefix, q);
         json_schema::add_rule(jlit(nm), jlit(rhs));
     }
-    // an empty delimiter makes the start state terminal
-    if ac_match[0] >= 0 { json_schema::add_rule(jlit(prefix), jlit("|")); }
     return jlit(prefix);
 }
 
@@ -1223,6 +1651,7 @@ fn repetition_suffix(out: u8[>..]&, lo: i64, hi: i64) {
 }
 
 var gstack: json_schema::Str[>..<] = [];
+var grests: json_schema::Str[>..<] = [];
 var gbase = 0;
 
 // The GBNF of a parser (to_gbnf), on the json_schema arena.
@@ -1231,6 +1660,12 @@ recursive fn to_gbnf(id: i64) -> json_schema::Str {
     let k = p.kind;
     if k == P_EPSILON || k == P_START || k == P_END || k == P_AND || k == P_NOT { return jlit(""); }
     if k == P_LITERAL { return json_schema::format_literal(jlit(t(p.s))); }
+    if k == P_TOKEN { return jlit(str("<[", p.lo, "]>")); }
+    if k == P_TOKEN_NOT {
+        var out: u8[>..] = [];
+        token_set(out, kids[p.kids_at..p.kids_at + p.kids_n], true);
+        return jlit(out);
+    }
     if k == P_SEQUENCE || k == P_CHOICE {
         let mark = gstack.len;
         for j in p.kids_n {
@@ -1278,8 +1713,29 @@ recursive fn to_gbnf(id: i64) -> json_schema::Str {
         return jlit(out);
     }
     if k == P_UNTIL {
-        if p.kids_n == 0 { return jlit(".*"); }
-        return ac_grammar(str("until-", id - gbase), p, false);
+        if !p.incl {
+            if p.kids_n == 0 { return jlit(".*"); }
+            build_matcher(p);
+            var none: json_schema::Str[>..] = [];
+            return ac_grammar(str("until-", id - gbase), false, false, none);
+        }
+        // the rests first: their grammar may build other matchers
+        let mark = grests.len;
+        for b in p.kids_n {
+            let r = kids[p.kids_at + 2 * b + 1];
+            if r < 0 {
+                grests.push(jlit(""));
+            } else {
+                let g = to_gbnf(r);
+                let rname = json_schema::add_rule(jlit(str("until-", id - gbase, "-rest-", b)), g);
+                grests.push(rname);
+            }
+        }
+        var rs: json_schema::Str[>..] = [];
+        for k2 in mark..grests.len { rs.push(grests[k2]); }
+        grests.resize(mark);
+        build_matcher(p);
+        return ac_grammar(str("until-", id - gbase), true, p.opt, rs);
     }
     if k == P_SCHEMA {
         if schema_delegates(p) { return to_gbnf(p.child); }
@@ -1287,7 +1743,6 @@ recursive fn to_gbnf(id: i64) -> json_schema::Str {
     }
     if k == P_RULE || k == P_REF { return jlit(t(p.s)); }
     if k == P_GBNF { return jlit(t(p.s)); }
-    if k == P_AC { return ac_grammar(str("ac-", id - gbase), p, true); }
     // tag, atomic
     return to_gbnf(p.child);
 }
@@ -1299,12 +1754,29 @@ fn reached(name: const u8[:]) -> bool {
     return false;
 }
 
-// The rules reachable from id (collect_reachable_rules), onto reach.
+fn reach_token(id: i64) {
+    let i = lower_bound(reach_tokens) { it < id };
+    if i == reach_tokens.len || reach_tokens[i] != id { insert_at(reach_tokens, i, id); }
+}
+
+// The rules reachable from id, onto reach, and the tokens named by token
+// rules, onto reach_tokens (collect_reachable).
 recursive fn collect(a: i64, id: i64) {
     let p = ps[id];
     let k = p.kind;
     if k == P_SEQUENCE || k == P_CHOICE {
         for j in p.kids_n { collect(a, kids[p.kids_at + j]); }
+    } else if k == P_TOKEN {
+        reach_token(p.lo);
+    } else if k == P_TOKEN_NOT {
+        for j in p.kids_n { reach_token(kids[p.kids_at + j]); }
+    } else if k == P_UNTIL {
+        // the delimiters name their tokens in the grammar
+        if p.child >= 0 { collect(a, p.child); }
+        for b in p.kids_n {
+            collect(a, kids[p.kids_at + 2 * b]);
+            if kids[p.kids_at + 2 * b + 1] >= 0 { collect(a, kids[p.kids_at + 2 * b + 1]); }
+        }
     } else if k == P_RULE {
         if !reached(t(p.s)) {
             reach.push(p.s);
@@ -1320,17 +1792,37 @@ recursive fn collect(a: i64, id: i64) {
 }
 
 // Arena a's rules into the json_schema grammar being built (build_grammar);
-// lazy: only the trigger rules and what they reach, with root their choice.
-// It throws json_schema's Fail.
+// lazy: only the trigger rules and what they reach. The root is their
+// choice, or, when they have a start and a rest, scans for any start and
+// then allows only that rule's rest. It throws json_schema's Fail.
 fn build_grammar(a: i64, lazy: bool) {
     reach.clear();
+    reach_tokens.clear();
     gbase = arenas[a].base;
-    if lazy {
-        for r in rules {
-            guard r.arena == a && ps[r.id].kind == P_RULE && ps[r.id].trigger else { continue; }
-            // marked, then what it reaches (its child: the rule itself is marked)
-            if !reached(t(r.name)) { reach.push(r.name); }
-            collect(a, ps[r.id].child);
+    // the trigger rules, by name
+    var triggers: i64[>..] = [];
+    for r in rules {
+        guard r.arena == a && ps[r.id].kind == P_RULE && ps[r.id].trigger else { continue; }
+        triggers.push(r.id);
+    }
+    stable_sort(triggers) { x, y => json_schema::cmp_bytes(t(ps[x].s), t(ps[y].s)) < 0 };
+    var scans = false;
+    for id in triggers { if ps[id].start_p >= 0 { scans = true; } }
+    if scans {
+        for id in triggers {
+            if ps[id].start_p < 0 { fail(str("trigger rule without a start in a scanning grammar: ", t(ps[id].s))); }
+        }
+    }
+    if lazy && scans {
+        for id in triggers {
+            collect(a, ps[id].start_p);
+            collect(a, ps[id].rest_p);
+        }
+    } else if lazy {
+        for id in triggers {
+            // marked, then what it reaches
+            if !reached(t(ps[id].s)) { reach.push(ps[id].s); }
+            collect(a, ps[id].child);
         }
     } else {
         collect(a, arenas[a].root);
@@ -1342,17 +1834,34 @@ fn build_grammar(a: i64, lazy: bool) {
         let g = to_gbnf(p.child);
         json_schema::add_rule(jlit(t(p.s)), g);
     }
-    if lazy {
-        var names: S[>..] = [];
-        for r in rules {
-            guard r.arena == a && ps[r.id].kind == P_RULE && ps[r.id].trigger else { continue; }
-            names.push(ps[r.id].s);
+    if lazy && scans {
+        // the rests' rules first: their grammar may build other matchers
+        var rests: json_schema::Str[>..] = [];
+        for id in triggers {
+            let g = to_gbnf(ps[id].rest_p);
+            let rname = json_schema::add_rule(jlit(str(t(ps[id].s), "-rest")), g);
+            rests.push(rname);
         }
-        stable_sort(names) { x, y => json_schema::cmp_bytes(t(x), t(y)) < 0 };
+        trie_clear();
+        for id, v in triggers {
+            let mark = dset.len;
+            dset.push(0);
+            let da, dn = insert_delimiter(ps[id].start_p, mark, 1);
+            for i in dn {
+                let owner = trie_mark(dset[da + i], v as! i32);
+                if owner != v as! i32 {
+                    fail(str("trigger rules ", t(ps[triggers[owner]].s), " and ", t(ps[id].s), " must not share a start"));
+                }
+            }
+            dset.resize(mark);
+        }
+        let g = ac_grammar("trigger", true, true, rests);
+        json_schema::add_rule(jlit("root"), g);
+    } else if lazy {
         var out: u8[>..] = [];
-        for nm, i in names {
+        for id, i in triggers {
             if i > 0 { out.append(" | "); }
-            out.append(t(nm));
+            out.append(t(ps[id].s));
         }
         json_schema::add_rule(jlit("root"), jlit(out));
     } else if arenas[a].root >= 0 {

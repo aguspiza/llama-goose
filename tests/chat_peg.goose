@@ -56,6 +56,36 @@ fn strings_json(out: u8[>..]&, l: const u8[:]) {
     out.push(']');
 }
 
+// test-chat.cpp's fake_tokenize: the longest special token at each place,
+// else a UTF-8 character of text (token 0); the token each byte starts, -1
+// for the rest of a piece.
+fn fake_tokenize(text: const u8[:], toks: i32[>..]&) {
+    toks.clear();
+    var pos = 0;
+    while pos < text.len {
+        var best = -1;
+        var best_len = 0;
+        for i in peg::n_tokens() {
+            let pc = peg::token_piece(i);
+            if pc.len > best_len && pos + pc.len <= text.len && text[pos..pos + pc.len] == pc {
+                best = peg::token_id_at(i);
+                best_len = pc.len;
+            }
+        }
+        var len = 1;
+        var id: i32 = 0;
+        if best >= 0 {
+            len = best_len;
+            id = best as! i32;
+        } else {
+            while pos + len < text.len && (text[pos + len] & 0xC0) == 0x80 { len++; }
+        }
+        toks.push(id);
+        for k in len - 1 { toks.push(-1); }
+        pos += len;
+    }
+}
+
 fn main() {
     let args = args();
     var verbose = false;
@@ -93,6 +123,7 @@ fn main() {
         let path = field();
         let input = field();
         let inputs_json = field();
+        let specials_json = field();
         let ok = field() == "1";
         // what llama.cpp made, as fields
         var expected: const u8[:][>..] = [];
@@ -183,6 +214,21 @@ fn main() {
         let kw = jget(iv, "chat_template_kwargs");
         for i in json_schema::json_len(kw) { kvs.push(KVR { key: keep(json_schema::json_key(kw, i)), value: keep(jstr(json_schema::json_at(kw, i))) }); }
         let schema_r = keep(jstr(jget(iv, "json_schema")));
+        // the special tokens the case runs with, as if the vocab had them (peg_tester::specials)
+        let sv = json_schema::json_value(specials_json);
+        var sp_text: u8[>..] = [];
+        var sp_at: i64[>..] = [];
+        var sp_ids: i64[>..] = [];
+        for i in json_schema::json_len(sv) {
+            let pair = json_schema::json_at(sv, i);
+            sp_at.push(sp_text.len);
+            sp_text.append(jstr(json_schema::json_at(pair, 0)));
+            sp_ids.push(jint(json_schema::json_at(pair, 1)));
+        }
+        sp_at.push(sp_text.len);
+        var sp_pieces: const u8[:][>..] = [];
+        for i in sp_ids.len { sp_pieces.push(sp_text[sp_at[i]..sp_at[i + 1]]); }
+        if sp_ids.len > 0 { peg::set_tokens(sp_pieces, sp_ids); } else { peg::clear_tokens(); }
         let tool_choice = jint(jget(iv, "tool_choice"));
         let parallel = jbool(jget(iv, "parallel_tool_calls"));
         let reasoning_format = jint(jget(iv, "reasoning_format"));
@@ -268,6 +314,8 @@ fn main() {
             if stops != expected[8] { report("additional stops", expected[8], stops); }
             if chat_render::thinking_start != expected[9] { report("thinking start", expected[9], chat_render::thinking_start); }
             if ends != expected[10] { report("thinking ends", expected[10], ends); }
+            chat_apply::gen_prompt_toks.clear();
+            if sp_ids.len > 0 { fake_tokenize(chat_render::gen_prompt, chat_apply::gen_prompt_toks); }
             // the parses
             var e = 12;
             var nparses = 0;
@@ -278,7 +326,9 @@ fn main() {
                 let partial = expected[e + 1] == "1";
                 let pok = expected[e + 2] == "1";
                 e += 3;
-                let mine_ok = chat_apply::parse(input[..cut], partial);
+                var toks: i32[>..] = [];
+                if sp_ids.len > 0 { fake_tokenize(input[..cut], toks); }
+                let mine_ok = chat_apply::parse_tokens(input[..cut], toks, partial);
                 var want: u8[>..] = [];
                 var got: u8[>..] = [];
                 if pok {

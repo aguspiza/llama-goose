@@ -55,11 +55,10 @@ fn detect_handler(src: const u8[:]) -> i64 {
     if has("<|channel|>") { return HANDLER_OTHER; }                                             // GPT-OSS, Harmony XML
     if has("<|ifm|im_start|>") && has("<ifm|tool_calls>") { return HANDLER_OTHER; }              // K2 Horizon
     if has("<|tool_list_start|>") && has("<|tool_list_end|>") { return HANDLER_LFM2; }
-    if has("List of tools: [") && !has("<|tool_list_start|>") { return HANDLER_LFM2; }          // LFM2.5
+    if has("List of tools: ") && !has("<|tool_list_start|>") { return HANDLER_LFM2; }          // LFM2.5
     if (has("dsml_token") && has("DSML") && (has("function_calls") || has("tool_calls"))) || has("｜DSML｜ calls>") {
         return HANDLER_OTHER;                                                                     // DeepSeek V3.2/V4
     }
-    if has("'<|tool_call>call:'") && !has("{#- OpenAI Chat Completions:") { return HANDLER_OTHER; }   // old Gemma 4
     if has("[source_lang_code]") && has("[target_lang_code]") { return HANDLER_OTHER; }          // TranslateGemma
     return HANDLER_NONE;
 }
@@ -77,9 +76,6 @@ fn patch_source(src: const u8[:], out: u8[>..]&) {
     out.append(src);
     if find(out, "<|channel|>") >= 0 && find(out, "in message.content or") >= 0 {
         replace_all(out, "{%- if \"<|channel|>analysis<|message|>\" in message.content or \"<|channel|>final<|message|>\" in message.content %}", "{%- if false %}");
-    }
-    if find(out, "[TOOL_CALLS]") >= 0 && find(out, "if (message['content'] is none or") >= 0 {
-        replace_all(out, "{%- if (message['content'] is none or message['content'] == '' or message['content']|length == 0) and (message['tool_calls'] is not defined or message['tool_calls'] is none or message['tool_calls']|length == 0) %}", "{%- if false %}");
     }
 }
 

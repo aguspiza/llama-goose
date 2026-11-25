@@ -1457,13 +1457,44 @@ fn is_reserved(name: Str) -> bool { is_reserved_name(t(name)) }
 
 recursive fn visit_all_of(node: i64, name: Str, rule_name: Str) -> Str {
     let first = oprops.len;
+    let leaves_first = leaves.len;
     let nd = nodes[node];
     // the rule of the enum values all the children have, if any
     let enum_rule = all_of_enums(node);
     if enum_rule.len > 0 {
         oprops.resize(first);
+        leaves.resize(leaves_first);
         return add_rule(rule_name, enum_rule);
     }
+    // no properties, but schemas of other kinds: one of them is the schema;
+    // integers and numbers merge into the integer range they all allow
+    let n_leaves = leaves.len - leaves_first;
+    var merged = -1;
+    if oprops.len == first && n_leaves > 0 {
+        if n_leaves == 1 {
+            merged = leaves[leaves_first];
+        } else {
+            var all_numeric = true;
+            var any_integer = false;
+            var lo = I64_MIN;
+            var hi = I64_MAX;
+            for l in leaves[leaves_first..] {
+                if nodes[l].kind == K_INTEGER {
+                    any_integer = true;
+                    lo = max(lo, nodes[l].lo);
+                    hi = min(hi, nodes[l].hi);
+                } else if nodes[l].kind != K_NUMBER {
+                    all_numeric = false;
+                }
+            }
+            if all_numeric {
+                if lo > hi { fail("allOf has an empty numeric range"); }
+                merged = if any_integer { new_node(SNode { kind: K_INTEGER, lo: lo, hi: hi, .. }) } else { leaves[leaves_first] };
+            }
+        }
+    }
+    leaves.resize(leaves_first);
+    if merged >= 0 { return visit(merged, name); }
     // required is by name, as llama.cpp's set of names
     for k in first..oprops.len {
         for q in first..oprops.len { if oprops[q].required && eq(oprops[q].name, oprops[k].name) { oprops[k].required = true; } }
@@ -1503,6 +1534,10 @@ fn all_of_enums(node: i64) -> Str {
     return fin(s0);
 }
 
+// The children of allOf that are neither objects nor enums, required (not
+// alternatives of an anyOf) and not empty schemas: a run per allOf being visited.
+var leaves: i64[>..<] = [];
+
 recursive fn add_component(comp: i64, required: bool, d: i64, enum_rules: Str[>..]&, enum_counts: i64[>..]&) {
     if d >= LIMIT { fail(str("JSON schema is nested more than ", LIMIT, " levels deep")); }
     let c = nodes[comp];
@@ -1520,6 +1555,8 @@ recursive fn add_component(comp: i64, required: bool, d: i64, enum_rules: Str[>.
             for e, j in enum_rules { if !hit && eq(e, r) { enum_counts[j] += 1; hit = true; } }
             if !hit { enum_rules.push(r); enum_counts.push(1); }
         }
+    } else if required && c.kind != K_ANY {
+        leaves.push(comp);
     }
 }
 

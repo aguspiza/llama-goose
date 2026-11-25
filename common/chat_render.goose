@@ -12,6 +12,7 @@ import .jinja_lexer;
 import .jinja_parser;
 import .jinja_runtime;
 import .jinja_caps;
+import .peg;
 
 namespace chat_render;
 
@@ -320,6 +321,8 @@ var assistant_start: u8[>..] = [];
 var user_start: u8[>..] = [];
 
 fn clear_params() {
+    // a parser knows the special tokens only if it asks (build_chat_peg_parser(inputs.specials, ...))
+    peg::use_tokens = false;
     format = FORMAT_CONTENT_ONLY;
     grammar.clear();
     grammar_lazy = false;

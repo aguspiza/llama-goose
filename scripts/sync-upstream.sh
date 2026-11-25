@@ -26,11 +26,13 @@ if [[ $old == "$new" ]]; then
     exit 0
 fi
 
-# Every ported Goose file names its llama.cpp sources on a `// port-of:` line.
+# Every ported Goose file names its llama.cpp sources on a `// port-of:` line,
+# separated by spaces or commas, each maybe followed by a note in parentheses.
 declare -A ported_by=()
 while IFS= read -r line; do
     file=${line%%:*}
-    for src in ${line#*port-of:}; do
+    srcs=$(sed -e 's/([^)]*)//g' -e 's/,/ /g' <<< "${line#*port-of:}")
+    for src in $srcs; do
         ported_by[$src]+="${file#$root/} "
     done
 done < <(grep -r --include='*.goose' -H '^// port-of:' "$root" | sed 's#:// port-of:#:port-of:#')
@@ -81,14 +83,13 @@ rm -rf "$root/ggml/include" "$root/ggml/src"
 cp -r "$tmp/ggml/include" "$tmp/ggml/src" "$root/ggml/"
 
 # What CMake would generate from ggml/src/ggml-version.h.in.
-version=$(sed -n -E 's/^set\(GGML_VERSION_(MAJOR|MINOR|PATCH) ([0-9]+)\)/\2/p' "$tmp/ggml/CMakeLists.txt" | paste -sd.)
-cat > "$root/ggml/units/ggml-version.h" <<EOF
-// What CMake generates from src/ggml-version.h.in.
-#pragma once
-
-#define GGML_VERSION "$version"
-#define GGML_COMMIT  "${new:0:9}"
-EOF
+ver() { sed -n -E "s/^set\(GGML_VERSION_$1 ([0-9]+)\)/\1/p" "$tmp/ggml/CMakeLists.txt"; }
+major=$(ver MAJOR); minor=$(ver MINOR); patch=$(ver PATCH)
+version=$major.$minor.$patch
+{ echo "// What CMake generates from src/ggml-version.h.in."
+  sed -e "s/@GGML_VERSION@/$version/" -e "s/@GGML_BUILD_COMMIT@/${new:0:9}/" \
+      -e "s/@GGML_VERSION_MAJOR@/$major/" -e "s/@GGML_VERSION_MINOR@/$minor/" -e "s/@GGML_VERSION_PATCH@/$patch/" \
+      "$tmp/ggml/src/ggml-version.h.in"; } > "$root/ggml/units/ggml-version.h"
 
 # Sources ggml's CMake builds for an x86 CPU that the sidecar does not compile,
 # itself or through a wrapper in units/.
