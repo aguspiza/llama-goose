@@ -21,7 +21,8 @@ export GOOSE_CC=gcc
 # Win64 does not align for, and the program crashes; this makes them unaligned.
 # Its math headers also make gcc warn, harmlessly, about each math function
 # the program's C declares ("optimization attribute ... follows definition").
-avx_fix=$([[ $(uname -s) == MINGW* || $(uname -s) == MSYS* ]] && echo '-Wa,-muse-unaligned-vector-move -Wno-attributes' || true)
+windows=$([[ $(uname -s) == MINGW* || $(uname -s) == MSYS* ]] && echo 1 || true)
+avx_fix=$([[ -n $windows ]] && echo '-Wa,-muse-unaligned-vector-move -Wno-attributes' || true)
 
 for program in "$@"; do
     # the dry run checks the program, reports its errors and writes its C;
@@ -52,5 +53,5 @@ for program in "$@"; do
     done
     link=${link/ -O2 / -O$opt -march=$march $avx_fix }
     eval "$link"
-    echo "built ${program%.goose}.exe"
+    echo "built ${program%.goose}${windows:+.exe}"
 done

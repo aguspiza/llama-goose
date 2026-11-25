@@ -15,7 +15,8 @@ run() {
 
 for program in "$root"/tests/*.goose; do
     "$root/scripts/build.sh" "$program" > /dev/null
-    exe=${program%.goose}.exe
+    exe=${program%.goose}
+    [[ -e $exe.exe ]] && exe=$exe.exe
     if [[ $program == */tokenizer_0.goose ]]; then
         for inp in "$models"/ggml-vocab-*.gguf.inp; do
             [[ -e $inp ]] || continue

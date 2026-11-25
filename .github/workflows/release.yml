@@ -1,6 +1,6 @@
-# Builds the tools for Windows x64 and publishes them as a GitHub release.
-# A tag v* makes the release of that tag; a manual run only keeps the zip as
-# the run's artifact.
+# Builds the tools for Windows x64 and Linux x64 and publishes them as a
+# GitHub release. A tag v* makes the release of that tag; a manual run only
+# keeps the archives as the run's artifacts.
 #
 # The binaries are built for x86-64-v3 (AVX2, FMA, F16C, BMI2: Haswell, Zen
 # and later), not for the runner's CPU, so that other machines run them.
@@ -76,12 +76,60 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP }}
+          name: windows-x64
           path: ${{ env.ZIP }}
 
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  linux:
+    # glibc 2.35, the oldest the Goose compiler runs on: the binaries run there and later
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Goose
+        run: |
+          curl -fsSL -o goose.tar.gz             "https://github.com/aardappel/goose/releases/download/$GOOSE_VERSION/goose-$GOOSE_VERSION-linux-x64.tar.gz"
+          tar -xzf goose.tar.gz -C "$HOME"
+          echo "GOOSE=$(ls -d "$HOME"/goose-$GOOSE_VERSION-linux-x64)/goose" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          sed -i "s/\"-march=native\"/\"-march=$MARCH\"/" ggml/cpu/ggml_cpu.build
+          grep -q -- "-march=$MARCH" ggml/cpu/ggml_cpu.build
+          gcc --version | head -1
+          "$GOOSE" --version
+          scripts/build.sh tools/server.goose tools/cli.goose tools/completion.goose             tools/simple.goose tools/simple_chat.goose tools/perplexity.goose             tools/batched.goose tools/parallel.goose
+
+      - name: Test
+        run: GOOSE="$GOOSE" scripts/test.sh
+
+      - name: Package
+        run: |
+          name="llama-goose-${GITHUB_REF_NAME//\//-}-linux-x64"
+          mkdir "$name"
+          for p in server cli completion simple simple_chat perplexity batched parallel; do cp "tools/$p" "$name/"; done
+          cp README.md "$name/"
+          ldd "$name/server"
+          out=$("$name/simple" 2>&1 || true)
+          grep -q "example usage" <<< "$out"
+          tar -czf "$name.tar.gz" "$name"
+          echo "TGZ=$name.tar.gz" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
         with:
-          files: ${{ env.ZIP }}
+          name: linux-x64
+          path: ${{ env.TGZ }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
           generate_release_notes: true
