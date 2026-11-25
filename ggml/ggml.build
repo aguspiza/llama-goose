@@ -20,6 +20,9 @@ c_defines = [
     "_CRT_SECURE_NO_WARNINGS",
     "_XOPEN_SOURCE=600",
 ];
+// as CMake: the GNU extensions on Linux (CPU affinity, sched), the BSD ones on macOS
+c_defines_linux = ["_GNU_SOURCE"];
+c_defines_macos = ["_DARWIN_C_SOURCE"];
 c_flags_cc = ["-O3"];
 c_flags_msvc = ["/O2", "/std:c++17", "/utf-8", "/bigobj"];
 c_libs = ["stdc++"];

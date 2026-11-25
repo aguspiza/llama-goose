@@ -33,6 +33,9 @@ c_defines = [
     "_CRT_SECURE_NO_WARNINGS",
     "_XOPEN_SOURCE=600",
 ];
+// as CMake: the GNU extensions on Linux (CPU affinity, sched), the BSD ones on macOS
+c_defines_linux = ["_GNU_SOURCE"];
+c_defines_macos = ["_DARWIN_C_SOURCE"];
 // gcc finds the instruction set with -march=native; MSVC needs it spelled out.
 c_flags_cc = ["-O3", "-march=native"];
 // MinGW: gcc spills 32-byte AVX values to the stack with aligned moves, which
