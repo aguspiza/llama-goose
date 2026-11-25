@@ -119,6 +119,8 @@ struct Slot {
     reply: http::MailAddress = http::MailAddress { .. },    // its client, to see whether it is still there
     state_at: i64 = 0,              // its request's state in states, while another's is in the globals
     state_len: i64 = 0,
+    task: i64 = -1,                 // its request's number
+    last_user: i64 = -1,            // where the prompt's last user message starts, -1 for none
 }
 var slots: Slot[>..] = [];
 var slot_tokens: i32[>..] = [];     // room for c.n_ctx tokens for each slot
@@ -1706,6 +1708,7 @@ fn finish(s: i64) {
 // prompt_clear: the slot's tokens forgotten, their cells free.
 fn forget(s: i64) {
     context::keep_first(c, m, s, 0);
+    drop_checkpoints(s);
     slots[s].n = 0;
     slots[s].n_kv = 0;
 }
@@ -1723,6 +1726,131 @@ fn any_free() -> bool {
 // get_available_slot: of the slots free, the one whose tokens start most
 // like the prompt, if more than a tenth of it; else one with no tokens, or
 // the one used longest ago.
+//
+// context checkpoints (common_prompt_checkpoint): what a slot's cache cannot
+// get back by forgetting its last positions, the cells of the sliding-window
+// layers' cache, saved while a prompt is evaluated; a later prompt that starts
+// as it did evaluates from one of them on.
+//
+
+struct Checkpoint {
+    slot: i64,
+    task: i64,                      // the request that made it
+    n_tokens: i64,                  // the prompt's tokens in the cache then
+    pos_min: i64,                   // the positions of the slot's sequence then
+    pos_max: i64,
+    pos_at: i64,                    // the cells' positions in ckpt_pos
+    pos_len: i64,
+    data_at: i64,                   // their keys and values in ckpt_data
+    data_len: i64,
+}
+var ckpts: Checkpoint[>..] = [];    // oldest first
+var ckpt_pos = slice_pool<i64> {};
+var ckpt_data = slice_pool<u8> {};
+var n_ctx_checkpoints = 32;         // a slot's most (--ctx-checkpoints)
+let CHECKPOINT_MIN_STEP = 8192;     // the fewest tokens between two
+var n_tasks = 0;
+var user_starts: i64[>..] = [];     // slot * n_ctx + the position of a user message's start, in the slots' prompts
+
+// A model whose cache a slot cannot cut back is checkpointed: one with
+// sliding-window layers (the recurrent ones, also checkpointed by llama-server, are not yet).
+fn checkpointing() -> bool { n_ctx_checkpoints > 0 && c.n_swa_cells > 0 }
+
+fn drop_checkpoint(i: i64) {
+    let ck = ckpts[i];
+    ckpt_pos.free_slice(ckpt_pos.items[ck.pos_at..ck.pos_at + ck.pos_len]);
+    ckpt_data.free_slice(ckpt_data.items[ck.data_at..ck.data_at + ck.data_len]);
+    for j in i..ckpts.len - 1 { ckpts[j] = ckpts[j + 1]; }
+    ckpts.pop();
+}
+
+fn drop_checkpoints(s: i64) {
+    var i = ckpts.len - 1;
+    while i >= 0 {
+        if ckpts[i].slot == s { drop_checkpoint(i); }
+        i--;
+    }
+}
+
+fn n_checkpoints(s: i64) -> i64 {
+    var n = 0;
+    for ck in ckpts { if ck.slot == s { n++; } }
+    return n;
+}
+
+// The newest checkpoint of slot s, or -1.
+fn last_checkpoint(s: i64) -> i64 {
+    var i = ckpts.len - 1;
+    while i >= 0 && ckpts[i].slot != s { i--; }
+    return i;
+}
+
+fn is_user_start(s: i64, pos: i64) -> bool {
+    for x in user_starts { if x == s * c.n_ctx + pos { return true; } }
+    return false;
+}
+
+// create_checkpoint: before the batch, whose last n_cur tokens are slot s's, is decoded.
+fn create_checkpoint(s: i64, n_cur: i64, pos_min: i64, pos_max: i64) {
+    let task = slots[s].task;
+    // once the list is full, those within the step of an earlier one go, but this request's
+    var last = -1;
+    var i = 0;
+    while i < ckpts.len && n_checkpoints(s) + 1 >= n_ctx_checkpoints {
+        if ckpts[i].slot != s { i++; continue; }
+        if ckpts[i].task != task && last >= 0 && ckpts[i].n_tokens <= last + CHECKPOINT_MIN_STEP {
+            drop_checkpoint(i);
+            continue;
+        }
+        last = ckpts[i].n_tokens;
+        i++;
+    }
+    while n_checkpoints(s) >= n_ctx_checkpoints {
+        var j = 0;
+        while ckpts[j].slot != s { j++; }
+        drop_checkpoint(j);
+    }
+    // one at the same point replaced
+    let n_tokens = slots[s].n_kv - n_cur;
+    var k = ckpts.len - 1;
+    while k >= 0 {
+        if ckpts[k].slot == s && ckpts[k].n_tokens == n_tokens { drop_checkpoint(k); }
+        k--;
+    }
+    var pos: i64[>..] = [];
+    var data: u8[>..] = [];
+    context::save_swa(c, m, s, pos, data);
+    let pr = ckpt_pos.alloc_copy(pos);
+    let pos_at = ckpt_pos.items.range_index(pr);
+    let dr = ckpt_data.alloc_copy(data);
+    let data_at = ckpt_data.items.range_index(dr);
+    ckpts.push(Checkpoint { slot: s, task: task, n_tokens: n_tokens, pos_min: pos_min, pos_max: pos_max,
+                            pos_at: pos_at, pos_len: pos.len, data_at: data_at, data_len: data.len });
+}
+
+// Where the user messages of a chat prompt start (common_chat_msg_spans), for slot s.
+fn find_user_starts(s: i64, prompt: const i32[:]) {
+    var i = user_starts.len - 1;
+    while i >= 0 {
+        if user_starts[i] / c.n_ctx == s {
+            for j in i..user_starts.len - 1 { user_starts[j] = user_starts[j + 1]; }
+            user_starts.pop();
+        }
+        i--;
+    }
+    slots[s].last_user = -1;
+    guard t_chat && checkpointing() && chat_render::user_start.len > 0 else { return; }
+    var delim: i32[>..] = [];
+    vocab::tokenize(chat_render::user_start, false, true, delim);
+    guard delim.len > 0 else { return; }
+    for p in prompt.len {
+        if p + delim.len <= prompt.len && prompt[p..p + delim.len] == delim[..] {
+            user_starts.push(s * c.n_ctx + p);
+            slots[s].last_user = p;
+        }
+    }
+}
+
 fn pick_slot(prompt: const i32[:]) -> i64 {
     var ret = -1;
     var sim_best: f32 = 0.0;
@@ -1808,13 +1936,39 @@ fn start(prompt: const i32[:]) {
         let have = tokens_of(s);
         while n_past < have.len && n_past < prompt.len && have[n_past] == prompt[n_past] { n_past++; }
     }
-    // server_prompt::get_reuse, without checkpoints: the cache is of use when it starts before the
-    // window of the first token to evaluate (a SWA model), or before that token (others)
+    // server_prompt::get_reuse: the cache is of use when it starts before the window of the
+    // first token to evaluate (a SWA model), or before that token (others); else the newest
+    // checkpoint that does, from which the prompt is evaluated
+    let n_prefix = n_past;
+    var pos_next = n_past;
     if n_past > 0 && !context::any_recurrent(m) {
         let n_swa = if m.hp.swa_type != model::SWA_NONE { m.hp.n_swa as i64 } else { 0 };
         let pos_eval = n_past - (if n_past < prompt.len { 0 } else { 1 });
         let thold = max(0, if n_swa > 0 { pos_eval - n_swa + 2 } else { pos_eval });
-        if context::seq_pos_min(s) >= thold { n_past = 0; }
+        if context::seq_pos_min(s) >= thold {
+            var i = ckpts.len - 1;
+            while i >= 0 {
+                let ck = ckpts[i];
+                if ck.slot == s && ck.pos_max <= pos_next && (ck.pos_min < thold || ck.pos_min == 0) { break; }
+                i--;
+            }
+            if i < 0 {
+                n_past = 0;
+                pos_next = 0;
+            } else {
+                let ck = ckpts[i];
+                pos_next = min(pos_next, max(ck.pos_min + 1, ck.pos_max));
+                n_past = min(pos_next, ck.n_tokens);
+                context::load_swa(c, m, s, ckpt_pos.items[ck.pos_at..ck.pos_at + ck.pos_len],
+                                  ckpt_data.items[ck.data_at..ck.data_at + ck.data_len]);
+            }
+        }
+    }
+    // those past the prompt's start in common, or past where it is evaluated from, go
+    var i = ckpts.len - 1;
+    while i >= 0 {
+        if ckpts[i].slot == s && (ckpts[i].pos_max > pos_next || ckpts[i].n_tokens > n_prefix) { drop_checkpoint(i); }
+        i--;
     }
     if n_past == prompt.len && n_past > 0 { n_past--; }
     n_past = context::keep_first(c, m, s, n_past);
@@ -1824,6 +1978,9 @@ fn start(prompt: const i32[:]) {
     slots[s].generating = false;
     slots[s].reply = reply_to;
     slots[s].busy = true;
+    slots[s].task = n_tasks;
+    n_tasks++;
+    find_user_starts(s, prompt);
     loaded = s;
     stats = Stats { cache_n: n_past, prompt_n: prompt.len - n_past, prompt_ms: 0.0, predicted_n: 0, predicted_ms: 0.0 };
     prompt_text.clear();
@@ -1859,15 +2016,39 @@ fn step() {
     for s in slots.len {
         if slots[s].busy && !slots[s].generating {
             let bit: u64 = 1 << s;
-            while slots[s].n_kv < slots[s].n && tokens.len < n_batch {
+            var do_checkpoint = checkpointing();
+            let n_start = slots[s].n_kv;
+            let n_prompt_s = slots[s].n;
+            while slots[s].n_kv < n_prompt_s && tokens.len < n_batch {
                 tokens.push(slot_tokens[s * c.n_ctx + slots[s].n_kv]);
                 pos.push(slots[s].n_kv);
                 seqs.push(bit);
                 slots[s].n_kv++;
+                guard do_checkpoint else { continue; }
+                let n_kv = slots[s].n_kv;
+                // a batch ends at the last user message, or at one a step past the last checkpoint
+                if is_user_start(s, n_kv) {
+                    let li = last_checkpoint(s);
+                    if n_kv == slots[s].last_user || li < 0 || n_kv > ckpts[li].n_tokens + CHECKPOINT_MIN_STEP { break; }
+                }
+                // and 4 + n_ubatch and 4 tokens before the prompt's end, for a checkpoint there
+                if n_prompt_s == n_kv + min(n_batch, 4 + c.n_ubatch) || n_prompt_s == n_kv + min(n_batch, 4) { break; }
             }
-            if slots[s].n_kv == slots[s].n {
+            let n_cur = slots[s].n_kv - n_start;
+            let near_end = n_prompt_s < slots[s].n_kv + c.n_ubatch;
+            if slots[s].n_kv == n_prompt_s {
                 slots[s].out = tokens.len - 1;
                 want.push(s);
+            } else if !is_user_start(s, n_start) && !near_end {
+                do_checkpoint = false;
+            }
+            if do_checkpoint {
+                let pos_min = context::seq_pos_min(s);
+                let li = last_checkpoint(s);
+                if pos_min >= 0 && (li < 0 || n_start == slots[s].last_user || near_end ||
+                                    n_start > ckpts[li].n_tokens + CHECKPOINT_MIN_STEP) {
+                    create_checkpoint(s, n_cur, pos_min, context::seq_pos_max(s));
+                }
             }
         }
         if tokens.len >= n_batch { break; }
@@ -2707,6 +2888,7 @@ fn setup() {
         else if a == "--api-key" { api_key.clear(); api_key.append(value()); }
         else if a == "--path" { static_dir.clear(); static_dir.append(value()); }
         else if a == "-np" || a == "--parallel" { n_slots = int_value(); }
+        else if a == "-ctxcp" || a == "--ctx-checkpoints" || a == "--swa-checkpoints" { n_ctx_checkpoints = int_value(); }
         else if a == "--jinja" { use_jinja = true; }
         else if a == "--no-jinja" { use_jinja = false; }
         else if a == "--chat-template" { chat_template.clear(); chat_template.append(value()); }

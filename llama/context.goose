@@ -3254,11 +3254,74 @@ fn seq_cp(c: Context&, src: i64, dst: i64, p0: i64, p1: i64) {
 // llama_memory_seq_rm(mem, s, n, -1). A recurrent state cannot go back, so
 // it is cleared unless n keeps all of it; the positions kept: n or 0.
 fn keep_first(c: Context&, m: model::Model&, s: i64, n: i64) -> i64 {
-    let have = seq_pos_max(s) + 1;
+    // the last position in any cache: a checkpoint restored may end the sliding-window one earlier
+    var have = 0;
+    for k in caches.len { have = max(have, cache_pos_max(k, s) + 1); }
     if n >= have { return have; }
     if any_recurrent(m) { clear(c); return 0; }
     seq_rm(c, s, n, -1);
     return n;
+}
+
+// The part of sequence s that cannot be recomputed from the base cache
+// (state_write with LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY): the cells of the
+// sliding-window layers' cache its next token can see, their positions to
+// pos, their keys then their values to data, layer after layer. Nothing
+// without that cache.
+fn save_swa(c: Context&, m: model::Model&, s: i64, pos: i64[>..]&, data: u8[>..]&) {
+    pos.clear();
+    data.clear();
+    guard c.n_swa_cells > 0 else { return; }
+    let k = swa_cache();
+    let lo = caches[k].lo;
+    let bit: u64 = 1 << s;
+    let p_max = cache_pos_max(k, s);
+    var idxs: i64[>..] = [];
+    for i in caches[k].size {
+        let q = cell_pos[lo + i];
+        if q >= 0 && cell_seqs[lo + i] & bit != 0 && p_max - q < caches[k].swa { idxs.push(i); pos.push(q); }
+    }
+    for kv in 2 {
+        for il in m.hp.n_layer as i64 {
+            let t = if kv == 0 { c.k[il] } else { c.v[il] };
+            guard t.p != 0 && m.hp.is_swa[il] else { continue; }
+            let row = ggml::row_size(ggml::tensor_type(t), ggml::ne(t, 0));
+            for idx in idxs {
+                let at = data.len;
+                data.resize(at + row, 0);
+                ggml::backend_get_bytes(t, data[at..at + row], idx * row);
+            }
+        }
+    }
+}
+
+// Puts back what save_swa saved of sequence s (state_read, partial): its
+// cells of the sliding-window layers' cache forgotten, the saved ones placed
+// as a ubatch's are, and their keys and values written.
+fn load_swa(c: Context&, m: model::Model&, s: i64, pos: const i64[:], data: const u8[:]) {
+    guard c.n_swa_cells > 0 else { return; }
+    let k = swa_cache();
+    cache_rm(k, s, -1, -1);
+    if pos.len > 0 {
+        var idxs: i64[>..] = [];
+        var seqs: u64[>..] = [];
+        for _ in pos.len { seqs.push(1 << s); }
+        find_slot(k, pos.len, idxs);
+        apply_slot(k, idxs, pos, seqs);
+        var off = 0;
+        for kv in 2 {
+            for il in m.hp.n_layer as i64 {
+                let t = if kv == 0 { c.k[il] } else { c.v[il] };
+                guard t.p != 0 && m.hp.is_swa[il] else { continue; }
+                let row = ggml::row_size(ggml::tensor_type(t), ggml::ne(t, 0));
+                for idx in idxs {
+                    ggml::backend_set_bytes(t, data[off..off + row], idx * row);
+                    off += row;
+                }
+            }
+        }
+    }
+    if s == 0 { c.n_past = seq_pos_max(0) + 1; }
 }
 
 // The cells no sequence holds: a batch of more tokens does not fit. Those of

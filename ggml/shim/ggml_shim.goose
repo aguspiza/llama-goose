@@ -30,3 +30,6 @@ extern fn backend_set_f32(t: Tensor, src: const f32[:]) = "lg_backend_tensor_set
 extern fn backend_set_f16(t: Tensor, src: const f32[:]) = "lg_backend_tensor_set_f16";
 // dst.len floats from element `offset` on.
 extern fn backend_get_f32(t: Tensor, dst: f32[:], offset: i64) = "lg_backend_tensor_get_f32";
+// dst.len (src.len) bytes from byte `offset` on.
+extern fn backend_get_bytes(t: Tensor, dst: u8[:], offset: i64) = "lg_backend_tensor_get_bytes";
+extern fn backend_set_bytes(t: Tensor, src: const u8[:], offset: i64) = "lg_backend_tensor_set_bytes";

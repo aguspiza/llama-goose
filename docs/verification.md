@@ -216,14 +216,13 @@ ids, times and the cached-token counts: completions with and without
 streaming, stop strings, grammars and JSON schemas, chat with tool calls
 (streamed as deltas), prefilled assistant messages and errors. All 29 are
 the same, the slot each request got included, with Qwen3 0.6B and Qwen2.5
-0.5B, also with a context of 256 tokens, where slots are purged; and with
+0.5B, also with a context of 256 tokens, where slots are purged; with gemma-4
+E2B and gemma-3 270M (also with 256 tokens), whose sliding-window layers'
+cells the server saves as context checkpoints, splitting the prompts as
+llama-server does to make them, and evaluates a later prompt from; and with
 Mamba 130M and one slot. The cached-token counts differ because
-llama-server reuses a recurrent cache only from a checkpoint. A sliding-window
-model's cache is reused as llama-server does without checkpoints: only when it
-starts before the window of the first token to evaluate. With gemma-4 E2B 23
-of the 29 are the same: llama-server saves context checkpoints of a
-sliding-window model's slots, and splits the prompt to make them, and this
-port has none; with `-ctxcp 0` all 29 are the same. The sliding-window layers
+llama-server reuses a recurrent cache only from a checkpoint, and this port
+does not checkpoint a recurrent state yet. The sliding-window layers
 keep a smaller cache of their own, as llama.cpp's `llama_kv_cache_iswa`: with
 gemma-3 270M, 1500 tokens of llama-completion and 3 clients of 700 tokens of
 llama-parallel, past the windows, where that cache overwrites its cells, are

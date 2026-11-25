@@ -204,6 +204,14 @@ void lg_backend_tensor_get_f32(const struct ggml_tensor * t, lg_f32s dst, int64_
     ggml_backend_tensor_get(t, dst.data, (size_t) offset * sizeof(float), (size_t) dst.len * sizeof(float));
 }
 
+void lg_backend_tensor_get_bytes(const struct ggml_tensor * t, lg_bytes dst, int64_t offset) {
+    ggml_backend_tensor_get(t, dst.data, (size_t) offset, (size_t) dst.len);
+}
+
+void lg_backend_tensor_set_bytes(struct ggml_tensor * t, lg_bytes src, int64_t offset) {
+    ggml_backend_tensor_set(t, src.data, (size_t) offset, (size_t) src.len);
+}
+
 ggml_gallocr_t lg_gallocr_new(ggml_backend_t backend) {
     return ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
 }
