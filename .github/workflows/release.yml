@@ -85,6 +85,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # the server's HTTP package (goose-http) does its I/O with io_uring
+      - name: Install liburing
+        run: sudo apt-get update -q && sudo apt-get install -y -q liburing-dev
+
       - name: Install Goose
         run: |
           curl -fsSL -o goose.tar.gz             "https://github.com/aardappel/goose/releases/download/$GOOSE_VERSION/goose-$GOOSE_VERSION-linux-x64.tar.gz"
