@@ -37,6 +37,9 @@ struct Context {
     s: ggml::Tensor[..512],      // and a gated delta net's, [n_embd_s, 1], f32
     n_past: i64,                 // sequence 0's next position: its last + 1
     unified: bool = false,       // several sequences: each attends to its own cells' rows (kv_unified, fused_kv_rows)
+    n_seq_max: i64 = 1,          // the sequences, and the tokens of a ubatch, that size
+    n_ubatch: i64 = 512,         // the sliding-window layers' cache
+    n_swa_cells: i64,            // that cache's cells, 0 without one
     n_enc: i64,
     galloc: ggml::Gallocr,
     embd_enc: f32[>..],          // t5: the encoder's output, [n_embd, n_enc]
@@ -51,6 +54,13 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     ggml::use_threadpool(m.backend, c.n_threads);
     let n_layer = m.hp.n_layer as i64;
     c.kv_ctx = ggml::init(4 * n_layer * ggml::tensor_overhead(), true);
+    // llama_kv_cache_iswa: the sliding-window layers keep their own cache, of the
+    // cells their windows need, plus a ubatch's, padded to 256
+    c.n_swa_cells = 0;
+    if m.hp.swa_type != model::SWA_NONE && m.hp.arch != model::ARCH_T5 {
+        let n_seq = if c.unified { c.n_seq_max } else { 1 };
+        c.n_swa_cells = pad_to(min(c.n_ctx, m.hp.n_swa * n_seq + c.n_ubatch), 256);
+    }
     for il in n_layer {
         // keys and values for attention, a state for a recurrent layer; falcon-h1's layers have both
         var k = ggml::NONE;
@@ -58,8 +68,9 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
         var r = ggml::NONE;
         var s = ggml::NONE;
         if model::has_kv(m.hp, il) {
-            k = ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_k_gqa(m.hp, il), c.n_ctx);
-            v = ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_v_gqa(m.hp, il), c.n_ctx);
+            let n_cells = if c.n_swa_cells > 0 && m.hp.is_swa[il] { c.n_swa_cells } else { c.n_ctx };
+            k = ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_k_gqa(m.hp, il), n_cells);
+            v = ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_v_gqa(m.hp, il), n_cells);
             ggml::set_name(k, str("cache_k_l", il));
             ggml::set_name(v, str("cache_v_l", il));
         }
@@ -82,19 +93,32 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     c.galloc = ggml::gallocr_new(m.backend);
     c.n_past = 0;
     cell_pos.clear();
-    cell_pos.resize(c.n_ctx, -1);
+    cell_pos.resize(c.n_ctx + c.n_swa_cells, -1);
     cell_seqs.clear();
-    cell_seqs.resize(c.n_ctx, 0);
-    head = 0;
-    n_used = 0;
+    cell_seqs.resize(c.n_ctx + c.n_swa_cells, 0);
+    caches.clear();
+    caches.push(Cache { lo: 0, size: c.n_ctx, swa: 0, head: 0, n_used: 0 });
+    if c.n_swa_cells > 0 { caches.push(Cache { lo: c.n_ctx, size: c.n_swa_cells, swa: m.hp.n_swa, head: 0, n_used: 0 }); }
 }
 
 // The cache's cells (llama_kv_cells), for the one context of a program: the
-// position each holds, -1 when empty, and its sequences, a bit each.
+// position each holds, -1 when empty, and its sequences, a bit each; those of
+// the base cache, then those of the sliding-window layers' own.
 var cell_pos: i64[>..] = [];
 var cell_seqs: u64[>..] = [];
-var head = 0;                    // where the search for free cells starts
-var n_used = 0;                  // the cells not empty
+
+// A cache: its cells, cell_pos[lo..lo + size]. With a window (swa > 0), the
+// cells a sequence's next token cannot see are free to overwrite.
+struct Cache {
+    lo: i64,
+    size: i64,
+    swa: u32,
+    head: i64,                   // where the search for free cells starts
+    n_used: i64,                 // the cells not empty
+}
+var caches: Cache[..2] = [];
+let BASE = 0;
+fn swa_cache() -> i64 { caches.len - 1 }   // the base one without a window
 
 // The inputs of one graph, set after it is allocated.
 struct Inputs {
@@ -102,6 +126,7 @@ struct Inputs {
     pos: ggml::Tensor,
     out_ids: ggml::Tensor,
     kv_idxs: ggml::Tensor,
+    kv_idxs_swa: ggml::Tensor,   // the cells of the sliding-window layers' cache
     mask: ggml::Tensor,
     mask_swa: ggml::Tensor,
     s_copy: ggml::Tensor,        // the recurrent state rows to read: [0]
@@ -125,6 +150,7 @@ struct Build {
     gf: ggml::Graph,
     n_tokens: i64,
     n_kv: i64,
+    n_kv_swa: i64,               // n_kv of the sliding-window layers' cache
     inp: Inputs,
     // LLAMA_GOOSE_TRACE=1: tensors whose sums decode prints, to compare
     // with llama.cpp's eval callback
@@ -339,14 +365,19 @@ fn build_kqv(b: Build&, m: model::Model&, c: Context&, il: i64,
     ggml::build_forward_expand(b.gf, q);
     // the cache this layer reads: its own, or (gemma3n) an earlier layer's, with no k and v of its own
     let src = hp.kv_source[il];
+    // the sliding-window layers' own cache, or the base one
+    let own_swa = c.n_swa_cells > 0 && hp.is_swa[il];
+    let n_kv = if own_swa { b.n_kv_swa } else { b.n_kv };
+    let n_cells = if own_swa { c.n_swa_cells } else { c.n_ctx };
+    let kv_idxs = if own_swa { b.inp.kv_idxs_swa } else { b.inp.kv_idxs };
     if src == il {
         ggml::build_forward_expand(b.gf, v_cur);
         ggml::build_forward_expand(b.gf, k_cur);
         // heads and their values merged into rows; k and v may be views of a fused QKV (cpy_k, cpy_v)
         let k_rows = ggml::view_2d(ctx, k_cur, n_embd_k, b.n_tokens, ggml::nb(k_cur, 2), 0);
         let v_rows = ggml::view_2d(ctx, v_cur, n_embd_v, b.n_tokens, ggml::nb(v_cur, 2), 0);
-        ggml::build_forward_expand(b.gf, ggml::set_rows(ctx, c.k[il], k_rows, b.inp.kv_idxs));
-        ggml::build_forward_expand(b.gf, ggml::set_rows(ctx, c.v[il], v_rows, b.inp.kv_idxs));
+        ggml::build_forward_expand(b.gf, ggml::set_rows(ctx, c.k[il], k_rows, kv_idxs));
+        ggml::build_forward_expand(b.gf, ggml::set_rows(ctx, c.v[il], v_rows, kv_idxs));
     }
     let cache_k = c.k[src];
     let cache_v = c.v[src];
@@ -355,12 +386,12 @@ fn build_kqv(b: Build&, m: model::Model&, c: Context&, il: i64,
     let n_head_kv = hp.n_head_kv[il] as i64;
     let hk = model::head_k(hp, il);
     let hv = model::head_v(hp, il);
-    let k = ggml::view_4d(ctx, cache_k, hk, n_head_kv, b.n_kv, 1,
+    let k = ggml::view_4d(ctx, cache_k, hk, n_head_kv, n_kv, 1,
                           ggml::row_size(tk, hk), ggml::row_size(tk, n_embd_k),
-                          ggml::row_size(tk, n_embd_k * c.n_ctx), 0);
-    let v = ggml::view_4d(ctx, cache_v, hv, n_head_kv, b.n_kv, 1,
+                          ggml::row_size(tk, n_embd_k * n_cells), 0);
+    let v = ggml::view_4d(ctx, cache_v, hv, n_head_kv, n_kv, 1,
                           ggml::row_size(tv, hv), ggml::row_size(tv, n_embd_v),
-                          ggml::row_size(tv, n_embd_v * c.n_ctx), 0);
+                          ggml::row_size(tv, n_embd_v * n_cells), 0);
 
     let rows = if hp.is_swa[il] { b.inp.rows_swa } else { b.inp.rows };
     // with rows, the tokens split into slices, each attending to its own cells
@@ -569,11 +600,13 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
         gf: ggml::new_graph_custom(gctx, MAX_NODES, false),
         n_tokens: n_tokens,
         n_kv: n_kv,
+        n_kv_swa: n_kv,
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             pos: ggml::NONE,
             out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             kv_idxs: ggml::NONE,
+            kv_idxs_swa: ggml::NONE,
             mask: ggml::new_tensor_2d(gctx, ggml::TYPE_F16, n_kv, n_tokens),
             mask_swa: ggml::NONE,
             s_copy: ggml::NONE,
@@ -3101,37 +3134,51 @@ fn n_bits(bits: u64) -> i64 {
     return n;
 }
 
-// One past the last cell in use (used_max_p1).
-fn used_max_p1() -> i64 {
-    var i = cell_pos.len;
-    while i > 0 && cell_pos[i - 1] < 0 { i--; }
+// One past the last cell in use of cache k, counted from its first (used_max_p1).
+fn used_max_p1(k: i64) -> i64 {
+    let lo = caches[k].lo;
+    var i = caches[k].size;
+    while i > 0 && cell_pos[lo + i - 1] < 0 { i--; }
     return i;
 }
 
-// The last position of sequence s in the cache, or -1 (llama_memory_seq_pos_max).
-// The smallest position of sequence s, -1 if it has none (llama_memory_seq_pos_min).
-fn seq_pos_min(s: i64) -> i64 {
+// The smallest and the last position of sequence s in cache k, -1 if it has none.
+fn cache_pos_min(k: i64, s: i64) -> i64 {
     let bit: u64 = 1 << s;
+    let lo = caches[k].lo;
     var p = -1;
-    for q, i in cell_pos { if cell_seqs[i] & bit != 0 && (p < 0 || q < p) { p = q; } }
+    for i in lo..lo + caches[k].size {
+        let q = cell_pos[i];
+        if cell_seqs[i] & bit != 0 && (p < 0 || q < p) { p = q; }
+    }
     return p;
 }
 
-fn seq_pos_max(s: i64) -> i64 {
+fn cache_pos_max(k: i64, s: i64) -> i64 {
     let bit: u64 = 1 << s;
+    let lo = caches[k].lo;
     var p = -1;
-    for q, i in cell_pos { if cell_seqs[i] & bit != 0 && q > p { p = q; } }
+    for i in lo..lo + caches[k].size { if cell_seqs[i] & bit != 0 && cell_pos[i] > p { p = cell_pos[i]; } }
     return p;
 }
+
+// The smallest position of sequence s, -1 if it has none (llama_memory_seq_pos_min):
+// that of the sliding-window layers' cache, which the base one holds too.
+fn seq_pos_min(s: i64) -> i64 { cache_pos_min(swa_cache(), s) }
+
+// The last position of sequence s in the cache, or -1 (llama_memory_seq_pos_max).
+fn seq_pos_max(s: i64) -> i64 { cache_pos_max(swa_cache(), s) }
 
 // mask[t][col] for token t, at pos[t] of the first of its sequences, and the
-// cell of column col (rows[slice][col] with rows, else col itself): 0, or
-// -inf when the cell is empty, of another sequence, in the token's future,
-// or (swa) out of its window. With ALiBi the kept cells hold minus their
-// distance to the token (set_input_attn_mask).
-fn fill_mask(mask: f32[>..]&, n_cols: i64, pos: const i64[:], seqs: const u64[:], rows: const i32[:],
-             n_slices: i64, swa: u32, alibi: bool = false) {
+// cell of cache k of column col (rows[slice][col] with rows, else col itself):
+// 0, or -inf when the cell is empty, of another sequence, in the token's
+// future, or (swa) out of its window. With ALiBi the kept cells hold minus
+// their distance to the token (set_input_attn_mask).
+fn fill_mask(mask: f32[>..]&, k: i64, n_cols: i64, pos: const i64[:], seqs: const u64[:], rows: const i32[:],
+             n_slices: i64, alibi: bool = false) {
     mask.clear();
+    let lo = caches[k].lo;
+    let swa = caches[k].swa;
     let n_tps = pos.len / n_slices;
     for t in pos.len {
         let p1 = pos[t];
@@ -3139,12 +3186,12 @@ fn fill_mask(mask: f32[>..]&, n_cols: i64, pos: const i64[:], seqs: const u64[:]
         let base = (t / n_tps) * n_cols;
         for col in n_cols {
             let j: i64 = if rows.len > 0 { rows[base + col] } else { col };
-            var keep = j >= 0 && cell_pos[j] >= 0 && cell_seqs[j] & bit != 0;
+            var keep = j >= 0 && cell_pos[lo + j] >= 0 && cell_seqs[lo + j] & bit != 0;
             if keep {
-                let p0 = cell_pos[j];
+                let p0 = cell_pos[lo + j];
                 keep = p0 <= p1 && !(swa > 0 && p1 - p0 >= swa);
             }
-            mask.push(if !keep { NEG_INF } else if alibi { -abs(p1 - cell_pos[j]) as f32 } else { 0.0 });
+            mask.push(if !keep { NEG_INF } else if alibi { -abs(p1 - cell_pos[lo + j]) as f32 } else { 0.0 });
         }
     }
 }
@@ -3161,27 +3208,33 @@ fn clear(c: Context&) {
     ggml::backend_buffer_clear(c.kv_buf, 0);
     c.n_past = 0;
     for i in cell_pos.len { cell_pos[i] = -1; cell_seqs[i] = 0; }
-    head = 0;
-    n_used = 0;
+    for k in caches.len { caches[k].head = 0; caches[k].n_used = 0; }
 }
 
-// Forgets the positions p0..p1 (p1 < 0: all from p0) of sequence s:
-// llama_memory_seq_rm. A cell no sequence holds any more is free, and the
-// search for free cells starts at the first such cell if it is before the head.
-fn seq_rm(c: Context&, s: i64, p0: i64, p1: i64) {
+// Forgets the positions p0..p1 (p1 < 0: all from p0) of sequence s in cache
+// k (llama_kv_cache::seq_rm). A cell no sequence holds any more is free, and
+// the search for free cells starts at the first such cell if it is before the head.
+fn cache_rm(k: i64, s: i64, p0: i64, p1: i64) {
     let bit: u64 = 1 << s;
-    let lo = max(p0, 0);
+    let lo = caches[k].lo;
+    let from = max(p0, 0);
     var new_head = -1;
-    for q, i in cell_pos {
-        guard q >= lo && (p1 < 0 || q < p1) && cell_seqs[i] & bit != 0 else { continue; }
-        cell_seqs[i] &= ~bit;
-        if cell_seqs[i] == 0 {
-            cell_pos[i] = -1;
-            n_used--;
+    for i in caches[k].size {
+        let q = cell_pos[lo + i];
+        guard q >= from && (p1 < 0 || q < p1) && cell_seqs[lo + i] & bit != 0 else { continue; }
+        cell_seqs[lo + i] &= ~bit;
+        if cell_seqs[lo + i] == 0 {
+            cell_pos[lo + i] = -1;
+            caches[k].n_used--;
             if new_head < 0 { new_head = i; }
         }
     }
-    if new_head >= 0 && new_head < head { head = new_head; }
+    if new_head >= 0 && new_head < caches[k].head { caches[k].head = new_head; }
+}
+
+// Forgets the positions p0..p1 (p1 < 0: all from p0) of sequence s: llama_memory_seq_rm.
+fn seq_rm(c: Context&, s: i64, p0: i64, p1: i64) {
+    for k in caches.len { cache_rm(k, s, p0, p1); }
     if s == 0 { c.n_past = seq_pos_max(0) + 1; }
 }
 
@@ -3208,16 +3261,24 @@ fn keep_first(c: Context&, m: model::Model&, s: i64, n: i64) -> i64 {
     return n;
 }
 
-// The cells no sequence holds: a batch of more tokens does not fit.
-fn n_free() -> i64 { cell_pos.len - n_used }
+// The cells no sequence holds: a batch of more tokens does not fit. Those of
+// the base cache: the sliding-window layers' own frees the cells out of the window.
+fn n_free() -> i64 { caches[BASE].size - caches[BASE].n_used }
 
-// The cells for n tokens (find_slot, not contiguous): free cells from the
-// head on, or from the start when enough cells before the head are free.
-fn find_slot(n: i64, idxs: i64[>..]&) {
-    let size = cell_pos.len;
+// The cells of cache k for n tokens (find_slot, not contiguous), counted from
+// its first: free cells from the head on, or from the start when enough
+// cells before the head are free. With a window, a cell of one sequence its
+// next token cannot see is free too.
+fn find_slot(k: i64, n: i64, idxs: i64[>..]&) {
+    let lo = caches[k].lo;
+    let size = caches[k].size;
+    let swa = caches[k].swa;
     guard n <= size else { abort("decode: the context is full"); }
+    // the next position of each sequence in the cache
+    var next: i64[..64] = [];
+    if swa > 0 { for s in 64 { next.push(cache_pos_max(k, s) + 1); } }
     idxs.clear();
-    var head_cur = if head > n_used + 2 * n { 0 } else { head };
+    var head_cur = if caches[k].head > caches[k].n_used + 2 * n { 0 } else { caches[k].head };
     var n_tested = 0;
     loop {
         if head_cur + 1 > size {
@@ -3228,10 +3289,40 @@ fn find_slot(n: i64, idxs: i64[>..]&) {
         let idx = head_cur;
         head_cur++;
         n_tested++;
-        if cell_pos[idx] < 0 { idxs.push(idx); }
+        var can_use = cell_pos[lo + idx] < 0;
+        if !can_use && swa > 0 && n_bits(cell_seqs[lo + idx]) == 1 {
+            can_use = next[first_seq(cell_seqs[lo + idx])] - cell_pos[lo + idx] >= swa;
+        }
+        if can_use { idxs.push(idx); }
         if idxs.len == n { break; }
         guard n_tested < size else { abort("decode: the context is full"); }
     }
+}
+
+// Places the tokens of a ubatch in the cells idxs of cache k (apply_ubatch).
+// A cell overwritten held a position out of its sequence's window: the
+// positions up to it of that sequence go too, so that each sequence keeps
+// the positions from its smallest to its last.
+fn apply_slot(k: i64, idxs: const i64[:], pos: const i64[:], seqs: const u64[:]) {
+    let lo = caches[k].lo;
+    var max_rm: i64[..64] = [];
+    for s in 64 { max_rm.push(-1); }
+    for idx, i in idxs {
+        if cell_pos[lo + idx] >= 0 {
+            let s = first_seq(cell_seqs[lo + idx]);
+            max_rm[s] = max(max_rm[s], cell_pos[lo + idx]);
+            caches[k].n_used--;
+        }
+        cell_pos[lo + idx] = pos[i];
+        cell_seqs[lo + idx] = seqs[i];
+        caches[k].n_used++;
+    }
+    for s in 64 {
+        guard max_rm[s] >= 0 else { continue; }
+        let p_min = cache_pos_min(k, s);
+        if p_min <= max_rm[s] { cache_rm(k, s, p_min, max_rm[s] + 1); }
+    }
+    caches[k].head = idxs[idxs.len - 1] + 1;
 }
 
 // The slices of a ubatch (get_n_kv_slices): one per sequence when the
@@ -3252,13 +3343,16 @@ fn n_slices_of(seqs: const u64[:]) -> i64 {
     return 1;
 }
 
-// The cells each slice attends to (get_kv_rows_slices, get_n_kv_rows,
-// get_seq_cells): in cell order, those of the slice's sequences, and (swa)
-// at a position from the slice's first one's window on; padded with -1 to
-// the longest list, padded to 256.
-fn kv_rows(pos: const i64[:], seqs: const u64[:], n_slices: i64, swa: u32, rows: i32[>..]&) -> i64 {
+// The cells of cache k each slice attends to (get_kv_rows_slices,
+// get_n_kv_rows, get_seq_cells): in cell order, those of the slice's
+// sequences, and (swa) at a position from the slice's first one's window on;
+// padded with -1 to the longest list, padded to 256.
+fn kv_rows(k: i64, pos: const i64[:], seqs: const u64[:], n_slices: i64, rows: i32[>..]&) -> i64 {
+    let lo = caches[k].lo;
+    let size = caches[k].size;
+    let swa = caches[k].swa;
     let n_tps = pos.len / n_slices;
-    let used = used_max_p1();
+    let used = used_max_p1(k);
     var masks: u64[>..] = [];
     var p_mins: i64[>..] = [];
     for s in n_slices {
@@ -3277,17 +3371,19 @@ fn kv_rows(pos: const i64[:], seqs: const u64[:], n_slices: i64, swa: u32, rows:
     var n_max = 0;
     for s in n_slices {
         var n = 0;
-        for q, i in cell_pos {
-            if q >= 0 && q >= p_mins[s] { n += n_bits(cell_seqs[i] & masks[s]); }
+        for i in size {
+            let q = cell_pos[lo + i];
+            if q >= 0 && q >= p_mins[s] { n += n_bits(cell_seqs[lo + i] & masks[s]); }
         }
         n_max = max(n_max, min(n, used));
     }
-    let n_rows = min(pad_to(n_max, 256), cell_pos.len);
+    let n_rows = min(pad_to(n_max, 256), size);
     rows.clear();
     for s in n_slices {
         let start = rows.len;
         for i in used {
-            if cell_pos[i] >= 0 && cell_seqs[i] & masks[s] != 0 && cell_pos[i] >= p_mins[s] { rows.push(i as i32); }
+            let q = cell_pos[lo + i];
+            if q >= 0 && cell_seqs[lo + i] & masks[s] != 0 && q >= p_mins[s] { rows.push(i as i32); }
         }
         guard rows.len - start <= n_rows else { abort("decode: kv rows overflow"); }
         while rows.len - start < n_rows { rows.push(-1); }
@@ -3337,7 +3433,7 @@ fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i
 }
 
 // What the graph of a ubatch depends on.
-struct Shape { n_tokens: i64, n_outputs: i64, n_kv: i64, n_slices: i64, n_rows: i64, n_rows_swa: i64, n_enc: i64,
+struct Shape { n_tokens: i64, n_outputs: i64, n_kv: i64, n_kv_swa: i64, n_slices: i64, n_rows: i64, n_rows_swa: i64, n_enc: i64,
                n_slice_outputs: i64 }   // gemma4 prunes: the most outputs of a slice
 
 // The graph of the last ubatch (llama.cpp's gf_res_prev), kept: a ubatch of
@@ -3364,11 +3460,13 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
         gf: ggml::new_graph_custom(gctx, MAX_NODES, false),
         n_tokens: n_tokens,
         n_kv: sh.n_kv,
+        n_kv_swa: sh.n_kv_swa,
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             pos: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens * n_pos_per_embd(m)),
             out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_outputs),
             kv_idxs: ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens),
+            kv_idxs_swa: ggml::NONE,
             mask: ggml::NONE,
             mask_swa: ggml::NONE,
             s_copy: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, 1),
@@ -3401,7 +3499,11 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
         }
     } else {
         b.inp.mask = ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens);
-        b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens) } else { b.inp.mask };
+        b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv_swa, n_tokens) } else { b.inp.mask };
+    }
+    if c.n_swa_cells > 0 {
+        b.inp.kv_idxs_swa = ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens);
+        ggml::set_input(b.inp.kv_idxs_swa);
     }
     ggml::set_input(b.inp.tokens);
     ggml::set_input(b.inp.pos);
@@ -3484,15 +3586,15 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     let n_tokens = tokens.len;
     let n_outputs = outputs.len;
 
-    // the cells (find_slot, apply_ubatch)
+    // the cells, in each cache (find_slot, apply_ubatch)
     var idxs: i64[>..] = [];
-    find_slot(n_tokens, idxs);
-    for idx, i in idxs {
-        cell_pos[idx] = pos[i];
-        cell_seqs[idx] = seqs[i];
-        n_used++;
+    var idxs_swa: i64[>..] = [];
+    find_slot(BASE, n_tokens, idxs);
+    apply_slot(BASE, idxs, pos, seqs);
+    if c.n_swa_cells > 0 {
+        find_slot(swa_cache(), n_tokens, idxs_swa);
+        apply_slot(swa_cache(), idxs_swa, pos, seqs);
     }
-    head = idxs[idxs.len - 1] + 1;
 
     var tracing = false;
     {
@@ -3509,7 +3611,8 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         n_tokens: n_tokens,
         n_outputs: n_outputs,
         // llama.cpp's get_n_kv: the cells in use, padded to 256
-        n_kv: min(c.n_ctx, max(256, pad_to(used_max_p1(), 256))),
+        n_kv: min(c.n_ctx, max(256, pad_to(used_max_p1(BASE), 256))),
+        n_kv_swa: min(caches[swa_cache()].size, max(256, pad_to(used_max_p1(swa_cache()), 256))),
         n_slices: n_slices,
         n_rows: 0,
         n_rows_swa: 0,
@@ -3525,8 +3628,8 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         }
     }
     if use_rows {
-        sh.n_rows = kv_rows(pos, seqs, n_slices, 0, rows);
-        if has_swa { sh.n_rows_swa = kv_rows(pos, seqs, n_slices, m.hp.n_swa, rows_swa); }
+        sh.n_rows = kv_rows(BASE, pos, seqs, n_slices, rows);
+        if has_swa { sh.n_rows_swa = kv_rows(swa_cache(), pos, seqs, n_slices, rows_swa); }
     }
     kept_slice_outputs = sh.n_slice_outputs;
     if !kept.live || kept.shape != sh { build_graph(c, m, sh, tracing); }
@@ -3542,6 +3645,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     if ggml::allocated(b.inp.pos) { ggml::backend_set_i32(b.inp.pos, pos32); }   // bloom reads no positions
     if ggml::allocated(b.inp.out_ids) { ggml::backend_set_i32(b.inp.out_ids, outputs); }   // gemma4 prunes without it
     if ggml::allocated(b.inp.kv_idxs) { ggml::backend_set_i64(b.inp.kv_idxs, idxs); }   // no attention: no cache cells
+    if b.inp.kv_idxs_swa.p != 0 && ggml::allocated(b.inp.kv_idxs_swa) { ggml::backend_set_i64(b.inp.kv_idxs_swa, idxs_swa); }
     if any_recurrent(m) { ggml::backend_set_i32(b.inp.s_copy, [0]); }
     if b.inp.pos_bucket.p != 0 {
         // a cell's position, or -1 where it is empty, seen from each token
@@ -3580,7 +3684,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     var cut: f32[>..] = [];
     if use_rows {
         ggml::backend_set_i32(b.inp.rows, rows);
-        fill_mask(mask, ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, 0, alibi);
+        fill_mask(mask, BASE, ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, alibi);
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
         if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
             take_mask_rows(mask, ggml::ne(b.inp.rows, 0), take, cut);
@@ -3588,7 +3692,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         }
         if has_swa {
             ggml::backend_set_i32(b.inp.rows_swa, rows_swa);
-            fill_mask(mask, ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices, m.hp.n_swa);
+            fill_mask(mask, swa_cache(), ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices);
             ggml::backend_set_f16(b.inp.mask_swa, mask);
             if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
                 take_mask_rows(mask, ggml::ne(b.inp.rows_swa, 0), take, cut);
@@ -3596,17 +3700,17 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
             }
         }
     } else {
-        fill_mask(mask, b.n_kv, pos, seqs, [], 1, 0, alibi);
+        fill_mask(mask, BASE, b.n_kv, pos, seqs, [], 1, alibi);
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
         if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
             take_mask_rows(mask, b.n_kv, take, cut);
             ggml::backend_set_f16(b.inp.out_mask, cut);
         }
         if has_swa {
-            fill_mask(mask, b.n_kv, pos, seqs, [], 1, m.hp.n_swa);
+            fill_mask(mask, swa_cache(), b.n_kv_swa, pos, seqs, [], 1);
             ggml::backend_set_f16(b.inp.mask_swa, mask);
             if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
-                take_mask_rows(mask, b.n_kv, take, cut);
+                take_mask_rows(mask, b.n_kv_swa, take, cut);
                 ggml::backend_set_f16(b.inp.out_mask_swa, cut);
             }
         }

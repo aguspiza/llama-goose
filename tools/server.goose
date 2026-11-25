@@ -2778,6 +2778,7 @@ fn setup() {
     if n_slots <= 0 { n_slots = 4; }
     if n_slots > 64 { die("at most 64 slots"); }
     c.unified = n_slots > 1;
+    c.n_seq_max = n_slots;
     context::init(c, m, if n_ctx > 0 { n_ctx } else { m.hp.n_ctx_train as i64 });
     for s in n_slots { slots.push(Slot { .. }); }
     slot_tokens.resize(n_slots * c.n_ctx, 0);

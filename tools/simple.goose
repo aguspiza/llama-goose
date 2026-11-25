@@ -59,7 +59,7 @@ fn main() {
     vocab::tokenize(prompt, true, true, prompt_tokens);
     let n_prompt = prompt_tokens.len;
 
-    var c = context::Context { .. };
+    var c = context::Context { n_ubatch: min(512, n_prompt), .. };    // n_batch: n_prompt
     context::init(c, m, n_prompt + n_predict - 1);
 
     {

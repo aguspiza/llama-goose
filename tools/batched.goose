@@ -67,11 +67,13 @@ fn main() {
     vocab::tokenize(prompt, true, true, tokens);
     let n_kv_req = tokens.len + (n_predict - tokens.len) * n_parallel;
 
-    var c = context::Context { .. };
-    c.unified = true;
-    context::init(c, m, n_kv_req);
     let n_batch = max(n_predict, n_parallel);
     let n_ubatch = min(512, n_batch);
+    var c = context::Context { .. };
+    c.unified = true;
+    c.n_seq_max = n_parallel;
+    c.n_ubatch = n_ubatch;
+    context::init(c, m, n_kv_req);
     write_stderr(str("\nmain: n_predict = ", n_predict, ", n_ctx = ", c.n_ctx, ", n_batch = ", n_batch,
                      ", n_parallel = ", n_parallel, ", n_kv_req = ", n_kv_req, "\n"));
     guard n_kv_req <= c.n_ctx else { abort("n_kv_req > n_ctx, the required KV cache size is not big enough"); }

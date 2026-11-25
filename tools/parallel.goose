@@ -198,10 +198,12 @@ fn main() {
 
     var m = model::Model { .. };
     model::load(m, model_path);
+    let n_ubatch = min(512, n_batch);
     var c = context::Context { .. };
     c.unified = true;
+    c.n_seq_max = n_clients + 1;     // and the system prompt's
+    c.n_ubatch = n_ubatch;
     context::init(c, m, n_ctx);
-    let n_ubatch = min(512, n_batch);
     sampler::apply_model_defaults(sp, m.meta);
 
     log("\n\n");

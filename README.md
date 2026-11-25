@@ -65,7 +65,7 @@ in part.
 | ❌ Other kinds of model | Embedding and encoder-only models (the bert family and its WPM tokenizer, t5encoder), diffusion models, audio decoders. |
 | ❌ Multimodal | Images and audio (`mtmd`, `--mmproj`). The vision models in the list run as text models. |
 | ❌ Adapters and state | LoRA adapters, control vectors, saving and loading a context's state (session and prompt cache files). |
-| 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). Not the cache split per sequence, the smaller cache of the sliding-window layers (as `--swa-full`, so the logits of those models may differ in their last bits once a server's slots reuse cells), context shift or self-extend. A recurrent model and T5 hold one sequence. |
+| 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). The sliding-window layers keep a smaller cache of their own. Not the cache split per sequence, the server's context checkpoints (as `-ctxcp 0`), context shift or self-extend. A recurrent model and T5 hold one sequence. |
 | 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
 | 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
 | 🟡 `llama-completion`, `llama-cli` | Not context shift, prompt cache files or self-extend; the cli has no images, audio or `-hf` downloads. |

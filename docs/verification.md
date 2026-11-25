@@ -221,13 +221,13 @@ Mamba 130M and one slot. The cached-token counts differ because
 llama-server reuses a recurrent cache only from a checkpoint. A sliding-window
 model's cache is reused as llama-server does without checkpoints: only when it
 starts before the window of the first token to evaluate. With gemma-4 E2B 23
-of the 29 are the same: llama.cpp keeps the sliding-window layers in a smaller
-cache of their own (`llama_kv_cache_iswa`), whose cells are placed and
-overwritten apart from the others, and this port has one cache for all the
-layers; after slots are cleared and reused, those layers attend to another
-number and order of cells, and the last bits of the logits change (with
-llama-server's `--swa-full`, which makes the two caches alike, all 29 are the
-same). Requests served at
+of the 29 are the same: llama-server saves context checkpoints of a
+sliding-window model's slots, and splits the prompt to make them, and this
+port has none; with `-ctxcp 0` all 29 are the same. The sliding-window layers
+keep a smaller cache of their own, as llama.cpp's `llama_kv_cache_iswa`: with
+gemma-3 270M, 1500 tokens of llama-completion and 3 clients of 700 tokens of
+llama-parallel, past the windows, where that cache overwrites its cells, are
+the same. Requests served at
 the same time are not compared with llama-server's, since which batch a
 token falls in depends on when each request arrives, and that changes the
 last bits of its logits; in a test build that decoded one slot per batch,
