@@ -28,7 +28,7 @@ for program in "$@"; do
     # the dry run checks the program, reports its errors and writes its C;
     # it prints the commands that would compile the packages' C and then
     # the program's, and link
-    cmds=$("$goose" build --dry-run "$program" | grep '^"')
+    cmds=$("$goose" build --dry-run "$program" | grep -- ' -o ')
     link=$(tail -1 <<< "$cmds")
     # the runtime is built by goose build itself: on its first use, a whole
     # goose build (it costs a second compile of the program, at -O0)
