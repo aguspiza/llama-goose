@@ -30,10 +30,14 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
+          # MINGW64 (msvcrt), as the port is built and checked with
           msystem: MINGW64
+          suppress-deprecation-warnings: msystem-mingw64
           update: true
+          # git: goose build fetches the server's HTTP packages with it
           install: >-
             mingw-w64-x86_64-gcc
+            git
             unzip
             zip
 
