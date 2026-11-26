@@ -1,0 +1,4 @@
+// The C behind the multimodal package: stb_image, unchanged from llama.cpp's vendor/.
+c_sources = ["image.c"];
+c_include = ["../vendor"];
+c_flags_cc = ["-O2"];

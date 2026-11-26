@@ -71,6 +71,8 @@ extern fn softplus(ctx: Ctx, a: Tensor) -> Tensor = "ggml_softplus";
 extern fn gelu(ctx: Ctx, a: Tensor) -> Tensor = "ggml_gelu";
 extern fn gelu_erf(ctx: Ctx, a: Tensor) -> Tensor = "ggml_gelu_erf";
 extern fn geglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_geglu_split";
+extern fn gelu_quick(ctx: Ctx, a: Tensor) -> Tensor = "ggml_gelu_quick";
+extern fn geglu_quick_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_geglu_quick_split";
 extern fn swiglu(ctx: Ctx, a: Tensor) -> Tensor = "ggml_swiglu";
 extern fn swiglu_split(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_swiglu_split";
 extern fn soft_max(ctx: Ctx, a: Tensor) -> Tensor = "ggml_soft_max";
@@ -95,6 +97,12 @@ extern fn view_4d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, ne3: i64,
                   nb1: i64, nb2: i64, nb3: i64, offset: i64) -> Tensor = "ggml_view_4d";
 extern fn view_3d(ctx: Ctx, a: Tensor, ne0: i64, ne1: i64, ne2: i64, nb1: i64, nb2: i64, offset: i64) -> Tensor = "ggml_view_3d";
 extern fn transpose(ctx: Ctx, a: Tensor) -> Tensor = "ggml_transpose";
+// a: the kernel [k0, k1, channels in, channels out], b: the data [w, h, channels in, n]
+extern fn conv_2d(ctx: Ctx, a: Tensor, b: Tensor, s0: i32, s1: i32, p0: i32, p1: i32, d0: i32, d1: i32) -> Tensor = "ggml_conv_2d";
+let OP_POOL_MAX: i32 = 0;
+let OP_POOL_AVG: i32 = 1;
+extern fn pool_2d(ctx: Ctx, a: Tensor, op: i32, k0: i32, k1: i32, s0: i32, s1: i32, p0: f32, p1: f32) -> Tensor = "ggml_pool_2d";
+extern fn zero_pad(ctx: Ctx, a: Tensor, p0: i32, p1: i32, p2: i32, p3: i32) -> Tensor = "ggml_pad";
 extern fn pad_ext(ctx: Ctx, a: Tensor, p0: i32, p1: i32, p2: i32, p3: i32) -> Tensor = "ggml_pad";
 extern fn concat(ctx: Ctx, a: Tensor, b: Tensor, dim: i32) -> Tensor = "ggml_concat";
 extern fn cpy(ctx: Ctx, a: Tensor, b: Tensor) -> Tensor = "ggml_cpy";
@@ -129,6 +137,8 @@ extern fn prec_set_acc(a: Tensor, prec: i32) -> bool = "ggml_prec_set_acc";
 extern fn new_graph_custom(ctx: Ctx, size: i64, grads: bool) -> Graph = "ggml_new_graph_custom";
 extern fn new_graph(ctx: Ctx) -> Graph = "ggml_new_graph";
 extern fn build_forward_expand(g: Graph, t: Tensor) = "ggml_build_forward_expand";
+// adds t to the graph in its order, without marking it to compute
+extern fn build_forward_order(g: Graph, t: Tensor) = "ggml_build_forward_order";
 extern fn graph_n_nodes(g: Graph) -> i32 = "ggml_graph_n_nodes";
 
 extern fn backend_free(b: Backend) = "ggml_backend_free";

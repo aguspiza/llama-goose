@@ -63,14 +63,14 @@ in part.
 | 🟡 Platforms | Built and checked on Windows with MinGW-w64 gcc only. `goose build` with MSVC does not find the C headers yet. Linux and macOS have their branches in the code and have not been checked. |
 | 🟡 Architectures | 65 are ported. Not the ones with no model of 4 GB or less in Q4 (the large mixtures of experts, the 7B and larger dense models), nor the experts of gemma4, nemotron_h and k2-horizon. [The list](#architectures). |
 | ❌ Other kinds of model | Embedding and encoder-only models (the bert family and its WPM tokenizer, t5encoder), diffusion models, audio decoders. |
-| ❌ Multimodal | Images and audio (`mtmd`, `--mmproj`). The vision models in the list run as text models. |
+| 🟡 Multimodal | Images through the SigLIP encoder, with the projectors of gemma3 and idefics3 (SmolVLM), in `tools/mtmd_cli`. Not the other 70 encoders of `mtmd` (Qwen-VL, LLaVA, InternVL, ...), audio, video, nor `--mmproj` in the server and `completion`. |
 | ❌ Adapters and state | LoRA adapters, control vectors, saving and loading a context's state (session and prompt cache files). |
 | 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). The sliding-window layers keep a smaller cache of their own. The server checkpoints them, as llama-server does, but not a recurrent state. Not the cache split per sequence, context shift or self-extend. A recurrent model and T5 hold one sequence. |
 | 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
 | 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
 | 🟡 `llama-completion`, `llama-cli` | Not context shift, prompt cache files or self-extend; the cli has no images, audio or `-hf` downloads. |
 | ❌ `common/` | The argument parser (each program reads the flags it supports itself), downloads (`-hf`), fitting the context to the free memory. |
-| ❌ Other programs | `llama-quantize`, `llama-bench`, `llama-embedding`, `llama-mtmd-cli`, `llama-tts`, `llama-imatrix` and the rest of llama.cpp's tools and examples. |
+| ❌ Other programs | `llama-quantize`, `llama-bench`, `llama-embedding`, `llama-tts`, `llama-imatrix` and the rest of llama.cpp's tools and examples. |
 
 ## What is ported
 
@@ -95,6 +95,7 @@ in part.
 | `tools/batched`, `tools/parallel` | `llama-batched`, `llama-parallel` | several sequences in one batch |
 | `tools/server` | `llama-server` | `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; 4 slots decoded together, the prompt cache of each slot |
 | `tools/cli` | `llama-cli` | the chat over a server it starts, with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob` |
+| `tools/mtmd_cli` | `llama-mtmd-cli` | a prompt and its images (`--mmproj`, `--image`), one turn |
 
 ## Quick start
 

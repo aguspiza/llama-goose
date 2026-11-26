@@ -117,6 +117,20 @@ of the table above (gemma-3's sliding window among them), and on Qwen3 0.6B
 also with a seed, without the shared prompt and with `--junk`;
 `tools/batched` writes the same 4 sequences as llama-batched.
 
+## tools/mtmd_cli
+
+`tools/mtmd_cli` is llama-mtmd-cli's single turn: the prompt and its images
+through the chat template, the images decoded by stb_image (llama.cpp's
+`vendor/`, unchanged), resized as Pillow does in fixed point, sliced, and
+encoded by a vision transformer whose embeddings the text model reads in
+place of tokens. So far the SigLIP encoder with the projectors of gemma3
+(the image fitted in a square, average-pooled, its tokens attending to each
+other) and idefics3 (SmolVLM: a grid of slices and an overview, the pixel
+shuffle). Its embeddings are the same bytes as `MTMD_DEBUG_EMBEDDINGS` dumps,
+and its responses, greedy, are the same as llama-mtmd-cli's with SmolVLM
+256M and gemma-3 4B, on the jpeg of llama.cpp's tests and on images of
+600x600, 600x400 (padded slices) and 1300x900 (a 3x2 grid).
+
 ## Chat templates
 
 `tests/chat_template` applies every built-in template, and the template of

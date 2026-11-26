@@ -57,7 +57,7 @@ jobs:
           "$GOOSE" --version
           scripts/build.sh tools/server.goose tools/cli.goose tools/completion.goose \
             tools/simple.goose tools/simple_chat.goose tools/perplexity.goose \
-            tools/batched.goose tools/parallel.goose
+            tools/batched.goose tools/parallel.goose tools/mtmd_cli.goose
 
       - name: Package
         run: |
@@ -102,7 +102,7 @@ jobs:
           grep -q -- "-march=$MARCH" ggml/cpu/ggml_cpu.build
           gcc --version | head -1
           "$GOOSE" --version
-          scripts/build.sh tools/server.goose tools/cli.goose tools/completion.goose             tools/simple.goose tools/simple_chat.goose tools/perplexity.goose             tools/batched.goose tools/parallel.goose
+          scripts/build.sh tools/server.goose tools/cli.goose tools/completion.goose             tools/simple.goose tools/simple_chat.goose tools/perplexity.goose             tools/batched.goose tools/parallel.goose tools/mtmd_cli.goose
 
       - name: Test
         run: GOOSE="$GOOSE" scripts/test.sh
@@ -111,7 +111,7 @@ jobs:
         run: |
           name="llama-goose-${GITHUB_REF_NAME//\//-}-linux-x64"
           mkdir "$name"
-          for p in server cli completion simple simple_chat perplexity batched parallel; do cp "tools/$p" "$name/"; done
+          for p in server cli completion simple simple_chat perplexity batched parallel mtmd_cli; do cp "tools/$p" "$name/"; done
           cp README.md "$name/"
           ldd "$name/server"
           out=$("$name/simple" 2>&1 || true)

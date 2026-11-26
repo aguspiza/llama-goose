@@ -123,6 +123,7 @@ fn swa_cache() -> i64 { caches.len - 1 }   // the base one without a window
 // The inputs of one graph, set after it is allocated.
 struct Inputs {
     tokens: ggml::Tensor,
+    embd: ggml::Tensor,          // embeddings in place of tokens: [n_embd, n_tokens] (an image's)
     pos: ggml::Tensor,
     out_ids: ggml::Tensor,
     kv_idxs: ggml::Tensor,
@@ -494,7 +495,7 @@ fn build_t5_dec(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let embd_enc = b.inp.cross_embd;
     let n_enc = ggml::ne(embd_enc, 1);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -548,7 +549,7 @@ fn build_t5_enc(b: Build&, m: model::Model&) -> ggml::Tensor {
     let n_tokens = b.n_tokens;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -603,6 +604,7 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
         n_kv_swa: n_kv,
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
+            embd: ggml::NONE,
             pos: ggml::NONE,
             out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             kv_idxs: ggml::NONE,
@@ -653,6 +655,13 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
     ggml::free(gctx);
 }
 
+// The input embeddings (build_inp_embd): the tokens' rows of the token
+// embeddings, or the embeddings given in their place.
+fn inp_embd(b: Build&, m: model::Model&) -> ggml::Tensor {
+    if b.inp.embd.p != 0 { return b.inp.embd; }
+    return ggml::get_rows(b.ctx, m.tok_embd, b.inp.tokens);
+}
+
 fn rope(b: Build&, m: model::Model&, x: ggml::Tensor, freq_base: f32, freq_scale: f32,
         factors: ggml::Tensor = ggml::NONE, n_rot: i64 = -1) -> ggml::Tensor {
     let hp .= m.hp;
@@ -669,8 +678,9 @@ fn build_gemma3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_k as i64;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
-    inpL = ggml::scale(ctx, inpL, sqrt(hp.n_embd as f32));
+    var inpL = inp_embd(b, m);
+    // the token rows only: an image's embeddings are not scaled
+    if b.inp.embd.p == 0 { inpL = ggml::scale(ctx, inpL, sqrt(hp.n_embd as f32)); }
 
     for il in n_layer {
         let ly = m.layers[il];
@@ -723,7 +733,7 @@ fn build_phi2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let n_embd_head = hp.n_embd_head_v as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var attn_norm_output = build_norm_ln(b, m, inpL, ly.attn_norm, ly.attn_norm_b);
@@ -755,7 +765,7 @@ fn build_phi3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let n_embd_head = hp.n_embd_head_v as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var residual = inpL;
@@ -788,7 +798,7 @@ fn build_stablelm(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let n_embd_head = hp.n_embd_head_v as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var cur = build_norm_ln(b, m, inpL, ly.attn_norm, ly.attn_norm_b);
@@ -826,7 +836,7 @@ fn build_smollm3_granite(b: Build&, m: model::Model&, c: Context&) -> ggml::Tens
     let granite = hp.arch == model::ARCH_GRANITE || hp.arch == model::ARCH_GRANITE_MOE || hp.arch == model::ARCH_MINICPM;
     let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     if hp.f_embedding_scale != 0.0 { inpL = ggml::scale(ctx, inpL, hp.f_embedding_scale); }
     for il in n_layer {
         let ly = m.layers[il];
@@ -877,7 +887,7 @@ fn build_classic(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let head: f32 = n_embd_head;
     let kq_scale: f32 = if hp.arch == model::ARCH_JAIS { 1.0 / head } else { 1.0 / sqrt(head) };
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     if m.pos_embd.p != 0 { inpL = ggml::add(ctx, inpL, ggml::get_rows(ctx, m.pos_embd, b.inp.pos)); }
     if m.tok_norm.p != 0 { inpL = build_norm_ln(b, m, inpL, m.tok_norm, m.tok_norm_b); }
     for il in n_layer {
@@ -947,7 +957,7 @@ fn build_bitnet(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -982,7 +992,7 @@ fn build_chatglm(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -1011,7 +1021,7 @@ fn build_gemma(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     inpL = ggml::scale(ctx, inpL, sqrt(hp.n_embd as f32));
     for il in n_layer {
         let ly = m.layers[il];
@@ -1046,7 +1056,7 @@ fn build_olmo_refact(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let olmo = hp.arch == model::ARCH_OLMO;
     fn norm(x: ggml::Tensor, w: ggml::Tensor) -> ggml::Tensor { if olmo { build_norm_ln(b, m, x, ggml::NONE, ggml::NONE) } else { build_norm_rms(b, m, x, w) } }
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -1077,7 +1087,7 @@ fn build_openelm(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var residual = inpL;
@@ -1109,7 +1119,7 @@ fn build_smallthinker(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor 
     assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         let freq_base = if hp.is_swa[il] { hp.rope_freq_base_train_swa } else { hp.rope_freq_base_train };
@@ -1146,7 +1156,7 @@ fn build_arcee(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -1181,7 +1191,7 @@ fn build_post_norm(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let olmo2 = hp.arch == model::ARCH_OLMO2;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -1240,7 +1250,7 @@ fn build_hunyuan_dense(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor
     assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -1271,7 +1281,7 @@ fn build_gemma2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let ctx = b.ctx;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     inpL = ggml::scale(ctx, inpL, sqrt(hp.n_embd as f32));
     for il in n_layer {
         let ly = m.layers[il];
@@ -1318,7 +1328,7 @@ fn build_llama(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -1364,7 +1374,7 @@ fn build_qwen(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
 
     let multi = n_pos_per_embd(m) > 1;
     let n_embd = hp.n_embd as i64;
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     var inp_embd = inpL;
     if hp.n_deepstack_layers > 0 {
         // the token rows padded to the input's width (build_inp_embd)
@@ -1537,7 +1547,7 @@ fn build_hybrid(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
     let arch = hp.arch;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     if hp.f_embedding_scale != 0.0 { inpL = ggml::scale(ctx, inpL, hp.f_embedding_scale); }
     for il in n_layer {
         let ly = m.layers[il];
@@ -1617,7 +1627,7 @@ fn build_minicpm3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer_f: f32 = n_layer;
     let scale_res = scale_depth / sqrt(n_layer_f);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     inpL = ggml::scale(ctx, inpL, scale_embd);
     for il in n_layer {
         let ly = m.layers[il];
@@ -1829,7 +1839,7 @@ fn build_rwkv(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let rwkv7 = hp.arch == model::ARCH_RWKV7;
     var v_first = ggml::NONE;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     inpL = build_norm_ln(b, m, inpL, m.tok_norm, m.tok_norm_b);
     for il in n_layer {
         let ly = m.layers[il];
@@ -1959,7 +1969,7 @@ fn build_plamo2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let n_embd_head_v = hp.n_embd_head_v as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var residual = inpL;
@@ -1998,7 +2008,7 @@ fn build_nemotron_h(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     ggml::build_forward_expand(b.gf, inpL);
     for il in n_layer {
         let ly = m.layers[il];
@@ -2029,7 +2039,7 @@ fn build_plamo3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let attn_scale = 1.0 / sqrt(hp.n_embd_head_k as f32);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var residual = inpL;
@@ -2068,7 +2078,7 @@ fn build_cohere2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     assert(n_embd_head == hp.n_embd_head_k);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var cur = build_norm_ln(b, m, inpL, ly.attn_norm, ggml::NONE);
@@ -2104,7 +2114,7 @@ fn build_pangu_embed(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -2137,7 +2147,7 @@ fn build_limite(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_tokens = b.n_tokens;
     assert(n_embd_head == hp.n_embd_head_v);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     // value embeddings, looked up by token
     let n_head_kv0 = hp.n_head_kv[0] as i64;
     let inp_ve = ggml::reshape_3d(ctx, ggml::get_rows(ctx, m.value_embd, b.inp.tokens), n_embd_head, n_head_kv0, n_tokens);
@@ -2260,7 +2270,7 @@ fn build_hrm_text(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         return build_norm_rms(b, m, cur, ggml::NONE);
     }
 
-    var zH = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var zH = inp_embd(b, m);
     if hp.f_embedding_scale != 0.0 { zH = ggml::scale(ctx, zH, hp.f_embedding_scale); }
     // the low state starts as [n_embd], broadcast over the tokens
     var zL = m.hrm_z_l_init;
@@ -2281,7 +2291,7 @@ fn build_spark2_5(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     assert(n_embd_head == hp.n_embd_head_k && hp.swa_type == model::SWA_STANDARD);
     let kq_scale = 1.0 / sqrt(n_embd_head as f32);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -2339,7 +2349,7 @@ fn build_k2_horizon(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         return if w.p != 0 { ggml::mul(ctx, cur, w) } else { cur };
     }
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         let n_head = hp.n_head[il] as i64;
@@ -2374,7 +2384,7 @@ fn build_glm4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     assert(n_embd_head == hp.n_embd_head_k);
     let use_mrope = hp.rope_type == ggml::ROPE_TYPE_MROPE;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -2411,7 +2421,7 @@ fn build_afmoe(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     let kq_scale = 1.0 / sqrt(n_embd_head as f32);
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     inpL = ggml::scale(ctx, inpL, sqrt(hp.n_embd as f32));
     for il in n_layer {
         let ly = m.layers[il];
@@ -2487,7 +2497,7 @@ fn build_gemma3n(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_f: f32 = n_embd;
     let sqrt2: f32 = 2.0;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     inpL = ggml::scale(ctx, inpL, sqrt(n_embd_f));
 
     // the per-layer inputs: [n_embd_altup, n_tokens, n_layer] (build_inp_per_layer, project_per_layer_inputs)
@@ -2690,7 +2700,7 @@ fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         inp_per_layer = ggml::get_rows(ctx, m.per_layer_tok_embd, b.inp.tokens);
         ggml::build_forward_expand(b.gf, inp_per_layer);
     }
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     inpL = ggml::scale(ctx, inpL, sqrt(n_embd_f));
     if inp_per_layer.p != 0 {
         let n_epl_f: f32 = n_epl;
@@ -2834,7 +2844,7 @@ fn build_mamba(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let ctx = b.ctx;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
@@ -2978,7 +2988,7 @@ fn build_qwen35(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let ctx = b.ctx;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var inpL = inp_embd(b, m);
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -3041,7 +3051,7 @@ fn build_lfm2(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let n_embd_head = hp.n_embd_head_v as i64;
 
-    var cur = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var cur = inp_embd(b, m);
     ggml::build_forward_expand(b.gf, cur);
     for il in n_layer {
         let ly = m.layers[il];
@@ -3076,7 +3086,7 @@ fn build_lfm3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let n_embd_head = hp.n_embd_head_k as i64;
 
-    var cur = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    var cur = inp_embd(b, m);
     ggml::build_forward_expand(b.gf, cur);
     for il in n_layer {
         let ly = m.layers[il];
@@ -3175,7 +3185,7 @@ fn seq_pos_max(s: i64) -> i64 { cache_pos_max(swa_cache(), s) }
 // future, or (swa) out of its window. With ALiBi the kept cells hold minus
 // their distance to the token (set_input_attn_mask).
 fn fill_mask(mask: f32[>..]&, k: i64, n_cols: i64, pos: const i64[:], seqs: const u64[:], rows: const i32[:],
-             n_slices: i64, alibi: bool = false) {
+             n_slices: i64, alibi: bool = false, causal: bool = true) {
     mask.clear();
     let lo = caches[k].lo;
     let swa = caches[k].swa;
@@ -3189,7 +3199,7 @@ fn fill_mask(mask: f32[>..]&, k: i64, n_cols: i64, pos: const i64[:], seqs: cons
             var keep = j >= 0 && cell_pos[lo + j] >= 0 && cell_seqs[lo + j] & bit != 0;
             if keep {
                 let p0 = cell_pos[lo + j];
-                keep = p0 <= p1 && !(swa > 0 && p1 - p0 >= swa);
+                keep = (!causal || p0 <= p1) && !(swa > 0 && p1 - p0 >= swa);
             }
             mask.push(if !keep { NEG_INF } else if alibi { -abs(p1 - cell_pos[lo + j]) as f32 } else { 0.0 });
         }
@@ -3495,9 +3505,34 @@ fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i
     c.n_past = seq_pos_max(0) + 1;
 }
 
+// Runs embeddings in place of tokens (llama_decode of a batch of
+// embeddings, as mtmd's image chunks): pos.len of them, n_embd each, at
+// positions pos, in sequence s, in ubatches of at most n_ubatch. Not causal:
+// they see each other, all of them (mtmd_decode_use_non_causal), and must fit
+// in one ubatch.
+fn decode_embd(c: Context&, m: model::Model&, embd: const f32[:], pos: const i64[:], s: i64,
+               n_ubatch: i64 = 512, causal: bool = true) {
+    let n = pos.len;
+    let n_embd = m.hp.n_embd as i64;
+    guard n > 0 && embd.len == n * n_embd else { abort("decode: embeddings and positions do not match"); }
+    guard causal || n <= n_ubatch else { abort("decode: non-causal embeddings must fit in one ubatch"); }
+    var seqs: u64[>..] = [];
+    for _ in n { seqs.push(1 << s); }
+    var row: f32[>..] = [];
+    var start = 0;
+    while start < n {
+        let end = min(start + n_ubatch, n);
+        decode_ubatch(c, m, [], pos[start..end], seqs[start..end], [(end - start - 1) as i32], row,
+                      embd[start * n_embd..end * n_embd], causal);
+        start = end;
+    }
+    c.n_past = seq_pos_max(0) + 1;
+}
+
 // What the graph of a ubatch depends on.
 struct Shape { n_tokens: i64, n_outputs: i64, n_kv: i64, n_kv_swa: i64, n_slices: i64, n_rows: i64, n_rows_swa: i64, n_enc: i64,
-               n_slice_outputs: i64 }   // gemma4 prunes: the most outputs of a slice
+               n_slice_outputs: i64,    // gemma4 prunes: the most outputs of a slice
+               embd: bool }             // embeddings in place of tokens
 
 // The graph of the last ubatch (llama.cpp's gf_res_prev), kept: a ubatch of
 // the same shape runs it again (llm_graph_result::can_reuse), and so is
@@ -3526,6 +3561,7 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
         n_kv_swa: sh.n_kv_swa,
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
+            embd: ggml::NONE,
             pos: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens * n_pos_per_embd(m)),
             out_ids: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_outputs),
             kv_idxs: ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens),
@@ -3567,6 +3603,11 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
     if c.n_swa_cells > 0 {
         b.inp.kv_idxs_swa = ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens);
         ggml::set_input(b.inp.kv_idxs_swa);
+    }
+    if sh.embd {
+        guard m.per_layer_tok_embd.p == 0 else { abort("decode: embeddings input of a model with per-layer embeddings is not ported yet"); }
+        b.inp.embd = ggml::new_tensor_2d(gctx, ggml::TYPE_F32, m.hp.n_embd, n_tokens);
+        ggml::set_input(b.inp.embd);
     }
     ggml::set_input(b.inp.tokens);
     ggml::set_input(b.inp.pos);
@@ -3645,8 +3686,8 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
 
 // One ubatch: its tokens placed in free cells, then run.
 fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i64[:], seqs: const u64[:],
-                 outputs: const i32[:], logits: f32[>..]&) {
-    let n_tokens = tokens.len;
+                 outputs: const i32[:], logits: f32[>..]&, embd: const f32[:] = [], causal: bool = true) {
+    let n_tokens = pos.len;
     let n_outputs = outputs.len;
 
     // the cells, in each cache (find_slot, apply_ubatch)
@@ -3681,6 +3722,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         n_rows_swa: 0,
         n_enc: c.n_enc,
         n_slice_outputs: 0,
+        embd: embd.len > 0,
     };
     if prune_shared(m.hp) {
         let n_slice_tokens = n_tokens / n_slices;
@@ -3704,7 +3746,8 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     for j in n_pos_per_embd(m) {
         for t in n_tokens { pos32.push(if j < 3 { pos[t] as i32 } else { 0 }); }
     }
-    ggml::backend_set_i32(b.inp.tokens, tokens);
+    if b.inp.embd.p != 0 { ggml::backend_set_f32(b.inp.embd, embd); }
+    else { ggml::backend_set_i32(b.inp.tokens, tokens); }
     if ggml::allocated(b.inp.pos) { ggml::backend_set_i32(b.inp.pos, pos32); }   // bloom reads no positions
     if ggml::allocated(b.inp.out_ids) { ggml::backend_set_i32(b.inp.out_ids, outputs); }   // gemma4 prunes without it
     if ggml::allocated(b.inp.kv_idxs) { ggml::backend_set_i64(b.inp.kv_idxs, idxs); }   // no attention: no cache cells
@@ -3747,7 +3790,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     var cut: f32[>..] = [];
     if use_rows {
         ggml::backend_set_i32(b.inp.rows, rows);
-        fill_mask(mask, BASE, ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, alibi);
+        fill_mask(mask, BASE, ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, alibi, causal);
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
         if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
             take_mask_rows(mask, ggml::ne(b.inp.rows, 0), take, cut);
@@ -3755,7 +3798,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         }
         if has_swa {
             ggml::backend_set_i32(b.inp.rows_swa, rows_swa);
-            fill_mask(mask, swa_cache(), ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices);
+            fill_mask(mask, swa_cache(), ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices, false, causal);
             ggml::backend_set_f16(b.inp.mask_swa, mask);
             if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
                 take_mask_rows(mask, ggml::ne(b.inp.rows_swa, 0), take, cut);
@@ -3763,14 +3806,14 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
             }
         }
     } else {
-        fill_mask(mask, BASE, b.n_kv, pos, seqs, [], 1, alibi);
+        fill_mask(mask, BASE, b.n_kv, pos, seqs, [], 1, alibi, causal);
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
         if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
             take_mask_rows(mask, b.n_kv, take, cut);
             ggml::backend_set_f16(b.inp.out_mask, cut);
         }
         if has_swa {
-            fill_mask(mask, swa_cache(), b.n_kv_swa, pos, seqs, [], 1);
+            fill_mask(mask, swa_cache(), b.n_kv_swa, pos, seqs, [], 1, false, causal);
             ggml::backend_set_f16(b.inp.mask_swa, mask);
             if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
                 take_mask_rows(mask, b.n_kv_swa, take, cut);
