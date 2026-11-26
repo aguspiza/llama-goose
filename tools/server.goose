@@ -87,6 +87,7 @@ var ch = sampler::Chain { .. };
 var base_sp = sampler::Params { .. };   // the sampling defaults, the command line's
 var base_n_predict = -1;
 var base_n_keep = 0;
+var ctx_shift = false;                   // --context-shift
 var base_stops: u8[>..] = [];           // --reverse-prompt, each ended by a NUL
 var n_batch = 2048;
 var model_path: u8[>..] = [];
@@ -268,6 +269,7 @@ var t_return_tokens = false;
 var t_cache_prompt = true;
 var t_n_predict = -1;
 var t_n_keep = 0;
+var t_n_discard = 0;
 var t_n_indent = 0;
 var t_max_predict_ms = -1;
 var t_sp = sampler::Params { .. };
@@ -296,6 +298,7 @@ fn reset_task(res_type: i64) {
     t_cache_prompt = true;
     t_n_predict = base_n_predict;
     t_n_keep = base_n_keep;
+    t_n_discard = 0;
     t_n_indent = 0;
     t_max_predict_ms = -1;
     t_sp = base_sp;
@@ -387,6 +390,7 @@ fn eval_params(data: i64) {
     t_n_predict = num_i_hard(data, t_n_predict, -1, I32_MAX, "n_predict", "max_completion_tokens", "max_tokens");
     t_n_indent = num_i_hard(data, t_n_indent, 0, I32_MAX, "n_indent");
     t_n_keep = num_i_hard(data, t_n_keep, -1, I32_MAX, "n_keep");
+    t_n_discard = num_i_hard(data, t_n_discard, 0, I32_MAX, "n_discard");
     t_max_predict_ms = num_i_hard(data, t_max_predict_ms, -1, 9223372036854775807, "t_max_predict_ms");
     {
         let v, name = field(data, "n_cmpl", "n");
@@ -696,7 +700,7 @@ fn params_json(o: u8[>..]&, only_metrics: bool) {
     ki(o, "max_tokens", t_n_predict);
     ki(o, "n_predict", t_n_predict);
     ki(o, "n_keep", t_n_keep);
-    ki(o, "n_discard", 0);
+    ki(o, "n_discard", t_n_discard);
     kb(o, "ignore_eos", t_ignore_eos);
     kb(o, "stream", t_stream);
     if !only_metrics {
@@ -1523,7 +1527,7 @@ fn process_token(tok: i32, piece0: const u8[:]) -> bool {
         if t_stream { send_partial(tok, text_to_send); }
         if find(text_to_send, "\n") >= 0 { has_new_line_now = true; }
     }
-    if slots[loaded].n + 1 >= c.n_ctx {
+    if !ctx_shift && slots[loaded].n + 1 >= c.n_ctx {
         truncated = true;
         stop_type = STOP_LIMIT;
         has_next = false;
@@ -1579,6 +1583,7 @@ fn slot_state(st: stash::Stash&) {
     stash::keep_value(st, t_cache_prompt);
     stash::keep_value(st, t_n_predict);
     stash::keep_value(st, t_n_keep);
+    stash::keep_value(st, t_n_discard);
     stash::keep_value(st, t_n_indent);
     stash::keep_value(st, t_max_predict_ms);
     stash::keep_value(st, t_sp);
@@ -1998,6 +2003,26 @@ fn step() {
             slots[s].n = slots[s].n_kv;
             release(s);
         }
+    }
+    // context shift (pre_decode): a slot whose next token does not fit keeps
+    // its n_keep first tokens and drops n_discard, half the rest by default, after them
+    for s in slots.len {
+        guard ctx_shift && slots[s].busy && slots[s].generating && slots[s].n_kv + 1 >= c.n_ctx else { continue; }
+        load(s);
+        var n_keep = if t_n_keep < 0 { n_prompt } else { t_n_keep };
+        if vocab::add_bos { n_keep += 1; }
+        n_keep = min(c.n_ctx - 4, n_keep);
+        let n_left = slots[s].n_kv - n_keep;
+        let n_discard = clamp(if t_n_discard != 0 { t_n_discard } else { n_left / 2 }, 0, max(0, n_left - 1));
+        write_stderr(str("slot context shift, id ", s, ", n_keep = ", n_keep, ", n_left = ", n_left, ", n_discard = ", n_discard, "\n"));
+        context::seq_rm(c, s, n_keep, n_keep + n_discard);
+        context::seq_add(c, s, n_keep + n_discard, slots[s].n_kv, -n_discard);
+        // the tokens after those dropped moved back, the one to decode next with them
+        let at = s * c.n_ctx;
+        for i in n_keep + n_discard..slots[s].n { slot_tokens[at + i - n_discard] = slot_tokens[at + i]; }
+        slots[s].n -= n_discard;
+        slots[s].n_kv -= n_discard;
+        truncated = true;
     }
     var tokens: i32[>..] = [];
     var pos: i64[>..] = [];
@@ -2884,6 +2909,8 @@ fn setup() {
         else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
         else if a == "-n" || a == "--n-predict" || a == "--predict" { base_n_predict = int_value(); }
         else if a == "--keep" { base_n_keep = int_value(); }
+        else if a == "--context-shift" { ctx_shift = true; }
+        else if a == "--no-context-shift" { ctx_shift = false; }
         else if a == "-a" || a == "--alias" { alias.clear(); alias.append(value()); }
         else if a == "--api-key" { api_key.clear(); api_key.append(value()); }
         else if a == "--path" { static_dir.clear(); static_dir.append(value()); }
@@ -2962,6 +2989,10 @@ fn setup() {
     c.unified = n_slots > 1;
     c.n_seq_max = n_slots;
     context::init(c, m, if n_ctx > 0 { n_ctx } else { m.hp.n_ctx_train as i64 });
+    if ctx_shift && !context::can_shift(c, m) {
+        write_stderr("warning: ctx_shift is not supported by this context, it will be disabled\n");
+        ctx_shift = false;
+    }
     for s in n_slots { slots.push(Slot { .. }); }
     slot_tokens.resize(n_slots * c.n_ctx, 0);
     sampler::apply_model_defaults(sp, m.meta);

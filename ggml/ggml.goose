@@ -21,6 +21,7 @@ let TYPE_I64 = 27;
 // enum ggml_prec
 let PREC_F32 = 10;
 
+let ROPE_TYPE_NONE = -1;      // llama_rope_type's, for models without rope
 let ROPE_TYPE_NORMAL = 0;
 let ROPE_TYPE_NEOX = 2;
 let ROPE_TYPE_MROPE = 8;
@@ -116,6 +117,9 @@ extern fn permute(ctx: Ctx, a: Tensor, ax0: i32, ax1: i32, ax2: i32, ax3: i32) -
 extern fn rope_ext(ctx: Ctx, a: Tensor, pos: Tensor, freqs: Tensor, n_dims: i32, mode: i32,
                    n_ctx_orig: i32, freq_base: f32, freq_scale: f32, ext_factor: f32,
                    attn_factor: f32, beta_fast: f32, beta_slow: f32) -> Tensor = "ggml_rope_ext";
+extern fn rope_ext_inplace(ctx: Ctx, a: Tensor, pos: Tensor, freqs: Tensor, n_dims: i32, mode: i32,
+                           n_ctx_orig: i32, freq_base: f32, freq_scale: f32, ext_factor: f32,
+                           attn_factor: f32, beta_fast: f32, beta_slow: f32) -> Tensor = "ggml_rope_ext_inplace";
 // rope only dimensions n_offs.. of a rope node
 extern fn rope_set_offset(a: Tensor, n_offs: i32) -> Tensor = "ggml_rope_set_offset";
 extern fn flash_attn_ext(ctx: Ctx, q: Tensor, k: Tensor, v: Tensor, mask: Tensor,

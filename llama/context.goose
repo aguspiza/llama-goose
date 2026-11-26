@@ -96,6 +96,9 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     cell_pos.resize(c.n_ctx + c.n_swa_cells, -1);
     cell_seqs.clear();
     cell_seqs.resize(c.n_ctx + c.n_swa_cells, 0);
+    cell_shift.clear();
+    cell_shift.resize(c.n_ctx + c.n_swa_cells, 0);
+    has_shift = false;
     caches.clear();
     caches.push(Cache { lo: 0, size: c.n_ctx, swa: 0, head: 0, n_used: 0 });
     if c.n_swa_cells > 0 { caches.push(Cache { lo: c.n_ctx, size: c.n_swa_cells, swa: m.hp.n_swa, head: 0, n_used: 0 }); }
@@ -106,6 +109,10 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
 // the base cache, then those of the sliding-window layers' own.
 var cell_pos: i64[>..] = [];
 var cell_seqs: u64[>..] = [];
+// How far each cell's position moved since its keys were last rotated, and
+// whether any did: the next decode rotates them first (llama_kv_cells' shift).
+var cell_shift: i64[>..] = [];
+var has_shift = false;
 
 // A cache: its cells, cell_pos[lo..lo + size]. With a window (swa > 0), the
 // cells a sequence's next token cannot see are free to overwrite.
@@ -3217,7 +3224,8 @@ fn any_recurrent(m: model::Model&) -> bool {
 fn clear(c: Context&) {
     ggml::backend_buffer_clear(c.kv_buf, 0);
     c.n_past = 0;
-    for i in cell_pos.len { cell_pos[i] = -1; cell_seqs[i] = 0; }
+    for i in cell_pos.len { cell_pos[i] = -1; cell_seqs[i] = 0; cell_shift[i] = 0; }
+    has_shift = false;
     for k in caches.len { caches[k].head = 0; caches[k].n_used = 0; }
 }
 
@@ -3235,6 +3243,7 @@ fn cache_rm(k: i64, s: i64, p0: i64, p1: i64) {
         cell_seqs[lo + i] &= ~bit;
         if cell_seqs[lo + i] == 0 {
             cell_pos[lo + i] = -1;
+            cell_shift[lo + i] = 0;
             caches[k].n_used--;
             if new_head < 0 { new_head = i; }
         }
@@ -3258,6 +3267,177 @@ fn seq_cp(c: Context&, src: i64, dst: i64, p0: i64, p1: i64) {
         if q >= lo && (p1 < 0 || q < p1) && cell_seqs[i] & from != 0 { cell_seqs[i] |= to; }
     }
     if dst == 0 { c.n_past = seq_pos_max(0) + 1; }
+}
+
+// Whether the positions of the cache can move (llama_memory_can_shift):
+// not with M-RoPE, nor with a sliding-window layers' cache smaller than the base one.
+fn can_shift(c: Context&, m: model::Model&) -> bool {
+    return n_pos_per_embd(m) == 1 && (c.n_swa_cells == 0 || c.n_swa_cells == c.n_ctx);
+}
+
+// Moves the positions p0..p1 (p1 < 0: all from p0) of sequence s by d
+// (llama_memory_seq_add): a cell moved below position 0 is freed, the keys
+// of the others are rotated by the next decode. The search for free cells
+// starts at the first cell freed, else at the start.
+fn seq_add(c: Context&, s: i64, p0: i64, p1: i64, d: i64) {
+    guard d != 0 else { return; }
+    let bit: u64 = 1 << s;
+    let from = max(p0, 0);
+    let to = if p1 < 0 { 1 << 62 } else { p1 };
+    guard from != to else { return; }
+    for k in caches.len {
+        let lo = caches[k].lo;
+        var new_head = -1;
+        for i in caches[k].size {
+            let q = cell_pos[lo + i];
+            guard q >= from && q < to && cell_seqs[lo + i] & bit != 0 else { continue; }
+            cell_pos[lo + i] = q + d;
+            cell_shift[lo + i] += d;
+            has_shift = true;
+            if cell_pos[lo + i] < 0 {
+                cell_pos[lo + i] = -1;
+                cell_seqs[lo + i] = 0;
+                cell_shift[lo + i] = 0;
+                caches[k].n_used--;
+                if new_head < 0 { new_head = i; }
+            }
+        }
+        caches[k].head = max(new_head, 0);
+    }
+    if s == 0 { c.n_past = seq_pos_max(0) + 1; }
+}
+
+// Divides the positions p0..p1 (p1 < 0: all from p0) of sequence s by d
+// (llama_memory_seq_div). The keys are rotated by the old position less the
+// new one, as llama_kv_cells::pos_div records it.
+fn seq_div(c: Context&, s: i64, p0: i64, p1: i64, d: i64) {
+    guard d != 1 else { return; }
+    let bit: u64 = 1 << s;
+    let from = max(p0, 0);
+    let to = if p1 < 0 { 1 << 62 } else { p1 };
+    guard from != to else { return; }
+    for i in cell_pos.len {
+        let q = cell_pos[i];
+        guard q >= from && q < to && cell_seqs[i] & bit != 0 else { continue; }
+        cell_pos[i] = q / d;
+        cell_shift[i] += q - cell_pos[i];
+        has_shift = true;
+    }
+    if s == 0 { c.n_past = seq_pos_max(0) + 1; }
+}
+
+// Whether a layer ropes its keys (llama_hparams::has_rope, the rope_pattern
+// of each architecture).
+fn has_rope(hp: model::HParams&, il: i64) -> bool {
+    let a = hp.arch;
+    if a == model::ARCH_SMOLLM3 { return (il + 1) % hp.n_no_rope_layer_step != 0; }
+    if a == model::ARCH_AFMOE { return hp.n_no_rope_layer_step > 0 && (il + 1) % hp.n_no_rope_layer_step != 0; }
+    if a == model::ARCH_SMALLTHINKER { return hp.n_no_rope_layer_step == hp.n_layer || il % hp.n_no_rope_layer_step != 0; }
+    if a == model::ARCH_COHERE2 { return hp.is_swa[il]; }
+    if a == model::ARCH_EXAONE4 { return hp.n_layer != 64 || hp.is_swa[il]; }
+    if a == model::ARCH_GRANITE || a == model::ARCH_GRANITE_HYBRID { return hp.rope_finetuned; }
+    return true;
+}
+
+// A layer's rope, as a K-shift rotates its keys (llama_model::get_rope_params
+// and the architectures' own): the dimensions from n_offs, by the base and
+// scale of its kind of layer; with k_norm, a norm's weight to take off first.
+struct RopeParams { n_rot: i64, n_offs: i64, freq_base: f32, freq_scale: f32, ext_factor: f32, attn_factor: f32,
+                    factors: ggml::Tensor, k_norm: ggml::Tensor }
+
+fn rope_params(m: model::Model&, c: Context&, il: i64) -> RopeParams {
+    let hp .= m.hp;
+    let ly = m.layers[il];
+    let swa = hp.is_swa[il];
+    var rp = RopeParams {
+        n_rot: model::rot(hp, il),
+        n_offs: if hp.n_lora_kv > 0 { model::head_k(hp, il) - model::rot(hp, il) } else { 0 },
+        freq_base: if swa { hp.rope_freq_base_train_swa } else { hp.rope_freq_base_train },
+        freq_scale: if swa { hp.rope_freq_scale_train_swa } else { hp.rope_freq_scale_train },
+        ext_factor: hp.yarn_ext_factor,
+        attn_factor: hp.yarn_attn_factor,
+        factors: rope_factors(m, c, ly),
+        k_norm: ggml::NONE,
+    };
+    let a = hp.arch;
+    if a == model::ARCH_COHERE2 || a == model::ARCH_EXAONE4 || a == model::ARCH_LFM2 || a == model::ARCH_LIMITE {
+        // the sliding-window layers with the global base and scale
+        rp.freq_base = hp.rope_freq_base_train;
+        rp.freq_scale = hp.rope_freq_scale_train;
+    } else if a == model::ARCH_OLMO2 {
+        rp.freq_base = hp.rope_freq_base_train;
+        if swa { rp.freq_scale = 1.0; rp.ext_factor = 0.0; rp.attn_factor = 1.0; }   // without YaRN
+    } else if a == model::ARCH_FALCON_H1 || a == model::ARCH_PANGU_EMBED {
+        rp.factors = ggml::NONE;
+    } else if a == model::ARCH_HUNYUAN_DENSE || a == model::ARCH_MAINCODER {
+        rp.k_norm = ly.attn_k_norm;
+    }
+    return rp;
+}
+
+// The rotation of a layer's keys k, [n_embd_k_gqa, n_cells], by each cell's
+// shift (build_rope_shift): in place on the rotated dimensions, or through
+// f32 when a norm's weight has to come off first and go back on after.
+fn rope_shift(ctx: ggml::Ctx, m: model::Model&, c: Context&, k: ggml::Tensor, shift: ggml::Tensor, il: i64) -> ggml::Tensor {
+    let hp .= m.hp;
+    let rp = rope_params(m, c, il);
+    let n_head_kv = hp.n_head_kv[il] as i64;
+    let n_embd_head_k = model::head_k(hp, il);
+    let n_embd_k_gqa = model::n_embd_k_gqa(hp, il);
+    let n_cells = ggml::ne(k, 1);
+    if rp.k_norm.p == 0 {
+        let typ = ggml::tensor_type(k);
+        let k_rope = ggml::view_3d(ctx, k, rp.n_rot, n_head_kv, n_cells, ggml::row_size(typ, n_embd_head_k),
+                                   ggml::row_size(typ, n_embd_k_gqa), ggml::row_size(typ, rp.n_offs));
+        return ggml::rope_ext_inplace(ctx, k_rope, shift, rp.factors, rp.n_rot as i32, hp.rope_type, hp.n_ctx_orig_yarn as i32,
+                                      rp.freq_base, rp.freq_scale, rp.ext_factor, rp.attn_factor, hp.yarn_beta_fast, hp.yarn_beta_slow);
+    }
+    var tmp = ggml::reshape_3d(ctx, ggml::cast(ctx, k, ggml::TYPE_F32), n_embd_head_k, n_head_kv, n_cells);
+    tmp = ggml::div(ctx, tmp, rp.k_norm);
+    tmp = ggml::rope_ext(ctx, tmp, shift, rp.factors, rp.n_rot as i32, hp.rope_type, hp.n_ctx_orig_yarn as i32,
+                         rp.freq_base, rp.freq_scale, rp.ext_factor, rp.attn_factor, hp.yarn_beta_fast, hp.yarn_beta_slow);
+    if rp.n_offs > 0 { tmp = ggml::rope_set_offset(tmp, rp.n_offs as i32); }
+    tmp = ggml::mul(ctx, tmp, rp.k_norm);
+    return ggml::cpy(ctx, tmp, k);
+}
+
+// The keys of the cells whose positions moved rotated by how far they moved
+// (llama_kv_cache::update with do_shift, build_graph_shift), each layer's
+// that ropes them, before the next ubatch.
+fn apply_shift(c: Context&, m: model::Model&) {
+    guard has_shift else { return; }
+    guard can_shift(c, m) else { abort("decode: this model's cache cannot shift its positions (K-shift)"); }
+    if m.hp.rope_type != ggml::ROPE_TYPE_NONE {
+        drop_graph();
+        let gctx = ggml::init_graph(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false));
+        let gf = ggml::new_graph_custom(gctx, MAX_NODES, false);
+        var shifts: ggml::Tensor[..2] = [];
+        for k in caches.len {
+            shifts.push(ggml::new_tensor_1d(gctx, ggml::TYPE_I32, caches[k].size));
+            ggml::set_input(shifts[k]);
+        }
+        var any = false;
+        for il in m.hp.n_layer as i64 {
+            guard c.k[il].p != 0 && has_rope(m.hp, il) else { continue; }
+            let k = if c.n_swa_cells > 0 && m.hp.is_swa[il] { swa_cache() } else { BASE };
+            ggml::build_forward_expand(gf, rope_shift(gctx, m, c, c.k[il], shifts[k], il));
+            any = true;
+        }
+        if any {
+            guard ggml::gallocr_alloc_graph(c.galloc, gf) else { abort("decode: failed to allocate the K-shift graph"); }
+            for k in caches.len {
+                guard ggml::allocated(shifts[k]) else { continue; }
+                var data: i32[>..] = [];
+                for i in caches[k].lo..caches[k].lo + caches[k].size { data.push(cell_shift[i] as i32); }
+                ggml::backend_set_i32(shifts[k], data);
+            }
+            ggml::backend_cpu_set_n_threads(m.backend, c.n_threads);
+            guard ggml::backend_graph_compute(m.backend, gf) == 0 else { abort("decode: K-shift compute failed"); }
+        }
+        ggml::free(gctx);
+    }
+    for i in cell_shift.len { cell_shift[i] = 0; }
+    has_shift = false;
 }
 
 // Keeps the first n positions of sequence s, forgets the rest:
@@ -3388,6 +3568,7 @@ fn apply_slot(k: i64, idxs: const i64[:], pos: const i64[:], seqs: const u64[:])
         }
         cell_pos[lo + idx] = pos[i];
         cell_seqs[lo + idx] = seqs[i];
+        cell_shift[lo + idx] = 0;
         caches[k].n_used++;
     }
     for s in 64 {
@@ -3689,6 +3870,7 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
                  outputs: const i32[:], logits: f32[>..]&, embd: const f32[:] = [], causal: bool = true) {
     let n_tokens = pos.len;
     let n_outputs = outputs.len;
+    apply_shift(c, m);
 
     // the cells, in each cache (find_slot, apply_ubatch)
     var idxs: i64[>..] = [];

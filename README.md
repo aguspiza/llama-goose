@@ -65,10 +65,10 @@ in part.
 | ❌ Other kinds of model | Embedding and encoder-only models (the bert family and its WPM tokenizer, t5encoder), diffusion models, audio decoders. |
 | 🟡 Multimodal | Images through the SigLIP encoder, with the projectors of gemma3 and idefics3 (SmolVLM), in `tools/mtmd_cli`. Not the other 70 encoders of `mtmd` (Qwen-VL, LLaVA, InternVL, ...), audio, video, nor `--mmproj` in the server and `completion`. |
 | ❌ Adapters and state | LoRA adapters, control vectors, saving and loading a context's state (session and prompt cache files). |
-| 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). The sliding-window layers keep a smaller cache of their own. The server checkpoints them, as llama-server does, but not a recurrent state. Not the cache split per sequence, context shift or self-extend. A recurrent model and T5 hold one sequence. |
+| 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`). The sliding-window layers keep a smaller cache of their own. The server checkpoints them, as llama-server does, but not a recurrent state. Context shift (`--context-shift`, in `completion` and the server) and self-extend (`-gan`, `-gaw`) move a sequence's positions and rotate its keys. Not the cache split per sequence. A recurrent model and T5 hold one sequence. |
 | 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
 | 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
-| 🟡 `llama-completion`, `llama-cli` | Not context shift, prompt cache files or self-extend; the cli has no images, audio or `-hf` downloads. |
+| 🟡 `llama-completion`, `llama-cli` | Not prompt cache files; the cli has no images, audio or `-hf` downloads. |
 | ❌ `common/` | The argument parser (each program reads the flags it supports itself), downloads (`-hf`), fitting the context to the free memory. |
 | ❌ Other programs | `llama-quantize`, `llama-bench`, `llama-embedding`, `llama-tts`, `llama-imatrix` and the rest of llama.cpp's tools and examples. |
 

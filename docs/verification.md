@@ -26,7 +26,7 @@ has the summary.
 | Jinja chat templates (`common_chat_templates_init`/`apply`, the prompt) | ported | `tests/chat_template`, `tools/completion --jinja` |
 | PEG parsers (`common/peg-parser`) | ported | `tests/peg`: test-gbnf-generation's cases and parse cases of test-basic |
 | tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 83 templates of `models/templates`; `tests/chat_peg`: all 603 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
-| `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except context shift, prompt cache files and self-extend | `tools/completion` |
+| `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except prompt cache files | `tools/completion` |
 | `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported, with llama-server's 4 slots in one KV cache (`-np` for another number; one for a recurrent model): the requests of the slots at work are decoded together, a batch at a time, a client that leaves stops its generation, and `/health` and CORS preflights are answered meanwhile; except the prompt cache in RAM (`--cache-ram`), a cache split per slot, embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses, slots included, with Qwen3 and Qwen2.5 |
 | `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images, audio and `-hf` downloads; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
 | the rest of `common/` (args, downloads) | not yet | |
@@ -74,6 +74,20 @@ the three models, in English and Spanish, with and without colors, give
 the same bytes as `llama-completion` fed the same lines.
 `scripts/compare-completion.sh` runs both and compares (llama.cpp writes
 stdout in Windows text mode, `\r\n`, which it reads as `\n`).
+
+Past the context, with `--context-shift` (`-c 256`, 600 tokens, greedy, 8
+threads), `tools/completion` writes the same text as `llama-completion` on
+66 of the 68 models of the regression list: a shift drops half the tokens
+after `--keep`, moves the rest back, and rotates their keys by the distance
+(the K-shift graph, with each architecture's rope; through f32 for the
+models whose K norm's weight comes after the rope). The two others: PLM,
+which llama.cpp does not load either, and flan-t5, which `tools/completion`
+does not run (its encoder is not called there). Self-extend (`-gan 4 -gaw
+128` and `-gan 2 -gaw 256`, `-c 1024`) gives the same text with Qwen3. The
+server's context shift, with the default `n_keep` and `n_discard` and with
+others, gives the same responses as llama-server's with Qwen3 and gemma-3
+270M, whose sliding-window layers can shift only when their cache is as big
+as the base one, as in llama.cpp.
 
 ## What bit-identical results need from the build
 

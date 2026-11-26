@@ -4,6 +4,7 @@
 //   completion -m model.gguf [-p prompt] [-sys system] [-cnv | -no-cnv] [-st] [-i | -if]
 //              [-r reverse-prompt]... [-n n_predict] [-c n_ctx] [-b n_batch] [-t threads] [-s seed]
 //              [--chat-template tmpl] [--jinja | --no-jinja] [-co on|off|auto] [-sp] [--keep n]
+//              [--context-shift] [-gan n] [-gaw w]
 //              [--no-display-prompt] [--no-escape] [-mli] [--in-prefix s] [--in-suffix s] [--in-prefix-bos]
 //              [--temp t] [--top-k k] [--top-p p] [--min-p p] [--typical p]
 //              [--repeat-penalty r] [--repeat-last-n n] [--presence-penalty p]
@@ -133,6 +134,9 @@ fn main() {
     var n_ctx = 4096;
     var n_batch = 2048;
     var n_keep = 0;
+    var ctx_shift = false;
+    var ga_n = 1;               // self-extend: the group-attention factor
+    var ga_w = 512;             // and width
     var n_threads: i32 = 0;
     var conversation = CNV_AUTO;
     var single_turn = false;
@@ -179,6 +183,10 @@ fn main() {
         else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
         else if a == "-s" || a == "--seed" { sp.seed = (int_value() & 0xFFFFFFFF) as! u32; }
         else if a == "--keep" { n_keep = int_value(); }
+        else if a == "--context-shift" { ctx_shift = true; }
+        else if a == "--no-context-shift" { ctx_shift = false; }
+        else if a == "-gan" || a == "--grp-attn-n" { ga_n = int_value(); }
+        else if a == "-gaw" || a == "--grp-attn-w" { ga_w = int_value(); }
         else if a == "-cnv" || a == "--conversation" { conversation = CNV_ON; }
         else if a == "-no-cnv" || a == "--no-conversation" { conversation = CNV_OFF; }
         else if a == "-st" || a == "--single-turn" { single_turn = true; }
@@ -274,6 +282,10 @@ fn main() {
     var c = context::Context { n_threads: n_threads, .. };
     context::init(c, m, n_ctx);
     n_ctx = c.n_ctx;
+    if ctx_shift && !context::can_shift(c, m) {
+        write_stderr("common_init_from_params: KV cache shifting is not supported for this context, disabling KV cache shifting\n");
+        ctx_shift = false;
+    }
 
     sampler::apply_model_defaults(sp, m.meta);
     var ch = sampler::Chain { .. };
@@ -397,6 +409,11 @@ fn main() {
     var input_echo = true;
     var display = true;
     var n_remain = n_predict;
+    var ga_i = 0;               // the positions grouped so far
+    if ga_n != 1 {
+        if ga_n <= 0 { fail("grp_attn_n must be positive"); }
+        if ga_w % ga_n != 0 { fail("grp_attn_w must be a multiple of grp_attn_n"); }
+    }
     var n_consumed = 0;
     var assistant: u8[>..] = [];
     // the sampler's recent tokens (common_sampler's prev), newest last
@@ -430,9 +447,36 @@ fn main() {
                 write_stderr(str("<<input too long: skipped ", skipped, " token", if skipped != 1 { "s" } else { "" }, ">>"));
                 console::set_display(console::RESET);
             }
-            if c.n_past + embd.len >= n_ctx {
-                write_stderr("\n\nmain: context full and context shift is disabled => stopping\n");
-                break;
+            if ga_n == 1 {
+                // infinite text generation: when the context is full, the n_keep
+                // first tokens kept and half of the rest after them dropped
+                if c.n_past + embd.len >= n_ctx {
+                    if !ctx_shift {
+                        write_stderr("\n\nmain: context full and context shift is disabled => stopping\n");
+                        break;
+                    }
+                    if n_predict == -2 {
+                        write_stderr(str("\n\nmain: context full and n_predict == ", n_predict, " => stopping\n"));
+                        break;
+                    }
+                    let n_left = c.n_past - n_keep;
+                    let n_discard = n_left / 2;
+                    context::seq_rm(c, 0, n_keep, n_keep + n_discard);
+                    context::seq_add(c, 0, n_keep + n_discard, c.n_past, -n_discard);
+                }
+            } else {
+                // Self-Extend: each window of ga_w positions from ga_i grouped into ga_w / ga_n
+                while c.n_past >= ga_i + ga_w {
+                    let n_past = c.n_past;
+                    let ib = (ga_n * ga_i) / ga_w;
+                    let bd = (ga_w / ga_n) * (ga_n - 1);
+                    let dd = (ga_w / ga_n) - ib * bd - ga_w;
+                    context::seq_add(c, 0, ga_i, n_past, ib * bd);
+                    context::seq_div(c, 0, ga_i + ib * bd, ga_i + ib * bd + ga_w, ga_n);
+                    context::seq_add(c, 0, ga_i + ib * bd + ga_w, n_past + ib * bd, dd);
+                    c.n_past = n_past - bd;
+                    ga_i += ga_w / ga_n;
+                }
             }
             var start = 0;
             while start < embd.len {
