@@ -1,8 +1,9 @@
 // A context: a model's KV cache, and the decoding of batches of tokens
 // through the model's graph; flash attention, as llama.cpp picks on the
 // CPU. The cache holds several sequences when the model has attention only
-// (not recurrent layers, not T5's decoder), one cache unified for all of
-// them. The graph of each architecture follows llama.cpp's
+// (not recurrent layers, not T5's decoder): one cache unified for all of
+// them, or split into a stream of cells for each (llama.cpp's default with
+// several sequences, without -kvu). The graph of each architecture follows llama.cpp's
 // src/models/<arch>.cpp operation by operation.
 // port-of: src/llama-context.cpp src/llama-graph.cpp src/llama-kv-cache.cpp src/models/gemma3.cpp src/models/llama.cpp
 // port-of: src/models/lfm2.cpp src/models/lfm-base.cpp src/llama-memory-recurrent.cpp src/models/lfm3.cpp
@@ -27,19 +28,21 @@ namespace context;
 let MAX_NODES = 8192;
 
 struct Context {
-    n_ctx: i64,
+    n_ctx: i64,                  // the cells of all the streams (llama_n_ctx)
+    n_ctx_seq: i64,              // those of one stream: the context of a sequence (llama_n_ctx_seq)
     n_threads: i32 = 0,          // 0: ggml::default_threads()
     kv_ctx: ggml::Ctx,
     kv_buf: ggml::Buffer,
-    k: ggml::Tensor[..512],      // per attention layer: [n_embd_k_gqa, n_ctx], f16
+    k: ggml::Tensor[..512],      // per attention layer: [n_embd_k_gqa, n_ctx], f16, stream after stream
     v: ggml::Tensor[..512],
     r: ggml::Tensor[..512],      // per recurrent layer: its convolution's state, [n_embd_r, 1], f32
     s: ggml::Tensor[..512],      // and a gated delta net's, [n_embd_s, 1], f32
     n_past: i64,                 // sequence 0's next position: its last + 1
-    unified: bool = false,       // several sequences: each attends to its own cells' rows (kv_unified, fused_kv_rows)
+    unified: bool = false,       // several sequences: each attends to its own cells' rows (kv_unified, fused_kv_rows);
+                                 // else each has a stream of its own
     n_seq_max: i64 = 1,          // the sequences, and the tokens of a ubatch, that size
     n_ubatch: i64 = 512,         // the sliding-window layers' cache
-    n_swa_cells: i64,            // that cache's cells, 0 without one
+    n_swa_cells: i64,            // that cache's cells in a stream, 0 without one
     n_enc: i64,
     galloc: ggml::Gallocr,
     embd_enc: f32[>..],          // t5: the encoder's output, [n_embd, n_enc]
@@ -50,6 +53,13 @@ fn pad_to(n: i64, to: i64) -> i64 { (n + to - 1) / to * to }
 
 fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     c.n_ctx = pad_to(n_ctx, 256);
+    // without a unified cache, each sequence its stream: n_ctx split among them, each part padded
+    n_stream = if !c.unified && c.n_seq_max > 1 { c.n_seq_max } else { 1 };
+    c.n_ctx_seq = c.n_ctx;
+    if n_stream > 1 {
+        c.n_ctx_seq = pad_to(c.n_ctx / n_stream, 256);
+        c.n_ctx = c.n_ctx_seq * n_stream;
+    }
     if c.n_threads <= 0 { c.n_threads = ggml::default_threads(); }
     ggml::use_threadpool(m.backend, c.n_threads);
     let n_layer = m.hp.n_layer as i64;
@@ -59,7 +69,7 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     c.n_swa_cells = 0;
     if m.hp.swa_type != model::SWA_NONE && m.hp.arch != model::ARCH_T5 {
         let n_seq = if c.unified { c.n_seq_max } else { 1 };
-        c.n_swa_cells = pad_to(min(c.n_ctx, m.hp.n_swa * n_seq + c.n_ubatch), 256);
+        c.n_swa_cells = pad_to(min(c.n_ctx_seq, m.hp.n_swa * n_seq + c.n_ubatch), 256);
     }
     for il in n_layer {
         // keys and values for attention, a state for a recurrent layer; falcon-h1's layers have both
@@ -68,7 +78,7 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
         var r = ggml::NONE;
         var s = ggml::NONE;
         if model::has_kv(m.hp, il) {
-            let n_cells = if c.n_swa_cells > 0 && m.hp.is_swa[il] { c.n_swa_cells } else { c.n_ctx };
+            let n_cells = n_stream * (if c.n_swa_cells > 0 && m.hp.is_swa[il] { c.n_swa_cells } else { c.n_ctx_seq });
             k = ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_k_gqa(m.hp, il), n_cells);
             v = ggml::new_tensor_2d(c.kv_ctx, ggml::TYPE_F16, model::n_embd_v_gqa(m.hp, il), n_cells);
             ggml::set_name(k, str("cache_k_l", il));
@@ -93,15 +103,24 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
     c.galloc = ggml::gallocr_new(m.backend);
     c.n_past = 0;
     cell_pos.clear();
-    cell_pos.resize(c.n_ctx + c.n_swa_cells, -1);
+    let n_cells = c.n_ctx + n_stream * c.n_swa_cells;
+    cell_pos.resize(n_cells, -1);
     cell_seqs.clear();
-    cell_seqs.resize(c.n_ctx + c.n_swa_cells, 0);
+    cell_seqs.resize(n_cells, 0);
     cell_shift.clear();
-    cell_shift.resize(c.n_ctx + c.n_swa_cells, 0);
+    cell_shift.resize(n_cells, 0);
     has_shift = false;
     caches.clear();
-    caches.push(Cache { lo: 0, size: c.n_ctx, swa: 0, head: 0, n_used: 0 });
-    if c.n_swa_cells > 0 { caches.push(Cache { lo: c.n_ctx, size: c.n_swa_cells, swa: m.hp.n_swa, head: 0, n_used: 0 }); }
+    for st in n_stream {
+        let row0 = st * c.n_ctx_seq;
+        caches.push(Cache { lo: row0, row0: row0, size: c.n_ctx_seq, swa: 0, strm: st, head: 0, n_used: 0 });
+    }
+    if c.n_swa_cells > 0 {
+        for st in n_stream {
+            let row0 = st * c.n_swa_cells;
+            caches.push(Cache { lo: c.n_ctx + row0, row0: row0, size: c.n_swa_cells, swa: m.hp.n_swa, strm: st, head: 0, n_used: 0 });
+        }
+    }
 }
 
 // The cache's cells (llama_kv_cells), for the one context of a program: the
@@ -117,15 +136,23 @@ var has_shift = false;
 // A cache: its cells, cell_pos[lo..lo + size]. With a window (swa > 0), the
 // cells a sequence's next token cannot see are free to overwrite.
 struct Cache {
-    lo: i64,
+    lo: i64,                     // its first cell in cell_pos
+    row0: i64,                   // and in its layers' tensors
     size: i64,
     swa: u32,
+    strm: i64,                   // its stream
     head: i64,                   // where the search for free cells starts
     n_used: i64,                 // the cells not empty
 }
-var caches: Cache[..2] = [];
-let BASE = 0;
-fn swa_cache() -> i64 { caches.len - 1 }   // the base one without a window
+// the base caches, one per stream, then the sliding-window layers' ones
+var caches: Cache[..128] = [];
+var n_stream = 1;
+
+// The stream of sequence s (seq_to_stream): its own, or the one of a unified cache.
+fn stream_of(s: i64) -> i64 { if n_stream > 1 { s } else { 0 } }
+fn base_cache(s: i64) -> i64 { stream_of(s) }
+// the sliding-window layers' cache of sequence s, the base one without a window
+fn swa_cache(s: i64) -> i64 { if caches.len > n_stream { n_stream + stream_of(s) } else { stream_of(s) } }
 
 // The inputs of one graph, set after it is allocated.
 struct Inputs {
@@ -159,6 +186,8 @@ struct Build {
     n_tokens: i64,
     n_kv: i64,
     n_kv_swa: i64,               // n_kv of the sliding-window layers' cache
+    n_stream: i64 = 1,           // the streams of the ubatch, s0 the first: a slice of its tokens each
+    s0: i64 = 0,
     inp: Inputs,
     // LLAMA_GOOSE_TRACE=1: tensors whose sums decode prints, to compare
     // with llama.cpp's eval callback
@@ -203,7 +232,7 @@ fn build_norm_ln(b: Build&, m: model::Model&, cur: ggml::Tensor, w: ggml::Tensor
 // context's size (llama_model::get_rope_factors).
 fn rope_factors(m: model::Model&, c: Context&, ly: model::Layer) -> ggml::Tensor {
     if ly.rope_freqs.p != 0 { return ly.rope_freqs; }
-    if c.n_ctx > m.hp.n_ctx_orig_yarn { return ly.rope_long; }
+    if c.n_ctx_seq > m.hp.n_ctx_orig_yarn { return ly.rope_long; }
     return ly.rope_short;
 }
 
@@ -376,7 +405,7 @@ fn build_kqv(b: Build&, m: model::Model&, c: Context&, il: i64,
     // the sliding-window layers' own cache, or the base one
     let own_swa = c.n_swa_cells > 0 && hp.is_swa[il];
     let n_kv = if own_swa { b.n_kv_swa } else { b.n_kv };
-    let n_cells = if own_swa { c.n_swa_cells } else { c.n_ctx };
+    let n_cells = if own_swa { c.n_swa_cells } else { c.n_ctx_seq };     // a stream's
     let kv_idxs = if own_swa { b.inp.kv_idxs_swa } else { b.inp.kv_idxs };
     if src == il {
         ggml::build_forward_expand(b.gf, v_cur);
@@ -394,16 +423,17 @@ fn build_kqv(b: Build&, m: model::Model&, c: Context&, il: i64,
     let n_head_kv = hp.n_head_kv[il] as i64;
     let hk = model::head_k(hp, il);
     let hv = model::head_v(hp, il);
-    let k = ggml::view_4d(ctx, cache_k, hk, n_head_kv, n_kv, 1,
+    // the cells of the ubatch's streams (get_k, get_v)
+    let k = ggml::view_4d(ctx, cache_k, hk, n_head_kv, n_kv, b.n_stream,
                           ggml::row_size(tk, hk), ggml::row_size(tk, n_embd_k),
-                          ggml::row_size(tk, n_embd_k * n_cells), 0);
-    let v = ggml::view_4d(ctx, cache_v, hv, n_head_kv, n_kv, 1,
+                          ggml::row_size(tk, n_embd_k * n_cells), ggml::row_size(tk, n_embd_k * n_cells) * b.s0);
+    let v = ggml::view_4d(ctx, cache_v, hv, n_head_kv, n_kv, b.n_stream,
                           ggml::row_size(tv, hv), ggml::row_size(tv, n_embd_v),
-                          ggml::row_size(tv, n_embd_v * n_cells), 0);
+                          ggml::row_size(tv, n_embd_v * n_cells), ggml::row_size(tv, n_embd_v * n_cells) * b.s0);
 
     let rows = if hp.is_swa[il] { b.inp.rows_swa } else { b.inp.rows };
-    // with rows, the tokens split into slices, each attending to its own cells
-    let n_slices = if rows.p != 0 { ggml::ne(rows, 1) } else { 1 };
+    // with rows, or streams, the tokens split into slices, each attending to its own cells
+    let n_slices = if rows.p != 0 { ggml::ne(rows, 1) } else { b.n_stream };
     let n_tps = ggml::ne(q, 2) / n_slices;
     let qs = ggml::view_4d(ctx, q, ggml::ne(q, 0), ggml::ne(q, 1), n_tps, n_slices,
                            ggml::nb(q, 1), ggml::nb(q, 2), ggml::nb(q, 2) * n_tps, 0);
@@ -3181,19 +3211,18 @@ fn cache_pos_max(k: i64, s: i64) -> i64 {
 
 // The smallest position of sequence s, -1 if it has none (llama_memory_seq_pos_min):
 // that of the sliding-window layers' cache, which the base one holds too.
-fn seq_pos_min(s: i64) -> i64 { cache_pos_min(swa_cache(), s) }
+fn seq_pos_min(s: i64) -> i64 { cache_pos_min(swa_cache(s), s) }
 
 // The last position of sequence s in the cache, or -1 (llama_memory_seq_pos_max).
-fn seq_pos_max(s: i64) -> i64 { cache_pos_max(swa_cache(), s) }
+fn seq_pos_max(s: i64) -> i64 { cache_pos_max(swa_cache(s), s) }
 
 // mask[t][col] for token t, at pos[t] of the first of its sequences, and the
 // cell of cache k of column col (rows[slice][col] with rows, else col itself):
 // 0, or -inf when the cell is empty, of another sequence, in the token's
 // future, or (swa) out of its window. With ALiBi the kept cells hold minus
-// their distance to the token (set_input_attn_mask).
+// their distance to the token (set_input_attn_mask). Appended to mask.
 fn fill_mask(mask: f32[>..]&, k: i64, n_cols: i64, pos: const i64[:], seqs: const u64[:], rows: const i32[:],
              n_slices: i64, alibi: bool = false, causal: bool = true) {
-    mask.clear();
     let lo = caches[k].lo;
     let swa = caches[k].swa;
     let n_tps = pos.len / n_slices;
@@ -3258,13 +3287,49 @@ fn seq_rm(c: Context&, s: i64, p0: i64, p1: i64) {
 }
 
 // Puts the positions p0..p1 (p1 < 0: all from p0) of sequence src in
-// sequence dst too, in the same cells: llama_memory_seq_cp.
+// sequence dst too, in the same cells: llama_memory_seq_cp. Between two
+// streams, all of src's: dst's stream becomes a copy of src's cells of it,
+// keys and values with them.
 fn seq_cp(c: Context&, src: i64, dst: i64, p0: i64, p1: i64) {
     let from: u64 = 1 << src;
     let to: u64 = 1 << dst;
-    let lo = max(p0, 0);
-    for q, i in cell_pos {
-        if q >= lo && (p1 < 0 || q < p1) && cell_seqs[i] & from != 0 { cell_seqs[i] |= to; }
+    if stream_of(src) != stream_of(dst) {
+        guard (p0 <= 0 || p0 + 1 >= c.n_ctx_seq) && (p1 <= 0 || p1 + 1 >= c.n_ctx_seq) else {
+            abort("seq_cp() is only supported for full KV buffers");
+        }
+        for k0 in caches.len {
+            guard caches[k0].strm == stream_of(src) else { continue; }
+            let k1 = k0 - caches[k0].strm + stream_of(dst);
+            let lo0 = caches[k0].lo;
+            let lo1 = caches[k1].lo;
+            caches[k1].n_used = 0;
+            for i in caches[k0].size {
+                let has = cell_seqs[lo0 + i] & from != 0;
+                cell_pos[lo1 + i] = if has { cell_pos[lo0 + i] } else { -1 };
+                cell_seqs[lo1 + i] = if has { to } else { 0 };
+                cell_shift[lo1 + i] = if has { cell_shift[lo0 + i] } else { 0 };
+                if has { caches[k1].n_used++; }
+            }
+            caches[k1].head = caches[k0].head;
+        }
+        // the keys and values of the stream (update's stream copy)
+        var data: u8[>..] = [];
+        for kv in 2 {
+            for il in c.k.len {
+                let t = if kv == 0 { c.k[il] } else { c.v[il] };
+                guard t.p != 0 else { continue; }
+                let n_rows = ggml::ne(t, 1) / n_stream;
+                let row = ggml::row_size(ggml::tensor_type(t), ggml::ne(t, 0));
+                data.resize(n_rows * row, 0);
+                ggml::backend_get_bytes(t, data, stream_of(src) * n_rows * row);
+                ggml::backend_set_bytes(t, data, stream_of(dst) * n_rows * row);
+            }
+        }
+    } else {
+        let lo = max(p0, 0);
+        for q, i in cell_pos {
+            if q >= lo && (p1 < 0 || q < p1) && cell_seqs[i] & from != 0 { cell_seqs[i] |= to; }
+        }
     }
     if dst == 0 { c.n_past = seq_pos_max(0) + 1; }
 }
@@ -3272,7 +3337,7 @@ fn seq_cp(c: Context&, src: i64, dst: i64, p0: i64, p1: i64) {
 // Whether the positions of the cache can move (llama_memory_can_shift):
 // not with M-RoPE, nor with a sliding-window layers' cache smaller than the base one.
 fn can_shift(c: Context&, m: model::Model&) -> bool {
-    return n_pos_per_embd(m) == 1 && (c.n_swa_cells == 0 || c.n_swa_cells == c.n_ctx);
+    return n_pos_per_embd(m) == 1 && (c.n_swa_cells == 0 || c.n_swa_cells == c.n_ctx_seq);
 }
 
 // Moves the positions p0..p1 (p1 < 0: all from p0) of sequence s by d
@@ -3286,6 +3351,7 @@ fn seq_add(c: Context&, s: i64, p0: i64, p1: i64, d: i64) {
     let to = if p1 < 0 { 1 << 62 } else { p1 };
     guard from != to else { return; }
     for k in caches.len {
+        guard caches[k].strm == stream_of(s) else { continue; }
         let lo = caches[k].lo;
         var new_head = -1;
         for i in caches[k].size {
@@ -3411,25 +3477,29 @@ fn apply_shift(c: Context&, m: model::Model&) {
         drop_graph();
         let gctx = ggml::init_graph(MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(MAX_NODES, false));
         let gf = ggml::new_graph_custom(gctx, MAX_NODES, false);
+        // one input for the base caches' cells, one for the sliding-window layers', all their streams'
         var shifts: ggml::Tensor[..2] = [];
-        for k in caches.len {
-            shifts.push(ggml::new_tensor_1d(gctx, ggml::TYPE_I32, caches[k].size));
-            ggml::set_input(shifts[k]);
-        }
+        shifts.push(ggml::new_tensor_1d(gctx, ggml::TYPE_I32, c.n_ctx));
+        if c.n_swa_cells > 0 { shifts.push(ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_stream * c.n_swa_cells)); }
+        for t in shifts { ggml::set_input(t); }
         var any = false;
         for il in m.hp.n_layer as i64 {
             guard c.k[il].p != 0 && has_rope(m.hp, il) else { continue; }
-            let k = if c.n_swa_cells > 0 && m.hp.is_swa[il] { swa_cache() } else { BASE };
+            let k = if c.n_swa_cells > 0 && m.hp.is_swa[il] { 1 } else { 0 };
             ggml::build_forward_expand(gf, rope_shift(gctx, m, c, c.k[il], shifts[k], il));
             any = true;
         }
         if any {
             guard ggml::gallocr_alloc_graph(c.galloc, gf) else { abort("decode: failed to allocate the K-shift graph"); }
-            for k in caches.len {
-                guard ggml::allocated(shifts[k]) else { continue; }
-                var data: i32[>..] = [];
-                for i in caches[k].lo..caches[k].lo + caches[k].size { data.push(cell_shift[i] as i32); }
-                ggml::backend_set_i32(shifts[k], data);
+            var lo = 0;
+            for t in shifts {
+                let n = ggml::ne(t, 0);
+                if ggml::allocated(t) {
+                    var data: i32[>..] = [];
+                    for i in lo..lo + n { data.push(cell_shift[i] as i32); }
+                    ggml::backend_set_i32(t, data);
+                }
+                lo += n;
             }
             ggml::backend_cpu_set_n_threads(m.backend, c.n_threads);
             guard ggml::backend_graph_compute(m.backend, gf) == 0 else { abort("decode: K-shift compute failed"); }
@@ -3462,7 +3532,7 @@ fn save_swa(c: Context&, m: model::Model&, s: i64, pos: i64[>..]&, data: u8[>..]
     pos.clear();
     data.clear();
     guard c.n_swa_cells > 0 else { return; }
-    let k = swa_cache();
+    let k = swa_cache(s);
     let lo = caches[k].lo;
     let bit: u64 = 1 << s;
     let p_max = cache_pos_max(k, s);
@@ -3479,7 +3549,7 @@ fn save_swa(c: Context&, m: model::Model&, s: i64, pos: i64[>..]&, data: u8[>..]
             for idx in idxs {
                 let at = data.len;
                 data.resize(at + row, 0);
-                ggml::backend_get_bytes(t, data[at..at + row], idx * row);
+                ggml::backend_get_bytes(t, data[at..at + row], (caches[k].row0 + idx) * row);
             }
         }
     }
@@ -3490,7 +3560,7 @@ fn save_swa(c: Context&, m: model::Model&, s: i64, pos: i64[>..]&, data: u8[>..]
 // as a ubatch's are, and their keys and values written.
 fn load_swa(c: Context&, m: model::Model&, s: i64, pos: const i64[:], data: const u8[:]) {
     guard c.n_swa_cells > 0 else { return; }
-    let k = swa_cache();
+    let k = swa_cache(s);
     cache_rm(k, s, -1, -1);
     if pos.len > 0 {
         var idxs: i64[>..] = [];
@@ -3505,7 +3575,7 @@ fn load_swa(c: Context&, m: model::Model&, s: i64, pos: const i64[:], data: cons
                 guard t.p != 0 && m.hp.is_swa[il] else { continue; }
                 let row = ggml::row_size(ggml::tensor_type(t), ggml::ne(t, 0));
                 for idx in idxs {
-                    ggml::backend_set_bytes(t, data[off..off + row], idx * row);
+                    ggml::backend_set_bytes(t, data[off..off + row], (caches[k].row0 + idx) * row);
                     off += row;
                 }
             }
@@ -3514,9 +3584,18 @@ fn load_swa(c: Context&, m: model::Model&, s: i64, pos: const i64[:], data: cons
     if s == 0 { c.n_past = seq_pos_max(0) + 1; }
 }
 
-// The cells no sequence holds: a batch of more tokens does not fit. Those of
-// the base cache: the sliding-window layers' own frees the cells out of the window.
-fn n_free() -> i64 { caches[BASE].size - caches[BASE].n_used }
+// Whether a batch of tokens of these sequences fits in the cells no sequence
+// holds, of each one's stream. Those of the base caches: the sliding-window
+// layers' own free the cells out of the window.
+fn fits(seqs: const u64[:]) -> bool {
+    var need: i64[..64] = [];
+    for _ in n_stream { need.push(0); }
+    for bits in seqs { need[stream_of(first_seq(bits) as i64)]++; }
+    for st in n_stream {
+        if caches[base_cache(st)].size - caches[base_cache(st)].n_used < need[st] { return false; }
+    }
+    return true;
+}
 
 // The cells of cache k for n tokens (find_slot, not contiguous), counted from
 // its first: free cells from the head on, or from the start when enough
@@ -3667,6 +3746,10 @@ fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i
     if any_recurrent(m) || m.hp.arch == model::ARCH_T5 {
         for s in seqs { guard s == 1 else { abort("decode: this model's cache holds one sequence"); } }
     }
+    if n_stream > 1 {
+        decode_streams(c, m, tokens, pos, seqs, logits, outputs, n_ubatch);
+        return;
+    }
     logits.clear();
     var row: f32[>..] = [];
     var outs: i32[>..] = [];
@@ -3683,6 +3766,91 @@ fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i
         if wanted { logits.append(row); }
         start = end;
     }
+    c.n_past = seq_pos_max(0) + 1;
+}
+
+// decode_seqs with a stream per sequence: ubatches of the same number of
+// tokens of each of consecutive sequences (split_equal, sequential), the
+// tokens of each in the batch's order, one sequence's after another's.
+fn decode_streams(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i64[:], seqs: const u64[:],
+                  logits: f32[>..]&, outputs: const i32[:], n_ubatch: i64) {
+    let n = tokens.len;
+    for bits in seqs {
+        guard n_bits(bits) == 1 else {
+            abort("split_equal: sequential split is not supported when there are coupled sequences in the input batch (you may need to use the -kvu flag)");
+        }
+    }
+    // the row of logits of each token asked for, in outputs' order
+    var out_of: i64[>..] = [];
+    out_of.resize(n, -1);
+    for o, k in outputs { out_of[o] = k; }
+    if outputs.len == 0 { out_of[n - 1] = 0; }
+    let n_out = max(outputs.len, 1);
+    var rows: f32[>..] = [];
+    var used: bool[>..] = [];
+    used.resize(n, false);
+    var n_used = 0;
+    var ub_tokens: i32[>..] = [];
+    var ub_pos: i64[>..] = [];
+    var ub_seqs: u64[>..] = [];
+    var outs: i32[>..] = [];
+    var whose: i64[>..] = [];
+    var row: f32[>..] = [];
+    while n_used < n {
+        // the sequences: that of the first token not used, then the next one, and so on
+        var set: i64[..64] = [];
+        for i in n {
+            guard !used[i] else { continue; }
+            let sq = first_seq(seqs[i]) as i64;
+            if set.len == 0 || sq == set[set.len - 1] + 1 { set.push(sq); }
+        }
+        // the tokens of each not used yet, in order
+        var cur: i64[..64] = [];
+        for _ in set.len { cur.push(0); }
+        var per: i64[>..] = [];     // the tokens of the ubatch, sequence after sequence: set.len lists
+        var n_tps = 0;
+        loop {
+            // one more token of each, while each has one
+            var next: i64[..64] = [];
+            for sl, j in set {
+                var i = cur[j];
+                while i < n && (used[i] || first_seq(seqs[i]) as i64 != sl) { i++; }
+                guard i < n else { break; }
+                next.push(i);
+            }
+            guard next.len == set.len else { break; }
+            for i, j in next { used[i] = true; cur[j] = i + 1; per.push(i); }
+            n_used += set.len;
+            n_tps++;
+            if (n_tps + 1) * set.len > n_ubatch { break; }
+        }
+        ub_tokens.clear();
+        ub_pos.clear();
+        ub_seqs.clear();
+        outs.clear();
+        whose.clear();
+        for j in set.len {
+            for t in n_tps {
+                let i = per[t * set.len + j];
+                if out_of[i] >= 0 { outs.push(ub_tokens.len as i32); whose.push(out_of[i]); }
+                ub_tokens.push(tokens[i]);
+                ub_pos.push(pos[i]);
+                ub_seqs.push(seqs[i]);
+            }
+        }
+        // a ubatch whose logits are not asked for: those of its last token, dropped
+        let wanted = outs.len > 0;
+        if !wanted { outs.push((ub_tokens.len - 1) as i32); }
+        decode_ubatch(c, m, ub_tokens, ub_pos, ub_seqs, outs, row);
+        guard wanted else { continue; }
+        let n_vocab = row.len / outs.len;
+        if rows.len == 0 { rows.resize(n_out * n_vocab, 0.0); }
+        for k, j in whose {
+            for x in n_vocab { rows[k * n_vocab + x] = row[j * n_vocab + x]; }
+        }
+    }
+    logits.clear();
+    logits.append(rows);
     c.n_past = seq_pos_max(0) + 1;
 }
 
@@ -3712,6 +3880,7 @@ fn decode_embd(c: Context&, m: model::Model&, embd: const f32[:], pos: const i64
 
 // What the graph of a ubatch depends on.
 struct Shape { n_tokens: i64, n_outputs: i64, n_kv: i64, n_kv_swa: i64, n_slices: i64, n_rows: i64, n_rows_swa: i64, n_enc: i64,
+               n_stream: i64, s0: i64,  // the ubatch's streams, a slice each, and the first
                n_slice_outputs: i64,    // gemma4 prunes: the most outputs of a slice
                embd: bool }             // embeddings in place of tokens
 
@@ -3740,6 +3909,8 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
         n_tokens: n_tokens,
         n_kv: sh.n_kv,
         n_kv_swa: sh.n_kv_swa,
+        n_stream: sh.n_stream,
+        s0: sh.s0,
         inp: Inputs {
             tokens: ggml::new_tensor_1d(gctx, ggml::TYPE_I32, n_tokens),
             embd: ggml::NONE,
@@ -3778,8 +3949,9 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
             b.inp.mask_swa = b.inp.mask;
         }
     } else {
-        b.inp.mask = ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv, n_tokens);
-        b.inp.mask_swa = if has_swa { ggml::new_tensor_2d(gctx, ggml::TYPE_F16, b.n_kv_swa, n_tokens) } else { b.inp.mask };
+        let n_tps = n_tokens / sh.n_stream;
+        b.inp.mask = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, b.n_kv, n_tps, 1, sh.n_stream);
+        b.inp.mask_swa = if has_swa { ggml::new_tensor_4d(gctx, ggml::TYPE_F16, b.n_kv_swa, n_tps, 1, sh.n_stream) } else { b.inp.mask };
     }
     if c.n_swa_cells > 0 {
         b.inp.kv_idxs_swa = ggml::new_tensor_1d(gctx, ggml::TYPE_I64, n_tokens);
@@ -3872,14 +4044,41 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     let n_outputs = outputs.len;
     apply_shift(c, m);
 
-    // the cells, in each cache (find_slot, apply_ubatch)
+    // with streams: a slice of n_tps tokens for each of the ubatch's, from s0 on
+    var n_ub_streams = 1;
+    var s0 = 0;
+    if n_stream > 1 {
+        var all: u64 = 0;
+        for bits in seqs { all |= bits; }
+        n_ub_streams = n_bits(all);
+        s0 = first_seq(all) as i64;
+    }
+    let n_tps = n_tokens / n_ub_streams;
+    // the cells, in each cache of each stream (find_slot, apply_ubatch); their rows in the tensors
     var idxs: i64[>..] = [];
     var idxs_swa: i64[>..] = [];
-    find_slot(BASE, n_tokens, idxs);
-    apply_slot(BASE, idxs, pos, seqs);
-    if c.n_swa_cells > 0 {
-        find_slot(swa_cache(), n_tokens, idxs_swa);
-        apply_slot(swa_cache(), idxs_swa, pos, seqs);
+    var cells: i64[>..] = [];
+    for sl in n_ub_streams {
+        let a = sl * n_tps;
+        let st = stream_of(first_seq(seqs[a]) as i64);
+        for kind in 2 {
+            guard kind == 0 || c.n_swa_cells > 0 else { continue; }
+            let k = if kind == 0 { base_cache(st) } else { swa_cache(st) };
+            find_slot(k, n_tps, cells);
+            apply_slot(k, cells, pos[a..a + n_tps], seqs[a..a + n_tps]);
+            for i in cells {
+                if kind == 0 { idxs.push(caches[k].row0 + i); } else { idxs_swa.push(caches[k].row0 + i); }
+            }
+        }
+    }
+    // llama.cpp's get_n_kv: the cells in use, padded to 256, of the fullest stream
+    var n_kv = 0;
+    var n_kv_swa = 0;
+    for sl in n_ub_streams {
+        let st = stream_of(s0 + sl);
+        n_kv = max(n_kv, min(c.n_ctx_seq, max(256, pad_to(used_max_p1(base_cache(st)), 256))));
+        let ks = swa_cache(st);
+        n_kv_swa = max(n_kv_swa, min(caches[ks].size, max(256, pad_to(used_max_p1(ks), 256))));
     }
 
     var tracing = false;
@@ -3890,19 +4089,20 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     let has_swa = m.hp.swa_type != model::SWA_NONE;
     // unified: each slice of tokens attends to the rows of its sequences' cells
     let use_rows = c.unified && m.hp.arch != model::ARCH_T5;
-    let n_slices = if use_rows { n_slices_of(seqs) } else { 1 };
+    let n_slices = if use_rows { n_slices_of(seqs) } else { n_ub_streams };
     var rows: i32[>..] = [];
     var rows_swa: i32[>..] = [];
     var sh = Shape {
         n_tokens: n_tokens,
         n_outputs: n_outputs,
-        // llama.cpp's get_n_kv: the cells in use, padded to 256
-        n_kv: min(c.n_ctx, max(256, pad_to(used_max_p1(BASE), 256))),
-        n_kv_swa: min(caches[swa_cache()].size, max(256, pad_to(used_max_p1(swa_cache()), 256))),
+        n_kv: n_kv,
+        n_kv_swa: n_kv_swa,
         n_slices: n_slices,
         n_rows: 0,
         n_rows_swa: 0,
         n_enc: c.n_enc,
+        n_stream: n_ub_streams,
+        s0: s0,
         n_slice_outputs: 0,
         embd: embd.len > 0,
     };
@@ -3915,8 +4115,8 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         }
     }
     if use_rows {
-        sh.n_rows = kv_rows(BASE, pos, seqs, n_slices, rows);
-        if has_swa { sh.n_rows_swa = kv_rows(swa_cache(), pos, seqs, n_slices, rows_swa); }
+        sh.n_rows = kv_rows(base_cache(0), pos, seqs, n_slices, rows);
+        if has_swa { sh.n_rows_swa = kv_rows(swa_cache(0), pos, seqs, n_slices, rows_swa); }
     }
     kept_slice_outputs = sh.n_slice_outputs;
     if !kept.live || kept.shape != sh { build_graph(c, m, sh, tracing); }
@@ -3972,7 +4172,8 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     var cut: f32[>..] = [];
     if use_rows {
         ggml::backend_set_i32(b.inp.rows, rows);
-        fill_mask(mask, BASE, ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, alibi, causal);
+        mask.clear();
+        fill_mask(mask, base_cache(0), ggml::ne(b.inp.rows, 0), pos, seqs, rows, n_slices, alibi, causal);
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
         if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
             take_mask_rows(mask, ggml::ne(b.inp.rows, 0), take, cut);
@@ -3980,7 +4181,8 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         }
         if has_swa {
             ggml::backend_set_i32(b.inp.rows_swa, rows_swa);
-            fill_mask(mask, swa_cache(), ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices, false, causal);
+            mask.clear();
+            fill_mask(mask, swa_cache(0), ggml::ne(b.inp.rows_swa, 0), pos, seqs, rows_swa, n_slices, false, causal);
             ggml::backend_set_f16(b.inp.mask_swa, mask);
             if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
                 take_mask_rows(mask, ggml::ne(b.inp.rows_swa, 0), take, cut);
@@ -3988,14 +4190,22 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
             }
         }
     } else {
-        fill_mask(mask, BASE, b.n_kv, pos, seqs, [], 1, alibi, causal);
+        mask.clear();
+        for sl in n_ub_streams {
+            let a = sl * n_tps;
+            fill_mask(mask, base_cache(s0 + sl), b.n_kv, pos[a..a + n_tps], seqs[a..a + n_tps], [], 1, alibi, causal);
+        }
         if ggml::allocated(b.inp.mask) { ggml::backend_set_f16(b.inp.mask, mask); }
         if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask) {
             take_mask_rows(mask, b.n_kv, take, cut);
             ggml::backend_set_f16(b.inp.out_mask, cut);
         }
         if has_swa {
-            fill_mask(mask, swa_cache(), b.n_kv_swa, pos, seqs, [], 1, false, causal);
+            mask.clear();
+            for sl in n_ub_streams {
+                let a = sl * n_tps;
+                fill_mask(mask, swa_cache(s0 + sl), b.n_kv_swa, pos[a..a + n_tps], seqs[a..a + n_tps], [], 1, false, causal);
+            }
             ggml::backend_set_f16(b.inp.mask_swa, mask);
             if pruned && take.len > 0 && ggml::allocated(b.inp.out_mask_swa) {
                 take_mask_rows(mask, b.n_kv_swa, take, cut);

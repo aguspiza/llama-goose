@@ -5,12 +5,13 @@
 // workers send it as Plod jobs. Those that generate each take a slot, 4 by
 // default: the main thread runs the slots at work together, their tokens in
 // one batch after another, in one KV cache they share, and keeps each
-// request's state while it works on another's. The cache keeps each slot's
+// request's state while it works on another's (with -np, each slot has a
+// stream of the cache to itself, as llama-server without -kvu). The cache keeps each slot's
 // last prompt, so that a request that starts as one of them reuses it. A
 // client that goes away stops its generation. A model whose cache holds one
 // sequence (a recurrent one, T5) has one slot.
 //   server -m model.gguf [--host 127.0.0.1] [--port 8080] [-c n_ctx] [-b n_batch] [-t threads] [-np slots]
-//          [-n n_predict] [-a alias] [--api-key key] [--jinja | --no-jinja]
+//          [-kvu] [-n n_predict] [-a alias] [--api-key key] [--jinja | --no-jinja]
 //          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
 //          [-s seed] [--temp t] [--top-k k] [--top-p p] [--min-p p] [...the sampling flags of completion]
 // Routes: /health, /props, /models, /completion(s), /v1/completions,
@@ -124,9 +125,9 @@ struct Slot {
     last_user: i64 = -1,            // where the prompt's last user message starts, -1 for none
 }
 var slots: Slot[>..] = [];
-var slot_tokens: i32[>..] = [];     // room for c.n_ctx tokens for each slot
+var slot_tokens: i32[>..] = [];     // room for c.n_ctx_seq tokens for each slot
 
-fn tokens_of(s: i64) -> const i32[:] { slot_tokens[s * c.n_ctx..s * c.n_ctx + slots[s].n] }
+fn tokens_of(s: i64) -> const i32[:] { slot_tokens[s * c.n_ctx_seq..s * c.n_ctx_seq + slots[s].n] }
 
 //
 // errors: what a request fails with, thrown to the route's handler
@@ -1527,7 +1528,7 @@ fn process_token(tok: i32, piece0: const u8[:]) -> bool {
         if t_stream { send_partial(tok, text_to_send); }
         if find(text_to_send, "\n") >= 0 { has_new_line_now = true; }
     }
-    if !ctx_shift && slots[loaded].n + 1 >= c.n_ctx {
+    if !ctx_shift && slots[loaded].n + 1 >= c.n_ctx_seq {
         truncated = true;
         stop_type = STOP_LIMIT;
         has_next = false;
@@ -1791,7 +1792,7 @@ fn last_checkpoint(s: i64) -> i64 {
 }
 
 fn is_user_start(s: i64, pos: i64) -> bool {
-    for x in user_starts { if x == s * c.n_ctx + pos { return true; } }
+    for x in user_starts { if x == s * c.n_ctx_seq + pos { return true; } }
     return false;
 }
 
@@ -1837,7 +1838,7 @@ fn create_checkpoint(s: i64, n_cur: i64, pos_min: i64, pos_max: i64) {
 fn find_user_starts(s: i64, prompt: const i32[:]) {
     var i = user_starts.len - 1;
     while i >= 0 {
-        if user_starts[i] / c.n_ctx == s {
+        if user_starts[i] / c.n_ctx_seq == s {
             for j in i..user_starts.len - 1 { user_starts[j] = user_starts[j + 1]; }
             user_starts.pop();
         }
@@ -1850,7 +1851,7 @@ fn find_user_starts(s: i64, prompt: const i32[:]) {
     guard delim.len > 0 else { return; }
     for p in prompt.len {
         if p + delim.len <= prompt.len && prompt[p..p + delim.len] == delim[..] {
-            user_starts.push(s * c.n_ctx + p);
+            user_starts.push(s * c.n_ctx_seq + p);
             slots[s].last_user = p;
         }
     }
@@ -1931,9 +1932,9 @@ fn start(prompt: const i32[:]) {
     }
 
     let s = pick_slot(prompt);
-    if prompt.len >= c.n_ctx {
+    if prompt.len >= c.n_ctx_seq {
         slots[s].used_at = clock_ns();      // the slot took the request, and released it
-        fail(E_EXCEED_CONTEXT, str("request (", prompt.len, " tokens) exceeds the available context size (", c.n_ctx, " tokens), try increasing it"));
+        fail(E_EXCEED_CONTEXT, str("request (", prompt.len, " tokens) exceeds the available context size (", c.n_ctx_seq, " tokens), try increasing it"));
     }
     // the cache: the common prefix kept, at least one token to evaluate
     var n_past = 0;
@@ -1977,7 +1978,7 @@ fn start(prompt: const i32[:]) {
     }
     if n_past == prompt.len && n_past > 0 { n_past--; }
     n_past = context::keep_first(c, m, s, n_past);
-    for t, i in prompt { slot_tokens[s * c.n_ctx + i] = t; }
+    for t, i in prompt { slot_tokens[s * c.n_ctx_seq + i] = t; }
     slots[s].n = prompt.len;
     slots[s].n_kv = n_past;
     slots[s].generating = false;
@@ -2007,18 +2008,18 @@ fn step() {
     // context shift (pre_decode): a slot whose next token does not fit keeps
     // its n_keep first tokens and drops n_discard, half the rest by default, after them
     for s in slots.len {
-        guard ctx_shift && slots[s].busy && slots[s].generating && slots[s].n_kv + 1 >= c.n_ctx else { continue; }
+        guard ctx_shift && slots[s].busy && slots[s].generating && slots[s].n_kv + 1 >= c.n_ctx_seq else { continue; }
         load(s);
         var n_keep = if t_n_keep < 0 { n_prompt } else { t_n_keep };
         if vocab::add_bos { n_keep += 1; }
-        n_keep = min(c.n_ctx - 4, n_keep);
+        n_keep = min(c.n_ctx_seq - 4, n_keep);
         let n_left = slots[s].n_kv - n_keep;
         let n_discard = clamp(if t_n_discard != 0 { t_n_discard } else { n_left / 2 }, 0, max(0, n_left - 1));
         write_stderr(str("slot context shift, id ", s, ", n_keep = ", n_keep, ", n_left = ", n_left, ", n_discard = ", n_discard, "\n"));
         context::seq_rm(c, s, n_keep, n_keep + n_discard);
         context::seq_add(c, s, n_keep + n_discard, slots[s].n_kv, -n_discard);
         // the tokens after those dropped moved back, the one to decode next with them
-        let at = s * c.n_ctx;
+        let at = s * c.n_ctx_seq;
         for i in n_keep + n_discard..slots[s].n { slot_tokens[at + i - n_discard] = slot_tokens[at + i]; }
         slots[s].n -= n_discard;
         slots[s].n_kv -= n_discard;
@@ -2033,7 +2034,7 @@ fn step() {
         let bit: u64 = 1 << s;
         slots[s].out = tokens.len;
         want.push(s);
-        tokens.push(slot_tokens[s * c.n_ctx + slots[s].n_kv]);
+        tokens.push(slot_tokens[s * c.n_ctx_seq + slots[s].n_kv]);
         pos.push(slots[s].n_kv);
         seqs.push(bit);
         slots[s].n_kv++;
@@ -2045,7 +2046,7 @@ fn step() {
             let n_start = slots[s].n_kv;
             let n_prompt_s = slots[s].n;
             while slots[s].n_kv < n_prompt_s && tokens.len < n_batch {
-                tokens.push(slot_tokens[s * c.n_ctx + slots[s].n_kv]);
+                tokens.push(slot_tokens[s * c.n_ctx_seq + slots[s].n_kv]);
                 pos.push(slots[s].n_kv);
                 seqs.push(bit);
                 slots[s].n_kv++;
@@ -2087,7 +2088,7 @@ fn step() {
     var i = 0;
     while i < tokens.len {
         let n = min(nb, tokens.len - i);
-        if context::n_free() < n {
+        if !context::fits(seqs[i..i + n]) {
             // llama_decode's 1: no room. A slot not at work gives up its cells; else a smaller part is tried
             if nb == 1 { fail_all("Context size has been exceeded."); return; }
             if !purge_idle_slot() { nb /= 2; }
@@ -2143,7 +2144,7 @@ fn sample_slot(s: i64, row: const f32[:]) {
     }
     exception::try<Fail>(body) { f => send_error(f.kind, fail_msg); more = false; };
     if more && !client_gone {
-        slot_tokens[s * c.n_ctx + slots[s].n] = tok;
+        slot_tokens[s * c.n_ctx_seq + slots[s].n] = tok;
         slots[s].n++;
     } else {
         finish(s);
@@ -2339,7 +2340,7 @@ fn route_props() {
     o.push('{');
     k(o, "params");
     params_json(o, true);
-    ki(o, "n_ctx", c.n_ctx);
+    ki(o, "n_ctx", c.n_ctx_seq);
     o.push('}');
     ki(o, "total_slots", slots.len);
     ks(o, "model_alias", model_name);
@@ -2422,7 +2423,7 @@ fn route_models() {
     o.push('{');
     ki(o, "vocab_type", vocab::vtype);
     ki(o, "n_vocab", vocab::n_tokens());
-    ki(o, "n_ctx", c.n_ctx);
+    ki(o, "n_ctx", c.n_ctx_seq);
     ki(o, "n_ctx_train", m.hp.n_ctx_train);
     ki(o, "n_embd", m.hp.n_embd);
     ki(o, "n_params", n_params);
@@ -2881,6 +2882,7 @@ fn setup() {
     var breakers_given = false;
     var dry_breakers: u8[>..] = [];
     var n_slots = 0;
+    var kv_unified = false;
     var i = 1;
     fn value() -> const u8[:] {
         if i + 1 >= args.len { die(str("missing value for ", args[i])); }
@@ -2915,6 +2917,8 @@ fn setup() {
         else if a == "--api-key" { api_key.clear(); api_key.append(value()); }
         else if a == "--path" { static_dir.clear(); static_dir.append(value()); }
         else if a == "-np" || a == "--parallel" { n_slots = int_value(); }
+        else if a == "-kvu" || a == "--kv-unified" { kv_unified = true; }
+        else if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; }
         else if a == "-ctxcp" || a == "--ctx-checkpoints" || a == "--swa-checkpoints" { n_ctx_checkpoints = int_value(); }
         else if a == "--jinja" { use_jinja = true; }
         else if a == "--no-jinja" { use_jinja = false; }
@@ -2979,22 +2983,28 @@ fn setup() {
 
     model::load(m, model_path);
     c.n_threads = n_threads;
-    // the slots: llama-server's 4, in one cache unified for them
+    // the slots: llama-server's 4 by default, in one cache unified for them; those
+    // of -np, a stream of the cache each unless -kvu
     if context::any_recurrent(m) || m.hp.arch == model::ARCH_T5 {
         if n_slots > 1 { write_stderr("warning: this model's cache holds one sequence: one slot\n"); }
         n_slots = 1;
     }
-    if n_slots <= 0 { n_slots = 4; }
+    if n_slots <= 0 {
+        n_slots = 4;
+        kv_unified = true;
+    }
     if n_slots > 64 { die("at most 64 slots"); }
-    c.unified = n_slots > 1;
+    c.unified = kv_unified && n_slots > 1;
     c.n_seq_max = n_slots;
-    context::init(c, m, if n_ctx > 0 { n_ctx } else { m.hp.n_ctx_train as i64 });
+    // no -c: the context the model was trained with, for each stream (common_fit_params)
+    let n_streams = if c.unified { 1 } else { n_slots };
+    context::init(c, m, if n_ctx > 0 { n_ctx } else { m.hp.n_ctx_train as i64 * n_streams });
     if ctx_shift && !context::can_shift(c, m) {
         write_stderr("warning: ctx_shift is not supported by this context, it will be disabled\n");
         ctx_shift = false;
     }
     for s in n_slots { slots.push(Slot { .. }); }
-    slot_tokens.resize(n_slots * c.n_ctx, 0);
+    slot_tokens.resize(n_slots * c.n_ctx_seq, 0);
     sampler::apply_model_defaults(sp, m.meta);
     base_sp = sp;
 

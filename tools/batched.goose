@@ -1,7 +1,8 @@
 // llama.cpp's examples/batched: one prompt, then n_parallel sequences
 // generated from it, one token of each per batch, in a cache unified for
-// all of them (-kvu; the cache split per sequence is not ported).
-//   batched -m model.gguf [-p prompt] [-n n_predict] [-np n_parallel]
+// all of them (-kvu), or split into a stream for each. As llama.cpp's, the
+// prompt, of all the sequences at once, needs -kvu.
+//   batched -m model.gguf [-p prompt] [-n n_predict] [-np n_parallel] [-kvu]
 //           [--temp t] [--top-k k] [--top-p p] [-s seed]
 // port-of: examples/batched/batched.cpp
 import std;
@@ -38,10 +39,12 @@ fn main() {
     var top_p: f32 = 0.95;
     var temp: f32 = 0.80;
     var seed: u32 = sampler::DEFAULT_SEED;
+    var kv_unified = false;
     var i = 1;
     while i < args.len {
         let a = args[i];
-        if a == "-kvu" || a == "--kv-unified" { i++; continue; }
+        if a == "-kvu" || a == "--kv-unified" { kv_unified = true; i++; continue; }
+        if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; i++; continue; }
         guard i + 1 < args.len else { usage(); }
         let v = args[i + 1];
         if a == "-m" { model_path.clear(); model_path.append(v); }
@@ -70,7 +73,7 @@ fn main() {
     let n_batch = max(n_predict, n_parallel);
     let n_ubatch = min(512, n_batch);
     var c = context::Context { .. };
-    c.unified = true;
+    c.unified = kv_unified;
     c.n_seq_max = n_parallel;
     c.n_ubatch = n_ubatch;
     context::init(c, m, n_kv_req);

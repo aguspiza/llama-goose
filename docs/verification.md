@@ -14,7 +14,7 @@ has the summary.
 | SPM and BPE tokenizers | ported | all 15 SPM/BPE test vocabs give identical tokens (`tests/tokenizer_0`) |
 | UGM, RWKV, PLaMo2 and PLaMo3 tokenizers | ported | through `tools/simple` with T5, RWKV and PLaMo 2 and 3 models |
 | WPM tokenizer | loads, does not tokenize yet | |
-| model loading, KV cache (one, unified for several sequences, as `-kvu`), recurrent states, decode; T5's encoder | ported for 65 architectures (see [Architectures](../README.md#architectures)); recurrent models and T5 hold one sequence | `tools/simple`, `tools/perplexity`, `tools/batched`, `tools/parallel` |
+| model loading, KV cache (unified for several sequences, as `-kvu`, or a stream per sequence), recurrent states, decode; T5's encoder | ported for 65 architectures (see [Architectures](../README.md#architectures)); recurrent models and T5 hold one sequence | `tools/simple`, `tools/perplexity`, `tools/batched`, `tools/parallel` |
 | other architectures | not yet (see [Architectures](../README.md#architectures)) | |
 | sampling: penalties, DRY, top-k, typical, top-p, min-p, XTC, top-n-sigma, temperature (dynamic too), mirostat 1 and 2, greedy, dist; the model's recommended settings | ported | `tools/completion` |
 | GBNF grammars: the parser, the engine, constrained sampling (rejection sampling, as common_sampler) | ported | `tests/grammar`: the 526 cases of `test-grammar-parser.cpp` and `test-grammar-integration.cpp`; `tools/completion --grammar` |
@@ -117,8 +117,8 @@ above 4); `-t` sets it.
 ## tools/batched and tools/parallel
 
 `tools/batched` and `tools/parallel` are examples/batched and
-examples/parallel, on one cache unified for all the sequences (llama.cpp's
-`-kvu`; the cache split per sequence is not ported). Each cell of the cache
+examples/parallel, on one cache unified for all the sequences with `-kvu`,
+else split into a stream per sequence. Each cell of the cache
 keeps a position and the set of sequences it belongs to, so a shared prompt
 is stored once, and cells are taken as `llama_kv_cache::find_slot` takes
 them. When a batch has tokens of several sequences, each sequence's queries
@@ -130,6 +130,20 @@ same requests and responses as llama-parallel on 23 attention-only models
 of the table above (gemma-3's sliding window among them), and on Qwen3 0.6B
 also with a seed, without the shared prompt and with `--junk`;
 `tools/batched` writes the same 4 sequences as llama-batched.
+
+Without `-kvu`, each sequence has a stream of `n_ctx / n_seq_max` cells
+(padded to 256) of its own, in the same tensors, one stream after another,
+as `llama_kv_cache` with `n_stream > 1`: a batch splits into ubatches of the
+same number of tokens of consecutive sequences (`split_equal`, sequential),
+each sequence's queries attend to its stream's cells through a view of the
+streams the ubatch touches, and copying a sequence to another stream copies
+the stream's cells, keys and values. `tools/parallel` without `-kvu` logs
+the same requests and responses as llama-parallel with Qwen3 0.6B (3 and 4
+clients, 40 to 128 tokens, also with `-pps`) and gemma-3 270M, whose
+sliding-window layers have a stream each too; with a context too small for
+the prompts, both retry with smaller batches and fail alike. `tools/batched`
+without `-kvu` fails as llama-batched does, since its prompt belongs to all
+the sequences at once.
 
 ## tools/mtmd_cli
 
@@ -222,7 +236,10 @@ shared blobs, and responses come back as mail messages, the events of a
 stream as they are generated.
 
 A request that generates takes a slot, as in llama-server: 4 of them by
-default, each a sequence of one KV cache they share, which keeps the slot's
+default, each a sequence of one KV cache they share; with `-np`, each has a
+stream of the cache to itself unless `-kvu` is given (without `-c`, of the
+context the model was trained with, as `common_fit_params` sets it when the
+memory holds it). The cache keeps the slot's
 last prompt for a request that starts as it does (the slot is chosen as
 llama-server chooses it: the most similar prompt, else an empty slot, else
 the one used longest ago). The main thread runs the slots at work together:
@@ -248,7 +265,10 @@ the same, the slot each request got included, with Qwen3 0.6B and Qwen2.5
 E2B and gemma-3 270M (also with 256 tokens), whose sliding-window layers'
 cells the server saves as context checkpoints, splitting the prompts as
 llama-server does to make them, and evaluates a later prompt from; and with
-Mamba 130M and one slot. The cached-token counts differ because
+Mamba 130M and one slot. With `-np 2`, a stream per slot, all 29 are the
+same too with Qwen3 0.6B and gemma-3 270M; with `-c 1024 -np 4 --context-shift`,
+slots of 256 cells, the four context-shift requests of Qwen3 are the same,
+shifted as many times. The cached-token counts differ because
 llama-server reuses a recurrent cache only from a checkpoint, and this port
 does not checkpoint a recurrent state yet. The sliding-window layers
 keep a smaller cache of their own, as llama.cpp's `llama_kv_cache_iswa`: with

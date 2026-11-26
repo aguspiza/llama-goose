@@ -1,8 +1,8 @@
 // llama.cpp's examples/parallel: a server simulated, with n_parallel
 // clients whose requests (a system prompt, then a question) are decoded
-// together in one cache unified for all of them (-kvu; the cache split per
-// sequence is not ported), new requests joining the batch as others end.
-//   parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-ns n_sequences] [-n n_predict]
+// together in one cache unified for all of them (-kvu), or split into a
+// stream for each, new requests joining the batch as others end.
+//   parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-kvu] [-ns n_sequences] [-n n_predict]
 //            [-b n_batch] [-pps] [-nocb] [--junk n] [--temp t] [-s seed]
 // port-of: examples/parallel/parallel.cpp
 import std;
@@ -156,10 +156,12 @@ fn main() {
     var is_sp_shared = false;
     var n_junk = 1;
     var sp = sampler::Params { .. };
+    var kv_unified = false;
     var i = 1;
     while i < args.len {
         let a = args[i];
-        if a == "-kvu" || a == "--kv-unified" { i++; continue; }
+        if a == "-kvu" || a == "--kv-unified" { kv_unified = true; i++; continue; }
+        if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; i++; continue; }
         if a == "-pps" { is_sp_shared = true; i++; continue; }
         if a == "-nocb" || a == "--no-cont-batching" { cont_batching = false; i++; continue; }
         if a == "-cb" || a == "--cont-batching" { cont_batching = true; i++; continue; }
@@ -200,7 +202,7 @@ fn main() {
     model::load(m, model_path);
     let n_ubatch = min(512, n_batch);
     var c = context::Context { .. };
-    c.unified = true;
+    c.unified = kv_unified;
     c.n_seq_max = n_clients + 1;     // and the system prompt's
     c.n_ubatch = n_ubatch;
     context::init(c, m, n_ctx);
@@ -235,7 +237,7 @@ fn main() {
     let n_vocab = vocab::n_tokens();
     var n_total_prompt = 0;
     var n_total_gen = 0;
-    let n_cache_miss = 0;
+    var n_cache_miss = 0;
     let t_main_start = clock();
 
     log("main: Simulating parallel requests from clients:\n");
@@ -327,10 +329,21 @@ fn main() {
 
         if batch.len == 0 { break; }
 
-        // in chunks of n_batch
+        // in chunks of n_batch; one that does not fit in the cache, retried in halves
+        var nb = n_batch;
         var start = 0;
         while start < batch.len {
-            let n_tokens = min(n_batch, batch.len - start);
+            let n_tokens = min(nb, batch.len - start);
+            if !context::fits(seqs[start..start + n_tokens]) {
+                if nb == 1 {
+                    log(str("main : failed to decode the batch, n_batch = ", nb, ", ret = 1\n"));
+                    exit(1);
+                }
+                log(str("main : failed to decode the batch, retrying with n_batch = ", nb / 2, "\n"));
+                n_cache_miss += 1;
+                nb /= 2;
+                continue;
+            }
             outputs.clear();
             for j in n_tokens { if wants[start + j] { outputs.push(j as i32); } }
             context::decode_seqs(c, m, batch[start..start + n_tokens], pos[start..start + n_tokens], seqs[start..start + n_tokens],
@@ -369,6 +382,7 @@ fn main() {
                 cl.i_batch = -1;
             }
             start += n_tokens;
+            nb = n_batch;
         }
     }
 
