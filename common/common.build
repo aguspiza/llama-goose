@@ -1,5 +1,7 @@
 // The C behind llama.cpp's common/ in Goose: libc's number and time
-// formatting, and whether a stream is a terminal.
-c_sources = ["shim.c"];
+// formatting, whether a stream is a terminal, and HTTP through libcurl
+// (loaded at run time, so no curl headers are needed to build).
+c_sources = ["shim.c", "http.c"];
 c_flags_cc = ["-O2"];
 c_libs_windows = ["shell32"];
+c_libs_linux = ["dl"];

@@ -471,9 +471,8 @@ fn main() {
             let v = value();
             use_color = if v == "on" || v == "true" || v == "1" { true } else if v == "off" || v == "false" || v == "0" { false } else { console::tty_can_use_colors() };
         }
-        else if a == "-hf" || a == "--hf-repo" { show_error("-hf: downloading models is not ported yet; use -m <file.gguf>"); exit(1); }
         else {
-            if a == "-m" || a == "--model" { has_model = true; }
+            if a == "-m" || a == "--model" || a == "-hf" || a == "-hfr" || a == "--hf-repo" { has_model = true; }
             quote(a);
         }
         i += 1;

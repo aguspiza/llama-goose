@@ -14,6 +14,7 @@
 //          [-kvu] [-n n_predict] [-a alias] [--api-key key] [--jinja | --no-jinja]
 //          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
 //          [-s seed] [--temp t] [--top-k k] [--top-p p] [--min-p p] [...the sampling flags of completion]
+// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
 // Routes: /health, /props, /models, /completion(s), /v1/completions,
 // /v1/chat/completions, /apply-template, /tokenize, /detokenize.
 // port-of: tools/server/server.cpp tools/server/server-context.cpp tools/server/server-task.cpp
@@ -38,6 +39,7 @@ import common.peg;
 import common.console;
 import common.jdoc;
 import common.json_schema;
+import common.download;
 import common.chat_render;
 import common.chat_peg;
 import common.chat_apply;
@@ -2903,6 +2905,8 @@ fn setup() {
     while i < args.len {
         let a = args[i];
         if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
+        else if download::takes_value(a) { download::set(a, value()); }
+        else if a == "--offline" { download::offline = true; }
         else if a == "--host" { host.clear(); host.append(value()); }
         else if a == "--port" { port = int_value(); }
         else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); }
@@ -2973,6 +2977,7 @@ fn setup() {
         else { die(str("unknown argument: ", a)); }
         i += 1;
     }
+    download::resolve(model_path);
     if model_path.len == 0 { die("--model is required"); }
     if breakers_given {
         if dry_breakers.len > sp.dry_breakers.cap { die("the DRY sequence breakers are too long"); }

@@ -10,6 +10,7 @@
 //              [--repeat-penalty r] [--repeat-last-n n] [--presence-penalty p]
 //              [--frequency-penalty f] [--xtc-probability p] [--xtc-threshold t]
 //              [--top-nsigma n] [--dynatemp-range r] [--dynatemp-exp e]
+// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
 // port-of: tools/completion/completion.cpp
 import std;
 import os;
@@ -28,6 +29,7 @@ import common.jinja;
 import common.chat;
 import common.console;
 import common.json_schema;
+import common.download;
 
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
@@ -175,6 +177,8 @@ fn main() {
     while i < args.len {
         let a = args[i];
         if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
+        else if download::takes_value(a) { download::set(a, value()); }
+        else if a == "--offline" { download::offline = true; }
         else if a == "-p" || a == "--prompt" { prompt.clear(); prompt.append(value()); }
         else if a == "-sys" || a == "--system-prompt" { system_prompt.clear(); system_prompt.append(value()); }
         else if a == "-n" || a == "--n-predict" { n_predict = int_value(); }
@@ -263,6 +267,7 @@ fn main() {
         else { fail(str("unknown argument: ", a)); }
         i += 1;
     }
+    download::resolve(model_path);
     if model_path.len == 0 { fail("--model is required"); }
     if escape {
         process_escapes(prompt);

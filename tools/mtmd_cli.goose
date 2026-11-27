@@ -2,6 +2,8 @@
 // through the model's chat template, then the response.
 //   mtmd_cli -m model.gguf --mmproj mmproj.gguf --image file [--image file ...] -p prompt
 //            [-n n_predict] [-c n_ctx] [-t threads] [--temp t] [-s seed] [-sys prompt]
+// -m and --mmproj can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]
+// [--no-mmproj]: common/download, with the mmproj beside the model.
 // The prompt holds a <__media__> marker for each image, or they go before it.
 // port-of: tools/mtmd/mtmd-cli.cpp
 import std;
@@ -17,10 +19,12 @@ import llama.sampler;
 import common from "../common";
 import common.jinja;
 import common.chat;
+import common.download;
 import mtmd from "../mtmd";
 
 fn usage() {
     write_stderr("usage: mtmd_cli -m model.gguf --mmproj mmproj.gguf --image file [--image file ...] -p prompt\n");
+    write_stderr("                (or -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline] [--no-mmproj])\n");
     write_stderr("                [-n n_predict] [-c n_ctx] [-t threads] [--temp t] [-s seed] [-sys prompt]\n");
     exit(1);
 }
@@ -47,14 +51,18 @@ fn main() {
     var n_ctx = 4096;
     var n_threads: i32 = 8;
     var sp = sampler::Params { .. };
+    var no_mmproj = false;
     var i = 1;
     while i < a.len {
         let k = a[i];
+        if k == "--offline" { download::offline = true; i += 1; continue; }
+        if k == "--no-mmproj" { no_mmproj = true; i += 1; continue; }
         guard i + 1 < a.len else { usage(); }
         let v = a[i + 1];
         let n, ok = parse_int(v);
         if k == "-m" || k == "--model" { model_path.append(v); }
         else if k == "--mmproj" { mmproj_path.append(v); }
+        else if download::takes_value(k) { download::set(k, v); }
         else if k == "--image" { images.append(v); images.push(0); }
         else if k == "-p" || k == "--prompt" { prompt.append(v); }
         else if k == "-sys" || k == "--system-prompt" { system_prompt.append(v); }
@@ -71,6 +79,7 @@ fn main() {
         else { usage(); }
         i += 2;
     }
+    download::resolve(model_path, mmproj_path, !no_mmproj);
     if model_path.len == 0 || mmproj_path.len == 0 || images.len == 0 { usage(); }
 
     var m = model::Model { .. };

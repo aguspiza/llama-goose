@@ -28,8 +28,9 @@ has the summary.
 | tool call and reasoning parsers: the differential autoparser, the 22 dedicated handlers of `common/parsers`, their grammars and triggers, and the output parsed back into a message | ported | `tests/autoparser`: llama.cpp's analysis of all 83 templates of `models/templates`; `tests/chat_peg`: all 603 cases of test-chat.cpp's `test_template_output_peg_parsers` (prompt, grammar, triggers, and the messages of whole and cut outputs) |
 | `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except prompt cache files | `tools/completion` |
 | `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported, with llama-server's 4 slots in one KV cache (`-np` for another number; one for a recurrent model): the requests of the slots at work are decoded together, a batch at a time, a client that leaves stops its generation, and `/health` and CORS preflights are answered meanwhile; except the prompt cache in RAM (`--cache-ram`), a cache split per slot, embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses, slots included, with Qwen3 and Qwen2.5 |
-| `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images, audio and `-hf` downloads; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
-| the rest of `common/` (args, downloads) | not yet | |
+| `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images and audio; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
+| downloads (`common/download`: `-hf`, `-hff`, `-hft`, `--offline`, into the Hugging Face cache) | ported, through libcurl loaded at run time; not `-mu`, Docker, the cache's lock files | [below](#downloads--hf) |
+| the rest of `common/` (args, fitting the context to the free memory) | not yet | |
 
 ## tools/simple
 
@@ -158,6 +159,33 @@ shuffle). Its embeddings are the same bytes as `MTMD_DEBUG_EMBEDDINGS` dumps,
 and its responses, greedy, are the same as llama-mtmd-cli's with SmolVLM
 256M and gemma-3 4B, on the jpeg of llama.cpp's tests and on images of
 600x600, 600x400 (padded slices) and 1300x900 (a 3x2 grid).
+
+## Downloads (-hf)
+
+`common/download` asks the Hub for the branch's commit and the file tree,
+picks the files as llama.cpp does, and downloads them (a HEAD, then up to
+3 attempts that resume the partial file) into huggingface_hub's cache:
+the blob named by its hash, linked from the commit's snapshot, or moved
+there when Windows refuses the link (llama.cpp's "degraded mode"). The
+reference build here has no TLS, so the downloads themselves were checked
+by hash, and the choice and the cache through llama.cpp reading what the
+port wrote:
+
+- `mtmd_cli -hf ggml-org/SmolVLM-256M-Instruct-GGUF` downloads the model and
+  its mmproj, both Q8_0 (the repository has no Q4_K_M); llama-mtmd-cli
+  `--offline` on that cache loads the same files and writes the same
+  caption as the port.
+- A partial file of 50 MB left in `blobs/` is completed, and the model's
+  SHA-256 is its oid.
+- On fake cached repositories, with `--offline`, both pick the same model
+  and mmproj for no tag, `:q8_0`, `:F16` beside a BF16, `:BF16`, a split
+  model in a subdirectory with mmprojs above, beside and elsewhere, a repo
+  with neither Q4_K_M nor Q8_0, `-hff`, and both refuse an unknown file.
+- completion, perplexity, cli (through its server) and the server load a
+  model by `-hf`; an unknown repository and a missing quant fail with the
+  Hub's message and the list of GGUF files.
+- With MSYS2's libcurl (OpenSSL, the Windows certificate store), as the
+  Windows release ships it, beside the program and with MinGW off PATH.
 
 ## Chat templates
 

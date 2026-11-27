@@ -4,6 +4,7 @@
 // stream for each, new requests joining the batch as others end.
 //   parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-kvu] [-ns n_sequences] [-n n_predict]
 //            [-b n_batch] [-pps] [-nocb] [--junk n] [--temp t] [-s seed]
+// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
 // port-of: examples/parallel/parallel.cpp
 import std;
 import os;
@@ -17,6 +18,7 @@ import llama.context;
 import llama.sampler;
 import common from "../common";
 import common.console;
+import common.download;
 
 let K_SYSTEM = """
 Transcript of a never ending dialog, where the User interacts with an Assistant.
@@ -162,12 +164,14 @@ fn main() {
         let a = args[i];
         if a == "-kvu" || a == "--kv-unified" { kv_unified = true; i++; continue; }
         if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; i++; continue; }
+        if a == "--offline" { download::offline = true; i++; continue; }
         if a == "-pps" { is_sp_shared = true; i++; continue; }
         if a == "-nocb" || a == "--no-cont-batching" { cont_batching = false; i++; continue; }
         if a == "-cb" || a == "--cont-batching" { cont_batching = true; i++; continue; }
         guard i + 1 < args.len else { usage(); }
         let v = args[i + 1];
         if a == "-m" { model_path.clear(); model_path.append(v); }
+        else if download::takes_value(a) { download::set(a, v); }
         else if a == "--temp" || a == "--top-p" || a == "--min-p" {
             let x, ok = parse_flt(v);
             if !ok { usage(); }
@@ -189,6 +193,7 @@ fn main() {
         }
         i += 2;
     }
+    download::resolve(model_path);
     if model_path.len == 0 { usage(); }
     guard n_clients >= 1 && n_clients < 64 else { abort("n_parallel: 1 to 63"); }
     n_junk = max(1, n_junk);

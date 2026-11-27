@@ -68,8 +68,8 @@ in part.
 | 🟡 KV cache | One cache unified for all the sequences (llama.cpp's `-kvu`), or split into a stream per sequence (llama.cpp's default with `-np` and no `-kvu`). The sliding-window layers keep a smaller cache of their own. The server checkpoints them, as llama-server does, but not a recurrent state. Context shift (`--context-shift`, in `completion` and the server) and self-extend (`-gan`, `-gaw`) move a sequence's positions and rotate its keys. A recurrent model and T5 hold one sequence. |
 | 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
 | 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
-| 🟡 `llama-completion`, `llama-cli` | Not prompt cache files; the cli has no images, audio or `-hf` downloads. |
-| ❌ `common/` | The argument parser (each program reads the flags it supports itself), downloads (`-hf`), fitting the context to the free memory. |
+| 🟡 `llama-completion`, `llama-cli` | Not prompt cache files; the cli has no images or audio. |
+| 🟡 `common/` | The argument parser (each program reads the flags it supports itself), fitting the context to the free memory. Downloads with `-hf` are ported (see [Quick start](#quick-start)), but not from a plain URL (`-mu`) or Docker, nor the cache's lock files. |
 | ❌ Other programs | `llama-quantize`, `llama-bench`, `llama-embedding`, `llama-tts`, `llama-imatrix` and the rest of llama.cpp's tools and examples. |
 
 ## What is ported
@@ -114,6 +114,18 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 The first build compiles ggml (about 1.5 minutes) and caches it. More in
 [Building](#building).
 
+In place of `-m model.gguf`, the programs that take llama.cpp's common
+flags (all but `simple` and `simple_chat`) download a model from Hugging
+Face as llama.cpp does: `-hf <user>/<model>[:quant]` picks the repository's
+file for the quant (Q4_K_M, else Q8_0, else the first, when none is given),
+with its split parts and, for `mtmd_cli`, its mmproj (unless
+`--no-mmproj`); `-hff` names the file, `-hft` (or `HF_TOKEN`) the token, and
+`--offline` takes it from the cache only. The cache is huggingface_hub's,
+shared with llama.cpp (`LLAMA_CACHE`, `HF_HUB_CACHE`, `HF_HOME` move it).
+The requests go through libcurl, loaded when the first one is made: the
+Windows release has it beside the programs, and on Linux it is the
+system's `libcurl.so.4`.
+
 ## Numbers
 
 Measured on 2026-11-13 on a Ryzen 7 5700U (8 cores, 16 threads) with
@@ -139,7 +151,7 @@ spent about 1,600 CPU-seconds on the same tools without ggml (`common/`,
 `src/`, the server, cpp-httplib, mtmd), spread over 16 cores, in its
 `.ninja_log` of 2026-11-05. So the Goose build costs about ten times less
 CPU. The comparison flatters Goose: the C++ side has the architectures,
-argument parsing, downloads and multimodal that are not ported yet.
+argument parsing and multimodal that are not ported yet.
 
 **Binary size**, without symbols:
 
@@ -322,7 +334,8 @@ llama/              libllama in Goose (package `llama`):
   grammar.goose       GBNF grammars
   chat.goose          the built-in chat templates
 common/             llama.cpp's common/ (package `common`): the Jinja engine, chat
-                    templates and their parsers, PEG, JSON schemas, JSON documents, the console
+                    templates and their parsers, PEG, JSON schemas, JSON documents, the console,
+                    the Hugging Face downloads
 tools/              the programs, and the packages they share (net/, proc/, stash/)
 scripts/            build, test, compare with llama.cpp, weekly sync, generators
 tests/              Goose programs that exit non-zero on failure; data/ has llama.cpp's answers

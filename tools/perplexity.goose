@@ -1,6 +1,7 @@
 // llama.cpp's llama-perplexity, its default mode: the perplexity of a text
 // file in chunks of n_ctx tokens, scoring the second half of each chunk.
 //   perplexity -m model.gguf -f text.txt [-c n_ctx] [-b n_batch] [--chunks n]
+// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
 // One sequence per batch: n_batch must not exceed n_ctx (llama.cpp packs
 // several chunks into one batch when it does).
 // port-of: tools/perplexity/perplexity.cpp
@@ -14,6 +15,8 @@ import llama from "../llama";
 import llama.vocab;
 import llama.model;
 import llama.context;
+import common from "../common";
+import common.download;
 
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
@@ -64,6 +67,8 @@ fn main() {
     while i < args.len {
         let a = args[i];
         if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
+        else if download::takes_value(a) { download::set(a, value()); }
+        else if a == "--offline" { download::offline = true; }
         else if a == "-f" || a == "--file" { file_path.clear(); file_path.append(value()); }
         else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); }
         else if a == "-b" || a == "--batch-size" { n_batch = int_value(); }
@@ -72,6 +77,7 @@ fn main() {
         else { fail(str("unknown argument: ", a)); }
         i += 1;
     }
+    download::resolve(model_path);
     if model_path.len == 0 || file_path.len == 0 { fail("usage: perplexity -m model.gguf -f text.txt [-c n_ctx] [-b n_batch] [--chunks n]"); }
     n_batch = min(n_batch, n_ctx);
 
