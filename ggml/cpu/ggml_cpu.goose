@@ -19,3 +19,12 @@ extern fn default_threads() -> i32 = "lg_default_threads";
 // The backend's threads kept between graphs, not started at each one.
 extern fn use_threadpool(b: Backend, n_threads: i32) = "lg_use_threadpool";
 extern fn set_quiet(q: i32) = "lg_set_quiet";
+
+// For --fit: the host memory's total; the bytes of the weights in host
+// buffers (bufs as alloc_weights gave them); the bytes ctx's tensors would
+// take, given a buffer of no memory (to free) so that graphs that read them
+// can be measured; and the buffer a graph would need.
+extern fn host_memory_total() -> i64 = "lg_host_memory_total";
+extern fn host_weight_bytes(bufs: const Buffer[:]) -> i64 = "lg_host_weight_bytes";
+extern fn dummy_alloc(ctx: Ctx, size: i64&) -> Buffer = "lg_dummy_alloc";
+extern fn gallocr_measure(g: Gallocr, graph: Graph) -> i64 = "lg_gallocr_measure";

@@ -4,6 +4,7 @@
 //            [-n n_predict] [-c n_ctx] [-t threads] [--temp t] [-s seed] [-sys prompt]
 // -m and --mmproj can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]
 // [--no-mmproj]: common/download, with the mmproj beside the model.
+// No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // The prompt holds a <__media__> marker for each image, or they go before it.
 // port-of: tools/mtmd/mtmd-cli.cpp
 import std;
@@ -20,6 +21,7 @@ import common from "../common";
 import common.jinja;
 import common.chat;
 import common.download;
+import common.fit;
 import mtmd from "../mtmd";
 
 fn usage() {
@@ -48,7 +50,7 @@ fn main() {
     var prompt: u8[>..] = [];
     var system_prompt: u8[>..] = [];
     var n_predict = -1;
-    var n_ctx = 4096;
+    var n_ctx = 0;     // the model's, fitted to the memory (common_fit_params)
     var n_threads: i32 = 8;
     var sp = sampler::Params { .. };
     var no_mmproj = false;
@@ -67,7 +69,8 @@ fn main() {
         else if k == "-p" || k == "--prompt" { prompt.append(v); }
         else if k == "-sys" || k == "--system-prompt" { system_prompt.append(v); }
         else if (k == "-n" || k == "--n-predict") && ok { n_predict = n; }
-        else if (k == "-c" || k == "--ctx-size") && ok { n_ctx = n; }
+        else if (k == "-c" || k == "--ctx-size") && ok { n_ctx = n; fit::ctx_flag(n); }
+        else if fit::takes_value(k) { fit::set(k, v); }
         else if (k == "-t" || k == "--threads") && ok { n_threads = n as! i32; }
         else if (k == "-s" || k == "--seed") && ok { sp.seed = (n & 0xFFFFFFFF) as! u32; }
         else if k == "--temp" {
@@ -85,7 +88,7 @@ fn main() {
     var m = model::Model { .. };
     model::load(m, model_path);
     var c = context::Context { n_threads: n_threads, .. };
-    context::init(c, m, n_ctx);
+    context::init(c, m, fit::n_ctx(c, m, n_ctx));
     sampler::apply_model_defaults(sp, m.meta);
     var ch = sampler::Chain { .. };
     sampler::init(ch, sp);

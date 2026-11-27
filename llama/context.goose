@@ -41,6 +41,8 @@ struct Context {
     unified: bool = false,       // several sequences: each attends to its own cells' rows (kv_unified, fused_kv_rows);
                                  // else each has a stream of its own
     n_seq_max: i64 = 1,          // the sequences, and the tokens of a ubatch, that size
+    n_outputs_max: i64 = 0,      // the most outputs of a ubatch (cparams.n_outputs_max), 0 for its every
+                                 // token: only for projected_bytes' worst case
     n_ubatch: i64 = 512,         // the sliding-window layers' cache
     n_swa_cells: i64,            // that cache's cells in a stream, 0 without one
     n_enc: i64,
@@ -51,7 +53,9 @@ struct Context {
 // llama.cpp pads the context to 256 cells.
 fn pad_to(n: i64, to: i64) -> i64 { (n + to - 1) / to * to }
 
-fn init(c: Context&, m: model::Model&, n_ctx: i64) {
+// The cache's tensors for n_ctx cells (padded, and split among the
+// streams), made in c.kv_ctx without their data: llama_kv_cache's sizes.
+fn make_cache(c: Context&, m: model::Model&, n_ctx: i64) {
     c.n_ctx = pad_to(n_ctx, 256);
     // without a unified cache, each sequence its stream: n_ctx split among them, each part padded
     n_stream = if !c.unified && c.n_seq_max > 1 { c.n_seq_max } else { 1 };
@@ -60,8 +64,6 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
         c.n_ctx_seq = pad_to(c.n_ctx / n_stream, 256);
         c.n_ctx = c.n_ctx_seq * n_stream;
     }
-    if c.n_threads <= 0 { c.n_threads = ggml::default_threads(); }
-    ggml::use_threadpool(m.backend, c.n_threads);
     let n_layer = m.hp.n_layer as i64;
     c.kv_ctx = ggml::init(4 * n_layer * ggml::tensor_overhead(), true);
     // llama_kv_cache_iswa: the sliding-window layers keep their own cache, of the
@@ -97,6 +99,12 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
         c.r.push(r);
         c.s.push(s);
     }
+}
+
+fn init(c: Context&, m: model::Model&, n_ctx: i64) {
+    make_cache(c, m, n_ctx);
+    if c.n_threads <= 0 { c.n_threads = ggml::default_threads(); }
+    ggml::use_threadpool(m.backend, c.n_threads);
     c.kv_buf = ggml::backend_alloc_ctx_tensors(c.kv_ctx, m.backend);
     ggml::backend_buffer_clear(c.kv_buf, 0);
     drop_graph();
@@ -121,6 +129,53 @@ fn init(c: Context&, m: model::Model&, n_ctx: i64) {
             caches.push(Cache { lo: c.n_ctx + row0, row0: row0, size: c.n_swa_cells, swa: m.hp.n_swa, strm: st, head: 0, n_used: 0 });
         }
     }
+}
+
+// The host memory a context like `like` (its sequences, whether unified,
+// its ubatch and outputs) of n_ctx cells would take with the model, as
+// llama.cpp's --fit projects it (common_get_device_memory_data): the weights
+// in host buffers, the cache, and the compute buffer of the worst-case
+// graphs (graph_reserve: a ubatch of n_ubatch tokens over every sequence,
+// and one of a token per sequence, over the whole cache; a unified cache's
+// rows are all its cells). Nothing is allocated. Before init: it makes the streams.
+// T5's graphs are not measured (they need the encoder's output).
+fn projected_bytes(like: Context&, m: model::Model&, n_ctx: i64) -> i64 {
+    var t = Context { unified: like.unified, n_seq_max: like.n_seq_max, n_ubatch: like.n_ubatch, n_outputs_max: like.n_outputs_max, .. };
+    make_cache(t, m, n_ctx);
+    var kv_bytes = 0;
+    let dummy = ggml::dummy_alloc(t.kv_ctx, kv_bytes);
+    t.galloc = ggml::gallocr_new(m.backend);
+    let n_seqs = t.n_seq_max;
+    let use_rows = t.unified && m.hp.arch != model::ARCH_T5;
+    var compute = 0;
+    for tg in 2 {
+        guard m.hp.arch != model::ARCH_T5 else { break; }
+        let n_tokens = pad_to(if tg == 0 { min(t.n_ctx, t.n_ubatch) } else { n_seqs }, n_seqs);
+        let n_outputs = if t.n_outputs_max > 0 { min(n_tokens, t.n_outputs_max) } else { n_tokens };
+        // a slice for each sequence: of the rows, or a stream each
+        let n_slices = n_seqs;
+        let sh = Shape {
+            n_tokens: n_tokens,
+            n_outputs: n_outputs,
+            n_kv: t.n_ctx_seq,
+            n_kv_swa: t.n_swa_cells,
+            n_slices: n_slices,
+            n_rows: if use_rows { t.n_ctx } else { 0 },
+            n_rows_swa: if use_rows { t.n_swa_cells } else { 0 },
+            n_enc: 0,
+            n_stream: if use_rows { 1 } else { n_seqs },
+            s0: 0,
+            n_slice_outputs: if prune_shared(m.hp) { (n_outputs + n_slices - 1) / n_slices } else { 0 },
+            embd: false,
+        };
+        kept_slice_outputs = sh.n_slice_outputs;
+        compute = max(compute, build_graph(t, m, sh, false, true));
+    }
+    drop_graph();
+    ggml::gallocr_free(t.galloc);
+    ggml::backend_buffer_free(dummy);
+    ggml::free(t.kv_ctx);
+    return ggml::host_weight_bytes(m.bufs) + kv_bytes + compute;
 }
 
 // The cache's cells (llama_kv_cells), for the one context of a program: the
@@ -177,6 +232,7 @@ struct Inputs {
     prune_keep: ggml::Tensor,
     out_mask: ggml::Tensor,
     out_mask_swa: ggml::Tensor,
+    scale_rows: ggml::Tensor = ggml::NONE,   // gemma: each row's scale, the token rows' only (inp_scale_rows)
 }
 
 // Per graph: what the graph builders read.
@@ -188,6 +244,8 @@ struct Build {
     n_kv_swa: i64,               // n_kv of the sliding-window layers' cache
     n_stream: i64 = 1,           // the streams of the ubatch, s0 the first: a slice of its tokens each
     s0: i64 = 0,
+    embd_in: bool = false,       // embeddings in place of tokens: inp_embd's branch
+    tok_scale: f32 = 1.0,        // the token rows' scale (inp_embd)
     inp: Inputs,
     // LLAMA_GOOSE_TRACE=1: tensors whose sums decode prints, to compare
     // with llama.cpp's eval callback
@@ -692,11 +750,63 @@ fn encode(c: Context&, m: model::Model&, tokens: const i32[:]) {
     ggml::free(gctx);
 }
 
-// The input embeddings (build_inp_embd): the tokens' rows of the token
-// embeddings, or the embeddings given in their place.
-fn inp_embd(b: Build&, m: model::Model&) -> ggml::Tensor {
-    if b.inp.embd.p != 0 { return b.inp.embd; }
-    return ggml::get_rows(b.ctx, m.tok_embd, b.inp.tokens);
+// The first layer's input (build_inp_embd): the graph has the three ways in
+// of a ubatch and computes one (ggml_build_forward_select), so that it and
+// its buffer are llama.cpp's whatever the batch holds: the token rows, the
+// embeddings given (b.embd_in), and the mixed one, token rows set among
+// given embeddings, which nothing sends yet. A model whose input is wider
+// than n_embd (qwen3vl's deepstack features) has its token rows padded, and
+// gets the first n_embd of each row. tok_scale scales the token rows only.
+fn inp_embd(b: Build&, m: model::Model&, tok_scale: f32 = 1.0) -> ggml::Tensor {
+    let ctx = b.ctx;
+    let hp .= m.hp;
+    let n_embd = hp.n_embd as i64;
+    let n_embd_inp = n_embd * (1 + hp.n_deepstack_layers as i64);
+    let n_tokens = b.n_tokens;
+    let has_mixed = hp.arch != model::ARCH_LIMITE;      // llm_arch_supports_mixed_batch
+    b.inp.embd = ggml::new_tensor_2d(ctx, ggml::TYPE_F32, n_embd_inp, n_tokens);
+    ggml::set_input(b.inp.embd);
+    var mixed_tokens = ggml::NONE;
+    if has_mixed {
+        mixed_tokens = ggml::new_tensor_1d(ctx, ggml::TYPE_I32, n_tokens);
+        ggml::set_input(mixed_tokens);
+    }
+    // the GET_ROWS first in the graph
+    let embd0 = ggml::get_rows(ctx, m.tok_embd, b.inp.tokens);
+    ggml::build_forward_order(b.gf, embd0);
+    var embd2 = ggml::NONE;
+    if has_mixed {
+        embd2 = ggml::get_rows(ctx, m.tok_embd, mixed_tokens);
+        ggml::build_forward_order(b.gf, embd2);
+    }
+    fn build_tok(cur: ggml::Tensor) -> ggml::Tensor {
+        if n_embd_inp != n_embd { return ggml::pad_ext(ctx, cur, (n_embd_inp - n_embd) as i32, 0, 0, 0); }
+        return cur;
+    }
+    var inps: ggml::Tensor[..3] = [];
+    inps.push(build_tok(embd0));
+    inps.push(b.inp.embd);
+    if has_mixed {
+        let slots = ggml::new_tensor_1d(ctx, ggml::TYPE_I64, n_tokens);
+        ggml::set_input(slots);
+        let membd = ggml::new_tensor_2d(ctx, ggml::TYPE_F32, n_embd_inp, n_tokens);
+        ggml::set_input(membd);
+        // set_rows writes into its destination: a copy of the input
+        let tok = build_tok(embd2);
+        inps.push(ggml::set_rows(ctx, ggml::dup(ctx, membd), tok, slots));
+    }
+    var cur = ggml::build_forward_select(b.gf, inps, if b.embd_in { 1 } else { 0 });
+    if n_embd_inp != n_embd { cur = ggml::view_2d(ctx, cur, n_embd, n_tokens, ggml::nb(cur, 1), 0); }
+    b.tok_scale = tok_scale;
+    if tok_scale != 1.0 {
+        b.inp.scale_rows = ggml::new_tensor_2d(ctx, ggml::TYPE_F32, 1, n_tokens);
+        ggml::set_input(b.inp.scale_rows);
+        if !ggml::is_contiguous(cur) { cur = ggml::cont(ctx, cur); }
+        cur = ggml::mul(ctx, cur, b.inp.scale_rows);
+    }
+    // the embeddings made at once in the graph
+    ggml::build_forward_expand(b.gf, cur);
+    return cur;
 }
 
 fn rope(b: Build&, m: model::Model&, x: ggml::Tensor, freq_base: f32, freq_scale: f32,
@@ -715,9 +825,7 @@ fn build_gemma3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_k as i64;
     let n_layer = hp.n_layer as i64;
 
-    var inpL = inp_embd(b, m);
-    // the token rows only: an image's embeddings are not scaled
-    if b.inp.embd.p == 0 { inpL = ggml::scale(ctx, inpL, sqrt(hp.n_embd as f32)); }
+    var inpL = inp_embd(b, m, sqrt(hp.n_embd as f32));
 
     for il in n_layer {
         let ly = m.layers[il];
@@ -1412,13 +1520,7 @@ fn build_qwen(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let multi = n_pos_per_embd(m) > 1;
     let n_embd = hp.n_embd as i64;
     var inpL = inp_embd(b, m);
-    var inp_embd = inpL;
-    if hp.n_deepstack_layers > 0 {
-        // the token rows padded to the input's width (build_inp_embd)
-        inp_embd = ggml::pad_ext(ctx, inpL, (n_embd * hp.n_deepstack_layers) as i32, 0, 0, 0);
-        inpL = ggml::view_2d(ctx, inp_embd, n_embd, b.n_tokens, ggml::nb(inp_embd, 1), 0);
-        inp_embd = inpL;
-    }
+    let inp_embd = inpL;     // a view of the input's rows, the deepstack features after n_embd
     for il in n_layer {
         let ly = m.layers[il];
         var inpSA = inpL;
@@ -2534,8 +2636,7 @@ fn build_gemma3n(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_f: f32 = n_embd;
     let sqrt2: f32 = 2.0;
 
-    var inpL = inp_embd(b, m);
-    inpL = ggml::scale(ctx, inpL, sqrt(n_embd_f));
+    var inpL = inp_embd(b, m, sqrt(n_embd_f));
 
     // the per-layer inputs: [n_embd_altup, n_tokens, n_layer] (build_inp_per_layer, project_per_layer_inputs)
     var inp_per_layer = ggml::get_rows(ctx, m.per_layer_tok_embd, b.inp.tokens);
@@ -2737,8 +2838,7 @@ fn build_gemma4(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         inp_per_layer = ggml::get_rows(ctx, m.per_layer_tok_embd, b.inp.tokens);
         ggml::build_forward_expand(b.gf, inp_per_layer);
     }
-    var inpL = inp_embd(b, m);
-    inpL = ggml::scale(ctx, inpL, sqrt(n_embd_f));
+    var inpL = inp_embd(b, m, sqrt(n_embd_f));
     if inp_per_layer.p != 0 {
         let n_epl_f: f32 = n_epl;
         // per_layer_input_scale (1/sqrt(2)) folded into the scale of the embeddings
@@ -3898,7 +3998,8 @@ fn drop_graph() {
 }
 
 // Builds the graph of a ubatch of this shape and allocates its tensors: kept.
-fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
+// With measure, allocates nothing and gives the buffer it would take.
+fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool, measure: bool = false) -> i64 {
     drop_graph();
     let n_tokens = sh.n_tokens;
     let n_outputs = sh.n_outputs;
@@ -3959,8 +4060,7 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
     }
     if sh.embd {
         guard m.per_layer_tok_embd.p == 0 else { abort("decode: embeddings input of a model with per-layer embeddings is not ported yet"); }
-        b.inp.embd = ggml::new_tensor_2d(gctx, ggml::TYPE_F32, m.hp.n_embd, n_tokens);
-        ggml::set_input(b.inp.embd);
+        b.embd_in = true;
     }
     ggml::set_input(b.inp.tokens);
     ggml::set_input(b.inp.pos);
@@ -4033,8 +4133,14 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool) {
     };
     ggml::set_output(out);
     ggml::build_forward_expand(b.gf, out);
+    if measure {
+        let size = ggml::gallocr_measure(c.galloc, b.gf);
+        kept = Kept { b: b, out: out, shape: sh, live: false };
+        return size;
+    }
     guard ggml::gallocr_alloc_graph(c.galloc, b.gf) else { abort("decode: failed to allocate the graph"); }
     kept = Kept { b: b, out: out, shape: sh, live: !tracing };   // a traced graph's sums are of its one run
+    return 0;
 }
 
 // One ubatch: its tokens placed in free cells, then run.
@@ -4128,8 +4234,14 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
     for j in n_pos_per_embd(m) {
         for t in n_tokens { pos32.push(if j < 3 { pos[t] as i32 } else { 0 }); }
     }
-    if b.inp.embd.p != 0 { ggml::backend_set_f32(b.inp.embd, embd); }
+    if sh.embd { ggml::backend_set_f32(b.inp.embd, embd); }
     else { ggml::backend_set_i32(b.inp.tokens, tokens); }
+    if b.inp.scale_rows.p != 0 {
+        // the token rows scaled, the embeddings given not
+        var scales: f32[>..] = [];
+        scales.resize(n_tokens, if sh.embd { 1.0 } else { b.tok_scale });
+        ggml::backend_set_f32(b.inp.scale_rows, scales);
+    }
     if ggml::allocated(b.inp.pos) { ggml::backend_set_i32(b.inp.pos, pos32); }   // bloom reads no positions
     if ggml::allocated(b.inp.out_ids) { ggml::backend_set_i32(b.inp.out_ids, outputs); }   // gemma4 prunes without it
     if ggml::allocated(b.inp.kv_idxs) { ggml::backend_set_i64(b.inp.kv_idxs, idxs); }   // no attention: no cache cells

@@ -11,6 +11,7 @@
 //              [--frequency-penalty f] [--xtc-probability p] [--xtc-threshold t]
 //              [--top-nsigma n] [--dynatemp-range r] [--dynatemp-exp e]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // port-of: tools/completion/completion.cpp
 import std;
 import os;
@@ -30,6 +31,7 @@ import common.chat;
 import common.console;
 import common.json_schema;
 import common.download;
+import common.fit;
 
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
@@ -133,7 +135,7 @@ fn main() {
     var input_suffix: u8[>..] = [];
     var antiprompt_text: u8[>..] = [];     // the reverse prompts, each ended by a NUL
     var n_predict = -1;
-    var n_ctx = 4096;
+    var n_ctx = 0;     // the model's, fitted to the memory (common_fit_params)
     var n_batch = 2048;
     var n_keep = 0;
     var ctx_shift = false;
@@ -182,7 +184,8 @@ fn main() {
         else if a == "-p" || a == "--prompt" { prompt.clear(); prompt.append(value()); }
         else if a == "-sys" || a == "--system-prompt" { system_prompt.clear(); system_prompt.append(value()); }
         else if a == "-n" || a == "--n-predict" { n_predict = int_value(); }
-        else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); }
+        else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); fit::ctx_flag(n_ctx); }
+        else if fit::takes_value(a) { fit::set(a, value()); }
         else if a == "-b" || a == "--batch-size" { n_batch = int_value(); }
         else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
         else if a == "-s" || a == "--seed" { sp.seed = (int_value() & 0xFFFFFFFF) as! u32; }
@@ -285,7 +288,7 @@ fn main() {
     var m = model::Model { .. };
     model::load(m, model_path);
     var c = context::Context { n_threads: n_threads, .. };
-    context::init(c, m, n_ctx);
+    context::init(c, m, fit::n_ctx(c, m, n_ctx));
     n_ctx = c.n_ctx;
     if ctx_shift && !context::can_shift(c, m) {
         write_stderr("common_init_from_params: KV cache shifting is not supported for this context, disabling KV cache shifting\n");

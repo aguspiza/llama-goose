@@ -30,7 +30,8 @@ has the summary.
 | `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported, with llama-server's 4 slots in one KV cache (`-np` for another number; one for a recurrent model): the requests of the slots at work are decoded together, a batch at a time, a client that leaves stops its generation, and `/health` and CORS preflights are answered meanwhile; except the prompt cache in RAM (`--cache-ram`), a cache split per slot, embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses, slots included, with Qwen3 and Qwen2.5 |
 | `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images and audio; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
 | downloads (`common/download`: `-hf`, `-hff`, `-hft`, `--offline`, into the Hugging Face cache) | ported, through libcurl loaded at run time; not `-mu`, Docker, the cache's lock files | [below](#downloads--hf) |
-| the rest of `common/` (args, fitting the context to the free memory) | not yet | |
+| `--fit` (`common/fit`): the context left to the model (no `-c`, as llama.cpp's default) cut to leave `-fitt` MiB of the host memory, projected from the weights, the cache and the compute buffer of llama.cpp's worst-case graphs | ported for the host memory | [below](#--fit) |
+| the rest of `common/` (the argument parser) | not yet | |
 
 ## tools/simple
 
@@ -159,6 +160,42 @@ shuffle). Its embeddings are the same bytes as `MTMD_DEBUG_EMBEDDINGS` dumps,
 and its responses, greedy, are the same as llama-mtmd-cli's with SmolVLM
 256M and gemma-3 4B, on the jpeg of llama.cpp's tests and on images of
 600x600, 600x400 (padded slices) and 1300x900 (a 3x2 grid).
+
+## --fit
+
+Without `-c`, completion, parallel, mtmd_cli and the server take the
+model's trained context (for each stream), as llama.cpp's programs do since
+their default became 0, and `common/fit` cuts it when the weights, the
+cache and the compute buffer would leave less than `-fitt` MiB (1024) of the
+host memory's total. The compute buffer is measured on the port's own
+worst-case graphs (a ubatch of 512 tokens over every sequence, and one of a
+token per sequence, over the whole cache), allocating nothing. For it to be
+llama.cpp's to the byte, the port's input embeddings now build the graph as
+llama.cpp's `build_inp_embd` does: the token rows, the embeddings given and
+the mixed batch all in it, one computed (`ggml_build_forward_select`), and
+gemma's scale of the token rows as an input. The text of every model is
+unchanged (tools/simple: 67 of the 68 models, as before, PLM being one llama.cpp
+cannot load; mtmd_cli with SmolVLM and
+gemma-3 4B).
+
+Qwen3 0.6B, with `-fitt 29000` so that the cut is reached on a machine of
+32 GB: llama-completion projects 167 + 4480 + 346.77 MiB (weights, cache,
+compute) at 40960 cells and 928 MiB at 4096, and picks 24064; the port
+projects the same and picks 24064. Through the servers' `/props`
+(`cmpfit.sh`), the same context and the same warning in each case:
+
+| model | flags | n_ctx of a slot |
+|---|---|---|
+| Qwen3 0.6B | (none) / `-fit off` | 40960 |
+| | `-fitt 29000` / `30500` | 26624 / 13056 |
+| | `-np 2 -fitt 29000` (streams) | 13312 |
+| | `-np 3 -kvu -fitt 29000` | 26624 |
+| | `-fitt 30500 -fitc 8192` | 13056 |
+| | `-c 32768 -fitt 30500` / `-c 0 -fitt 30500` | 32768 / 40960, with the warning |
+| | `-fitt 31900` | 4096, with the warning |
+| gemma-3 270M (SWA) | `-fitt 31000` / `-np 2 -fitt 31500` | 32768 / 32768 |
+| LFM2.5 230M (hybrid) | `-fitt 31500` | 44544 |
+| Jamba 3B (hybrid) | `-fitt 29000` | 262144 |
 
 ## Downloads (-hf)
 

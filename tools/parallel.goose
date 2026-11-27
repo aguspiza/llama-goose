@@ -5,6 +5,7 @@
 //   parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-kvu] [-ns n_sequences] [-n n_predict]
 //            [-b n_batch] [-pps] [-nocb] [--junk n] [--temp t] [-s seed]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // port-of: examples/parallel/parallel.cpp
 import std;
 import os;
@@ -19,6 +20,7 @@ import llama.sampler;
 import common from "../common";
 import common.console;
 import common.download;
+import common.fit;
 
 let K_SYSTEM = """
 Transcript of a never ending dialog, where the User interacts with an Assistant.
@@ -149,7 +151,7 @@ fn trimmed(s: const u8[:]) -> const u8[:] {
 fn main() {
     let args = console::utf8_args();
     var model_path: u8[>..] = [];
-    var n_ctx = 4096;
+    var n_ctx = 0;     // the model's, fitted to the memory (common_fit_params)
     var n_clients = 1;
     var n_seq = 1;
     var n_predict = 128;
@@ -172,6 +174,7 @@ fn main() {
         let v = args[i + 1];
         if a == "-m" { model_path.clear(); model_path.append(v); }
         else if download::takes_value(a) { download::set(a, v); }
+        else if fit::takes_value(a) { fit::set(a, v); }
         else if a == "--temp" || a == "--top-p" || a == "--min-p" {
             let x, ok = parse_flt(v);
             if !ok { usage(); }
@@ -181,7 +184,7 @@ fn main() {
         } else {
             let x, ok = parse_int(v);
             if !ok { usage(); }
-            if a == "-c" { n_ctx = x; }
+            if a == "-c" { n_ctx = x; fit::ctx_flag(x); }
             else if a == "-np" { n_clients = x; }
             else if a == "-ns" { n_seq = x; }
             else if a == "-n" { n_predict = x; }
@@ -210,7 +213,7 @@ fn main() {
     c.unified = kv_unified;
     c.n_seq_max = n_clients + 1;     // and the system prompt's
     c.n_ubatch = n_ubatch;
-    context::init(c, m, n_ctx);
+    context::init(c, m, fit::n_ctx(c, m, n_ctx));
     sampler::apply_model_defaults(sp, m.meta);
 
     log("\n\n");

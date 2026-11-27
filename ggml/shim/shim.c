@@ -215,3 +215,9 @@ void lg_backend_tensor_set_bytes(struct ggml_tensor * t, lg_bytes src, int64_t o
 ggml_gallocr_t lg_gallocr_new(ggml_backend_t backend) {
     return ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
 }
+
+// ggml_build_forward_select over a slice of tensors.
+typedef struct { struct ggml_tensor ** data; int64_t len; } lg_tensor_list;
+struct ggml_tensor * lg_build_forward_select(struct ggml_cgraph * g, lg_tensor_list ts, int32_t idx) {
+    return ggml_build_forward_select(g, ts.data, (int) ts.len, idx);
+}

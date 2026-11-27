@@ -69,7 +69,7 @@ in part.
 | 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
 | 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
 | 🟡 `llama-completion`, `llama-cli` | Not prompt cache files; the cli has no images or audio. |
-| 🟡 `common/` | The argument parser (each program reads the flags it supports itself), fitting the context to the free memory. Downloads with `-hf` are ported (see [Quick start](#quick-start)), but not from a plain URL (`-mu`) or Docker, nor the cache's lock files. |
+| 🟡 `common/` | The argument parser (each program reads the flags it supports itself). Downloads with `-hf` are ported (see [Quick start](#quick-start)), but not from a plain URL (`-mu`) or Docker, nor the cache's lock files. `--fit` is ported for the host memory (there are no devices). |
 | ❌ Other programs | `llama-quantize`, `llama-bench`, `llama-embedding`, `llama-tts`, `llama-imatrix` and the rest of llama.cpp's tools and examples. |
 
 ## What is ported

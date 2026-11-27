@@ -178,3 +178,49 @@ void lg_use_threadpool(ggml_backend_t backend, int n_threads) {
     pool = ggml_threadpool_new(&params);
     ggml_backend_cpu_set_threadpool(backend, pool);
 }
+
+//
+// the memory a model and a context would take, for --fit (common/fit)
+//
+
+// The host memory, as the CPU device reports it to llama.cpp's --fit: its total.
+int64_t lg_host_memory_total(void) {
+    size_t free = 0, total = 0;
+    ggml_backend_dev_memory(ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU), &free, &total);
+    return (int64_t) total;
+}
+
+// The bytes of the weights in host buffers (not CPU_REPACK's, which
+// llama.cpp's memory breakdown does not count as host memory), of the
+// null-ended buffers alloc_weights gave.
+int64_t lg_host_weight_bytes(lg_buffers bufs) {
+    int64_t n = 0;
+    for (int64_t i = 0; i < bufs.len && bufs.data[i]; i++) {
+        ggml_backend_buffer_t b = bufs.data[i];
+        if (ggml_backend_buffer_is_host(b)) {
+            // alloc_weights allocates one alignment more than the tensors take
+            n += (int64_t) (ggml_backend_buffer_get_size(b) - ggml_backend_buffer_get_alignment(b));
+        }
+    }
+    return n;
+}
+
+// The bytes ctx's tensors would take in a CPU buffer, and a buffer of no
+// memory given to each of them, so that a graph that reads them can be
+// measured (llama.cpp's no_alloc dummy buffers). Gives the buffer, to free.
+ggml_backend_buffer_t lg_dummy_alloc(struct ggml_context * ctx, int64_t * size) {
+    ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU));
+    *size = (int64_t) ggml_backend_alloc_ctx_tensors_from_buft_size(ctx, buft);
+    ggml_backend_buffer_t buf = ggml_backend_buft_alloc_buffer(buft, 0);
+    for (struct ggml_tensor * t = ggml_get_first_tensor(ctx); t; t = ggml_get_next_tensor(ctx, t)) {
+        t->buffer = buf;
+    }
+    return buf;
+}
+
+// The size of the buffer galloc would allocate for graph, allocating nothing.
+int64_t lg_gallocr_measure(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
+    size_t size = 0;
+    ggml_gallocr_reserve_n_size(galloc, graph, NULL, NULL, &size);
+    return (int64_t) size;
+}

@@ -16,6 +16,8 @@ extern fn nb(t: Tensor, i: i32) -> i64 = "lg_tensor_nb";
 extern fn tensor_type(t: Tensor) -> i32 = "lg_tensor_type";
 extern fn allocated(t: Tensor) -> bool = "lg_tensor_allocated";
 extern fn gallocr_new(b: Backend) -> Gallocr = "lg_gallocr_new";
+// ggml_build_forward_select: the branches all in the graph, only the idx-th computed
+extern fn build_forward_select(g: Graph, ts: const Tensor[:], idx: i32) -> Tensor = "lg_build_forward_select";
 // ggml_rope_multi; sections: four numbers
 extern fn rope_multi(ctx: Ctx, a: Tensor, pos: Tensor, freqs: Tensor, n_dims: i32, sections: const i32[:],
                      mode: i32, n_ctx_orig: i32, freq_base: f32, freq_scale: f32, ext_factor: f32,

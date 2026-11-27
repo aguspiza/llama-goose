@@ -15,6 +15,7 @@
 //          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
 //          [-s seed] [--temp t] [--top-k k] [--top-p p] [--min-p p] [...the sampling flags of completion]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // Routes: /health, /props, /models, /completion(s), /v1/completions,
 // /v1/chat/completions, /apply-template, /tokenize, /detokenize.
 // port-of: tools/server/server.cpp tools/server/server-context.cpp tools/server/server-task.cpp
@@ -40,6 +41,7 @@ import common.console;
 import common.jdoc;
 import common.json_schema;
 import common.download;
+import common.fit;
 import common.chat_render;
 import common.chat_peg;
 import common.chat_apply;
@@ -2909,7 +2911,8 @@ fn setup() {
         else if a == "--offline" { download::offline = true; }
         else if a == "--host" { host.clear(); host.append(value()); }
         else if a == "--port" { port = int_value(); }
-        else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); }
+        else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); fit::ctx_flag(n_ctx); }
+        else if fit::takes_value(a) { fit::set(a, value()); }
         else if a == "-b" || a == "--batch-size" { n_batch = int_value(); }
         else if a == "-ub" || a == "--ubatch-size" { int_value(); }
         else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
@@ -3001,9 +3004,9 @@ fn setup() {
     if n_slots > 64 { die("at most 64 slots"); }
     c.unified = kv_unified && n_slots > 1;
     c.n_seq_max = n_slots;
-    // no -c: the context the model was trained with, for each stream (common_fit_params)
-    let n_streams = if c.unified { 1 } else { n_slots };
-    context::init(c, m, if n_ctx > 0 { n_ctx } else { m.hp.n_ctx_train as i64 * n_streams });
+    c.n_outputs_max = min(n_slots, n_batch);    // a token of each slot (server_output_limits)
+    // no -c: the context the model was trained with, for each stream, fitted to the memory (common_fit_params)
+    context::init(c, m, fit::n_ctx(c, m, n_ctx));
     if ctx_shift && !context::can_shift(c, m) {
         write_stderr("warning: ctx_shift is not supported by this context, it will be disabled\n");
         ctx_shift = false;
