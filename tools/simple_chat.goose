@@ -52,13 +52,13 @@ fn main() {
     n_ctx = c.n_ctx;
 
     var ch = sampler::Chain { .. };
-    var s = sampler::new_sampler(sampler::KIND_MIN_P);
+    var s = sampler::new_sampler(sampler::Kind.MinP);
     s.a = 0.05; s.min_keep = 1;
     ch.samplers.push(s);
-    s = sampler::new_sampler(sampler::KIND_TEMP_EXT);
+    s = sampler::new_sampler(sampler::Kind.TempExt);
     s.a = 0.8;
     ch.samplers.push(s);
-    ch.samplers.push(sampler::seeded(sampler::KIND_DIST, seed));
+    ch.samplers.push(sampler::seeded(sampler::Kind.Dist, seed));
 
     var tmpl: u8[>..] = [];
     if !sampler::meta_str(m.meta, "tokenizer.chat_template", tmpl) { tmpl.clear(); }

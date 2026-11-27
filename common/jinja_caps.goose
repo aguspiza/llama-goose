@@ -49,9 +49,11 @@ fn caps_apply_reasoning_effort(c: Ctx, effort: const u8[:]) {
     set_var(c, "reasoning_strength", v);
 }
 
-let SETUP_NONE = 0;
-let SETUP_PRESERVE = 1;    // thinking on, reasoning preserved
-let SETUP_EFFORT = 2;      // thinking on, reasoning effort caps_effort
+enum Setup {
+    None,
+    Preserve,  // thinking on, reasoning preserved
+    Effort,    // thinking on, reasoning effort caps_effort
+}
 
 // A sample render's outcome: whether it worked, its output (in caps_out),
 // the context, and the messages and tools as the template got them.
@@ -63,7 +65,7 @@ var caps_effort = 1;
 // Renders p with the messages and tools (JSON) as caps_get does, with
 // stats on; when that fails, once more with an empty reasoning_content on
 // the assistant turns that lack one (templates such as K2 Horizon want one).
-fn probe(p: Program, messages: const u8[:], tools: const u8[:], setup: i64) -> Probe {
+fn probe(p: Program, messages: const u8[:], tools: const u8[:], setup: Setup) -> Probe {
     var pr = Probe { ok: false, ctx: Ctx { env: -1, depth: 0 }, messages: -1, tools: -1 };
     var add_reasoning = false;
     for attempt in 2 {
@@ -76,10 +78,10 @@ fn probe(p: Program, messages: const u8[:], tools: const u8[:], setup: i64) -> P
         set_var(c, "bos_token", mk_str("", true));
         set_var(c, "eos_token", mk_str("", true));
         set_var(c, "add_generation_prompt", mk_bool(true));
-        if setup == SETUP_PRESERVE {
+        if setup == Setup.Preserve {
             set_var(c, "enable_thinking", mk_bool(true));
             caps_apply_preserve_reasoning(c, true);
-        } else if setup == SETUP_EFFORT {
+        } else if setup == Setup.Effort {
             set_var(c, "enable_thinking", mk_bool(true));
             caps_apply_reasoning_effort(c, effort_name(caps_effort));
         }
@@ -109,9 +111,9 @@ fn add_empty_reasoning(msgs: i64) -> bool {
     var added = false;
     for i in arr_len(msgs) {
         let m = arr_at(msgs, i);
-        if kind(m) != K_OBJECT { continue; }
+        if kind(m) != ValKind.Object { continue; }
         let role = obj_get_name(m, "role");
-        if role < 0 || kind(role) != K_STRING || sbytes(role) != "assistant" { continue; }
+        if role < 0 || kind(role) != ValKind.String || sbytes(role) != "assistant" { continue; }
         if obj_find_name(m, "reasoning_content") >= 0 { continue; }
         obj_set_name(m, "reasoning_content", mk_str("", true));
         added = true;
@@ -121,7 +123,7 @@ fn add_empty_reasoning(msgs: i64) -> bool {
 
 // v[key] for an object, v[index] for an array, as caps_get's at() does it.
 fn at_name(v: i64, key: const u8[:]) -> i64 {
-    let r = if kind(v) == K_OBJECT { obj_get_name(v, key) } else { -1 };
+    let r = if kind(v) == ValKind.Object { obj_get_name(v, key) } else { -1 };
     if r < 0 { fail(str("Key '", key, "' not found in value of type ", tname(v))); }
     return r;
 }
@@ -159,7 +161,7 @@ fn caps_get(p: Program) -> Caps {
 
     // typed content: the content read as an array
     var checks_for_string = false;
-    var pr = probe(p, "[{\"role\": \"user\", \"content\": \"STRING_MARKER\"}]", "", SETUP_NONE);
+    var pr = probe(p, "[{\"role\": \"user\", \"content\": \"STRING_MARKER\"}]", "", Setup.None);
     var content = at_name(at_index(pr.messages, 0), "content");
     if has_op(content, OP_TEST_IS_STRING) { checks_for_string = true; }
     let used_as_array = has_op(content, OP_SELECTATTR) || has_op(content, OP_ARRAY_ACCESS);
@@ -171,20 +173,20 @@ fn caps_get(p: Program) -> Caps {
         r.supports_string_content = false;
     }
     if checks_for_string {
-        pr = probe(p, "[{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"STRING_MARKER\"}]}]", "", SETUP_NONE);
+        pr = probe(p, "[{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"STRING_MARKER\"}]}]", "", Setup.None);
         content = at_name(at_index(pr.messages, 0), "content");
         if (has_op(content, OP_SELECTATTR) || has_op(content, OP_ARRAY_ACCESS)) && pr.ok { r.supports_typed_content = true; }
     }
 
     // a system prompt
-    pr = probe(p, "[{\"role\": \"system\", \"content\": \"System message\"}, {\"role\": \"user\", \"content\": \"User message\"}]", "", SETUP_NONE);
+    pr = probe(p, "[{\"role\": \"system\", \"content\": \"System message\"}, {\"role\": \"user\", \"content\": \"User message\"}]", "", Setup.None);
     content = at_name(at_index(pr.messages, 0), "content");
     if !vals[content].used { r.supports_system_role = false; }
 
     // one tool call, with object arguments
     var msgs: u8[>..] = [];
     tool_messages(msgs, true, false);
-    pr = probe(p, msgs, TOOLS_JSON, SETUP_NONE);
+    pr = probe(p, msgs, TOOLS_JSON, Setup.None);
     if pr.ok {
         let tool_name = at_name(at_name(at_index(pr.tools, 0), "function"), "name");
         if !vals[tool_name].used { r.supports_tools = false; }
@@ -201,7 +203,7 @@ fn caps_get(p: Program) -> Caps {
         // one tool call, with string arguments
         msgs.clear();
         tool_messages(msgs, false, false);
-        pr = probe(p, msgs, TOOLS_JSON, SETUP_NONE);
+        pr = probe(p, msgs, TOOLS_JSON, Setup.None);
         if !pr.ok {
             r.supports_tool_calls = false;
             r.supports_tools = false;
@@ -216,7 +218,7 @@ fn caps_get(p: Program) -> Caps {
     // parallel tool calls
     msgs.clear();
     tool_messages(msgs, r.supports_object_arguments, true);
-    pr = probe(p, msgs, TOOLS_JSON, SETUP_NONE);
+    pr = probe(p, msgs, TOOLS_JSON, Setup.None);
     if !pr.ok {
         r.supports_parallel_tool_calls = false;
     } else {
@@ -227,12 +229,12 @@ fn caps_get(p: Program) -> Caps {
 
     // reasoning kept in the history (stats would not do: the reasoning may
     // be read by an if, and not written)
-    pr = probe(p, "[{\"role\": \"user\", \"content\": \"User message\"}, {\"role\": \"assistant\", \"content\": \"Assistant message\", \"reasoning_content\": \"<REASONING_CONTENT_PLACEHOLDER>\"}, {\"role\": \"user\", \"content\": \"User message\"}, {\"role\": \"assistant\", \"content\": \"Assistant message\", \"reasoning_content\": \"Reasoning content\"}, {\"role\": \"user\", \"content\": \"User message\"}]", "", SETUP_PRESERVE);
+    pr = probe(p, "[{\"role\": \"user\", \"content\": \"User message\"}, {\"role\": \"assistant\", \"content\": \"Assistant message\", \"reasoning_content\": \"<REASONING_CONTENT_PLACEHOLDER>\"}, {\"role\": \"user\", \"content\": \"User message\"}, {\"role\": \"assistant\", \"content\": \"Assistant message\", \"reasoning_content\": \"Reasoning content\"}, {\"role\": \"user\", \"content\": \"User message\"}]", "", Setup.Preserve);
     if find(caps_out, "<REASONING_CONTENT_PLACEHOLDER>") >= 0 { r.supports_preserve_reasoning = true; }
 
     // reasoning effort
     caps_effort = 1;
-    pr = probe(p, USER_ONLY, "", SETUP_EFFORT);
+    pr = probe(p, USER_ONLY, "", Setup.Effort);
     r.supports_reasoning_effort = vals[get_var(pr.ctx, "reasoning_effort")].used;
 
     if r.supports_reasoning_effort {
@@ -241,13 +243,13 @@ fn caps_get(p: Program) -> Caps {
         // aliases, of which the highest is kept
         var unknown: u8[>..] = [];
         caps_effort = N_EFFORTS;
-        let unknown_ok = probe(p, USER_ONLY, "", SETUP_EFFORT).ok;
+        let unknown_ok = probe(p, USER_ONLY, "", Setup.Effort).ok;
         unknown.append(caps_out);
         var renders: u8[][>..] = [];
         var rejected: i64[..7] = [];
         for li in N_EFFORTS {
             caps_effort = li;
-            let ok = probe(p, USER_ONLY, "", SETUP_EFFORT).ok;
+            let ok = probe(p, USER_ONLY, "", Setup.Effort).ok;
             if !ok {
                 // "none" also turns thinking off, so the server does not answer it with an error
                 if li != 0 { rejected.push(li); }

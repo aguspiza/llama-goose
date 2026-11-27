@@ -13,67 +13,46 @@ import .chat_render;
 
 namespace chat_parsers;
 
-let H_MINISTRAL_3 = 0;
-let H_LLM_JP_HARMONY = 1;
-let H_HARMONY_XML = 2;
-let H_GPT_OSS = 3;
-let H_MUSE_SPARK = 4;
-let H_MUSE_GLIMMER = 5;
-let H_FUNCTIONARY_V3_2 = 6;
-let H_KIMI_K2 = 7;
-let H_KIMI_K3 = 8;
-let H_K2_HORIZON = 9;
-let H_LING3 = 10;
-let H_COHERE2MOE = 11;
-let H_LFM2 = 12;
-let H_LFM2_5 = 13;
-let H_GIGACHAT_V3 = 14;
-let H_MINIMAX_M3 = 15;
-let H_DEEPSEEK_V3_2 = 16;
-let H_GEMMA4 = 18;
-let H_MINICPM5 = 19;
-let H_TRANSLATE_GEMMA = 20;
-let H_QWEN3_CODER = 21;
-let H_INKLING = 22;
-
-fn handler_name(h: i64) -> const u8[:] {
+fn handler_name(h: chat_render::Handler) -> const u8[:] {
     return match h {
-        0 => "Ministral 3", 1 => "LLM-jp Harmony", 2 => "Harmony XML", 3 => "GPT-OSS", 4 => "Muse Spark", 5 => "Muse Glimmer",
-        6 => "Functionary v3.2", 7 => "Kimi K2", 8 => "Kimi K3", 9 => "K2 Horizon", 10 => "Ling 3", 11 => "Cohere2 MoE",
-        12 => "LFM2", 13 => "LFM2.5", 14 => "GigaChat v3", 15 => "MiniMax M3", 16 => "DeepSeek V3.2", 17 => "Gemma 4 (legacy)",
-        18 => "Gemma 4", 19 => "MiniCPM5", 20 => "TranslateGemma", 21 => "Qwen3-Coder", _ => "?",
+        Ministral3 => "Ministral 3", LlmJpHarmony => "LLM-jp Harmony", HarmonyXml => "Harmony XML", GptOss => "GPT-OSS",
+        MuseSpark => "Muse Spark", MuseGlimmer => "Muse Glimmer", FunctionaryV3_2 => "Functionary v3.2", KimiK2 => "Kimi K2",
+        KimiK3 => "Kimi K3", K2Horizon => "K2 Horizon", Ling3 => "Ling 3", Cohere2moe => "Cohere2 MoE", Lfm2 => "LFM2",
+        Lfm2_5 => "LFM2.5", GigachatV3 => "GigaChat v3", MinimaxM3 => "MiniMax M3", DeepseekV3_2 => "DeepSeek V3.2",
+        Gemma4 => "Gemma 4", Minicpm5 => "MiniCPM5", TranslateGemma => "TranslateGemma", Qwen3Coder => "Qwen3-Coder",
+        None, Inkling => "?",
     };
 }
 
 // is_lfm2_template
 fn is_lfm2(src: const u8[:]) -> bool { find(src, "<|tool_list_start|>") >= 0 && find(src, "<|tool_list_end|>") >= 0 }
 
-// common_chat_template_detect_params_init: the handler, or -1 for the autoparser.
-fn detect(src: const u8[:]) -> i64 {
+// common_chat_template_detect_params_init: the handler, None for the autoparser.
+fn detect(src: const u8[:]) -> chat_render::Handler {
     fn has(s: const u8[:]) -> bool { find(src, s) >= 0 }
-    if has("[SYSTEM_PROMPT]") && has("[TOOL_CALLS]") && has("[ARGS]") && !has("[CALL_ID]") { return H_MINISTRAL_3; }
-    if has("chat_format=llm-jp-harmony-v1") { return H_LLM_JP_HARMONY; }
-    if has("<|channel|>") && has("<|constrain|>xml") && has("rfl:parameter") { return H_HARMONY_XML; }
-    if has("<|channel|>") { return H_GPT_OSS; }
-    if has("to=commentary") && has("<|eom|>") { return H_MUSE_SPARK; }
-    if has("<atem:function_calls>") && has("<|eom|>") { return H_MUSE_GLIMMER; }
-    if has(">>>all") && has(">>>${recipient}") { return H_FUNCTIONARY_V3_2; }
-    if has("<|tool_calls_section_begin|>") && has("<|tool_call_begin|>") { return H_KIMI_K2; }
-    if has("<|open|>") && has("<|close|>") && has("<|end_of_msg|>") { return H_KIMI_K3; }
-    if has("<|ifm|im_start|>") && has("<ifm|tool_calls>") { return H_K2_HORIZON; }
-    if has("<role>ASSISTANT</role>") && has("<arg_key>") { return H_LING3; }
-    if has("<|START_TEXT|>") && has("<|START_ACTION|>") { return H_COHERE2MOE; }
-    if is_lfm2(src) { return H_LFM2; }
-    if has("List of tools: ") && !has("<|tool_list_start|>") { return H_LFM2_5; }
-    if has("<|role_sep|>") && has("<|message_sep|>") && !has("<|function_call|>") { return H_GIGACHAT_V3; }
-    if has("]<]minimax[>[") && has("<tool_call>") && has("<invoke name=") { return H_MINIMAX_M3; }
-    if (has("dsml_token") && has("DSML") && (has("function_calls") || has("tool_calls"))) || has("｜DSML｜ calls>") { return H_DEEPSEEK_V3_2; }
-    if has("'<|tool_call>call:'") { return H_GEMMA4; }
-    if has("Tool usage guidelines:") && has("<function name=\"") && has("<param name=\"") { return H_MINICPM5; }
-    if has("[source_lang_code]") && has("[target_lang_code]") { return H_TRANSLATE_GEMMA; }
-    if has("<tool_call>") && has("<function=") && has("<parameter=") && !has("'<tool_call><function=' ~ tool_call.name ~ '>'") { return H_QWEN3_CODER; }
-    if has("<|message_user|>") && has("<|content_image|>") { return H_INKLING; }   // Inkling 1 and 2
-    return -1;
+    if has("[SYSTEM_PROMPT]") && has("[TOOL_CALLS]") && has("[ARGS]") && !has("[CALL_ID]") { return chat_render::Handler.Ministral3; }
+    if has("chat_format=llm-jp-harmony-v1") { return chat_render::Handler.LlmJpHarmony; }
+    if has("<|channel|>") && has("<|constrain|>xml") && has("rfl:parameter") { return chat_render::Handler.HarmonyXml; }
+    if has("<|channel|>") { return chat_render::Handler.GptOss; }
+    if has("to=commentary") && has("<|eom|>") { return chat_render::Handler.MuseSpark; }
+    if has("<atem:function_calls>") && has("<|eom|>") { return chat_render::Handler.MuseGlimmer; }
+    if has(">>>all") && has(">>>${recipient}") { return chat_render::Handler.FunctionaryV3_2; }
+    if has("<|tool_calls_section_begin|>") && has("<|tool_call_begin|>") { return chat_render::Handler.KimiK2; }
+    if has("<|open|>") && has("<|close|>") && has("<|end_of_msg|>") { return chat_render::Handler.KimiK3; }
+    if has("<|ifm|im_start|>") && has("<ifm|tool_calls>") { return chat_render::Handler.K2Horizon; }
+    if has("<role>ASSISTANT</role>") && has("<arg_key>") { return chat_render::Handler.Ling3; }
+    if has("<|START_TEXT|>") && has("<|START_ACTION|>") { return chat_render::Handler.Cohere2moe; }
+    if is_lfm2(src) { return chat_render::Handler.Lfm2; }
+    if has("List of tools: ") && !has("<|tool_list_start|>") { return chat_render::Handler.Lfm2_5; }
+    if has("<|role_sep|>") && has("<|message_sep|>") && !has("<|function_call|>") { return chat_render::Handler.GigachatV3; }
+    if has("]<]minimax[>[") && has("<tool_call>") && has("<invoke name=") { return chat_render::Handler.MinimaxM3; }
+    if (has("dsml_token") && has("DSML") && (has("function_calls") || has("tool_calls"))) || has("｜DSML｜ calls>") { return chat_render::Handler.DeepseekV3_2; }
+    if has("'<|tool_call>call:'") { return chat_render::Handler.Gemma4; }
+    if has("Tool usage guidelines:") && has("<function name=\"") && has("<param name=\"") { return chat_render::Handler.Minicpm5; }
+    if has("[source_lang_code]") && has("[target_lang_code]") { return chat_render::Handler.TranslateGemma; }
+    if has("<tool_call>") && has("<function=") && has("<parameter=") && !has("'<tool_call><function=' ~ tool_call.name ~ '>'") { return chat_render::Handler.Qwen3Coder; }
+    if has("<|message_user|>") && has("<|content_image|>") { return chat_render::Handler.Inkling; }   // Inkling 1 and 2
+    return chat_render::Handler.None;
 }
 
 var err: u8[>..] = [];
@@ -88,8 +67,8 @@ var tools_v = -1;
 var schema_v = -1;
 var src_has_think = false;
 
-fn has_tools() -> bool { tools_v >= 0 && json_schema::json_kind(tools_v) == json_schema::J_ARRAY && json_schema::json_len(tools_v) > 0 }
-fn has_response_format() -> bool { schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT && json_schema::json_len(schema_v) > 0 }
+fn has_tools() -> bool { tools_v >= 0 && json_schema::json_kind(tools_v) == json_schema::JsonKind.Array && json_schema::json_len(tools_v) > 0 }
+fn has_response_format() -> bool { schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object && json_schema::json_len(schema_v) > 0 }
 
 // The prompt (direct_apply_impl with the overrides, into chat_render's
 // prompt) and the generation prompt (generation_prompt_impl, into gp). It
@@ -124,7 +103,7 @@ fn preserve(s: const u8[:]) { chat_render::list_push(chat_render::preserved_toke
 fn function_of(i: i64) -> i64 {
     let tool = json_schema::json_at(tools_v, i);
     let ty = chat_peg::jget(tool, "type");
-    if ty < 0 || chat_peg::jstr(ty) != "function" || json_schema::json_kind(ty) != json_schema::J_STRING { return -1; }
+    if ty < 0 || chat_peg::jstr(ty) != "function" || json_schema::json_kind(ty) != json_schema::JsonKind.String { return -1; }
     return chat_peg::jget(tool, "function");
 }
 
@@ -147,7 +126,7 @@ fn init_lfm2(t: chat_render::Template, g: chat_render::Gen, tool_list_tokens: bo
         for i in jinja::arr_len(arr) {
             let m = jinja::arr_at(arr, i);
             let r = jinja::obj_get_name(m, "reasoning_content");
-            if r >= 0 && jinja::kind(r) == jinja::K_STRING { jinja::obj_set_name(m, "thinking", r); }
+            if r >= 0 && jinja::kind(r) == jinja::ValKind.String { jinja::obj_set_name(m, "thinking", r); }
         }
         chat_render::dump(adjusted, arr);
         ok = true;
@@ -156,7 +135,7 @@ fn init_lfm2(t: chat_render::Template, g: chat_render::Gen, tool_list_tokens: bo
     if !ok { json_schema::fail(jinja::err); }
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { has_messages: true, messages: adjusted, .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     preserve(TOOL_CALL_START);
     preserve(TOOL_CALL_END);
@@ -169,15 +148,15 @@ fn init_lfm2(t: chat_render::Template, g: chat_render::Gen, tool_list_tokens: bo
     chat_render::thinking_start.append(THINK_START);
     chat_render::list_push(chat_render::thinking_ends, THINK_END);
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let extract = g.reasoning_format != chat_render::REASONING_NONE && find(chat_render::source(t), THINK_START) >= 0;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None && find(chat_render::source(t), THINK_START) >= 0;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append(GEN_PROMPT);
         gp.append(THINK_START);
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -191,7 +170,7 @@ fn init_lfm2(t: chat_render::Template, g: chat_render::Gen, tool_list_tokens: bo
         reasoning = peg::optional(peg::chain([peg::cs(THINK_START), peg::ci(r), peg::cs(THINK_END)]));
     }
     var root = -1;
-    if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    if !tools || g.tool_choice == chat_render::ToolChoice.None {
         if rf {
             let j = peg::json();
             let node = json_schema::build_document(schema_v);
@@ -212,8 +191,8 @@ fn init_lfm2(t: chat_render::Template, g: chat_render::Gen, tool_list_tokens: bo
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, TOOL_CALL_START);
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::ToolChoice.Required)));
+        chat_render::add_trigger(chat_render::Trigger.Word, TOOL_CALL_START);
     }
 }
 
@@ -224,7 +203,7 @@ fn init_lfm2(t: chat_render::Template, g: chat_render::Gen, tool_list_tokens: bo
 fn init_minicpm5(t: chat_render::Template, g: chat_render::Gen) {
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     preserve("<function");
     preserve("<param");
@@ -236,13 +215,13 @@ fn init_minicpm5(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::list_push(chat_render::thinking_ends, "</think>");
     let tools = has_tools();
     let rf = has_response_format();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append("<|im_start|>assistant\n<think>\n");
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append("\n</think>\n\n"); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append("\n</think>\n\n"); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -265,7 +244,7 @@ fn init_minicpm5(t: chat_render::Template, g: chat_render::Gen) {
         let node = json_schema::build_document(schema_v);
         let c = chat_peg::content(peg::schema(j, "response-format", node, false));
         root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(c)]);
-    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    } else if tools && g.tool_choice != chat_render::ToolChoice.None {
         // CDATA, or up to </param>
         var a = -1;
         {
@@ -340,8 +319,8 @@ fn init_minicpm5(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, "<function");
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::ToolChoice.Required)));
+        chat_render::add_trigger(chat_render::Trigger.Word, "<function");
     }
 }
 
@@ -353,7 +332,7 @@ fn init_qwen3_coder(t: chat_render::Template, g: chat_render::Gen) {
     let GEN_PREFIX = "<|im_start|>assistant\n";
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     let supports_reasoning = find(chat_render::source(t), "<think>") >= 0;
     chat_render::supports_thinking = supports_reasoning;
     preserve("<tool_call>");
@@ -369,17 +348,17 @@ fn init_qwen3_coder(t: chat_render::Template, g: chat_render::Gen) {
     }
     let tools = has_tools();
     let rf = has_response_format();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append(GEN_PREFIX);
         if supports_reasoning {
             gp.append("<think>\n");
             gp.append(g.continue_reasoning);
-            if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append("\n</think>\n\n"); }
+            if g.continue_final_message == chat_render::Continue.Content { gp.append("\n</think>\n\n"); }
         }
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -417,11 +396,11 @@ fn init_qwen3_coder(t: chat_render::Template, g: chat_render::Gen) {
         let node = json_schema::build_document(schema_v);
         let c = chat_peg::content(peg::schema(j, "response-format", node, false));
         root = peg::seq2(generation_prompt, peg::spaced(reasoning, c));
-    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    } else if tools && g.tool_choice != chat_render::ToolChoice.None {
         let arg_close = chat_peg::tool_arg_close(peg::literal("\n</parameter>\n"));
         let sv = chat_peg::tool_arg_string_value(peg::until("\n</parameter>\n"));
         let arg_string = peg::rule("xml-arg-string", peg::through(sv, arg_close), false);
-        let min_calls = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { 1 } else { 0 };
+        let min_calls = if g.tool_choice == chat_render::ToolChoice.Required { 1 } else { 0 };
         let more = if g.parallel_tool_calls { peg::zero_or_more(peg::ref("tool-call")) } else { peg::eps() };
         var starts = peg::token("<tool_call>");
         var tool_calls = peg::choice([]);
@@ -519,7 +498,7 @@ fn init_qwen3_coder(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::parser = peg::build(root);
     if include {
         // the grammar scans for the triggers itself, so the sampler runs it from the first token
-        build_grammar_as(false, !rf && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
+        build_grammar_as(false, !rf && g.tool_choice == chat_render::ToolChoice.Auto);
     }
 }
 
@@ -556,7 +535,7 @@ fn init_inkling(t: chat_render::Template, g: chat_render::Gen) {
     let END = "<|end_message|>";
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     for tk in [HEADER, THINK, TEXT, TOOL_JSON, END] { preserve(tk); }
     chat_render::thinking_start.append(THINK);
@@ -570,7 +549,7 @@ fn init_inkling(t: chat_render::Template, g: chat_render::Gen) {
             gp.append(THINK);
             gp.append(g.continue_reasoning);
         }
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+        if g.continue_final_message == chat_render::Continue.Content {
             if gp.len > 0 { gp.append(END); }
             gp.append(HEADER);
             gp.append(TEXT);
@@ -580,9 +559,9 @@ fn init_inkling(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::gen_prompt.append(gp);
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let use_tools = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let use_tools = tools && g.tool_choice != chat_render::ToolChoice.None;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     peg::begin();
     peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
     let header = peg::token(HEADER);
@@ -615,7 +594,7 @@ fn init_inkling(t: chat_render::Template, g: chat_render::Gen) {
         let blocks = peg::zero_or_more(peg::seq2(header, peg::choice2(thinking, text)));
         if !use_tools {
             root = blocks;
-        } else if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+        } else if g.tool_choice == chat_render::ToolChoice.Required {
             let tool_json = peg::token(TOOL_JSON);
             var tool_choice = peg::choice([]);
             for i in json_schema::json_len(tools_v) {
@@ -651,7 +630,7 @@ fn init_inkling(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if rf || use_tools {
-        build_grammar_as(false, !rf && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
+        build_grammar_as(false, !rf && g.tool_choice == chat_render::ToolChoice.Auto);
     }
 }
 
@@ -663,28 +642,28 @@ fn init_handler(t: chat_render::Template, g: chat_render::Gen) {
     tools_v = if g.tools.len > 0 { json_schema::json_value(g.tools) } else { -1 };
     schema_v = if g.json_schema.len > 0 { json_schema::json_value(g.json_schema) } else { -1 };
     let h = t.handler;
-    if h == H_LFM2 { init_lfm2(t, g, true); return; }
-    if h == H_LFM2_5 { init_lfm2(t, g, false); return; }
-    if h == H_MINICPM5 { init_minicpm5(t, g); return; }
-    if h == H_QWEN3_CODER { init_qwen3_coder(t, g); return; }
-    if h == H_GEMMA4 { init_gemma4(t, g); return; }
-    if h == H_INKLING { init_inkling(t, g); return; }
-    if h == H_TRANSLATE_GEMMA { init_translate_gemma(t, g); return; }
-    if h == H_GIGACHAT_V3 { init_gigachat_v3(t, g); return; }
-    if h == H_FUNCTIONARY_V3_2 { init_functionary_v3_2(t, g); return; }
-    if h == H_COHERE2MOE { init_cohere2moe(t, g); return; }
-    if h == H_KIMI_K2 { init_kimi_k2(t, g); return; }
-    if h == H_KIMI_K3 { init_kimi_k3(t, g); return; }
-    if h == H_MINISTRAL_3 { init_ministral_3(t, g); return; }
-    if h == H_GPT_OSS { init_gpt_oss(t, g); return; }
-    if h == H_LLM_JP_HARMONY { init_llm_jp_harmony(t, g); return; }
-    if h == H_DEEPSEEK_V3_2 { init_deepseek_v3_2(t, g); return; }
-    if h == H_LING3 { init_ling3(t, g); return; }
-    if h == H_K2_HORIZON { init_k2_horizon(t, g); return; }
-    if h == H_MINIMAX_M3 { init_minimax_m3(t, g); return; }
-    if h == H_MUSE_GLIMMER { init_muse_glimmer(t, g); return; }
-    if h == H_MUSE_SPARK { init_muse_spark(t, g); return; }
-    if h == H_HARMONY_XML { init_harmony_xml(t, g); return; }
+    if h == chat_render::Handler.Lfm2 { init_lfm2(t, g, true); return; }
+    if h == chat_render::Handler.Lfm2_5 { init_lfm2(t, g, false); return; }
+    if h == chat_render::Handler.Minicpm5 { init_minicpm5(t, g); return; }
+    if h == chat_render::Handler.Qwen3Coder { init_qwen3_coder(t, g); return; }
+    if h == chat_render::Handler.Gemma4 { init_gemma4(t, g); return; }
+    if h == chat_render::Handler.Inkling { init_inkling(t, g); return; }
+    if h == chat_render::Handler.TranslateGemma { init_translate_gemma(t, g); return; }
+    if h == chat_render::Handler.GigachatV3 { init_gigachat_v3(t, g); return; }
+    if h == chat_render::Handler.FunctionaryV3_2 { init_functionary_v3_2(t, g); return; }
+    if h == chat_render::Handler.Cohere2moe { init_cohere2moe(t, g); return; }
+    if h == chat_render::Handler.KimiK2 { init_kimi_k2(t, g); return; }
+    if h == chat_render::Handler.KimiK3 { init_kimi_k3(t, g); return; }
+    if h == chat_render::Handler.Ministral3 { init_ministral_3(t, g); return; }
+    if h == chat_render::Handler.GptOss { init_gpt_oss(t, g); return; }
+    if h == chat_render::Handler.LlmJpHarmony { init_llm_jp_harmony(t, g); return; }
+    if h == chat_render::Handler.DeepseekV3_2 { init_deepseek_v3_2(t, g); return; }
+    if h == chat_render::Handler.Ling3 { init_ling3(t, g); return; }
+    if h == chat_render::Handler.K2Horizon { init_k2_horizon(t, g); return; }
+    if h == chat_render::Handler.MinimaxM3 { init_minimax_m3(t, g); return; }
+    if h == chat_render::Handler.MuseGlimmer { init_muse_glimmer(t, g); return; }
+    if h == chat_render::Handler.MuseSpark { init_muse_spark(t, g); return; }
+    if h == chat_render::Handler.HarmonyXml { init_harmony_xml(t, g); return; }
     json_schema::fail(str("the dedicated handler ", handler_name(h), " is not ported yet"));
 }
 
@@ -700,12 +679,12 @@ fn try_init(t: chat_render::Template, g: chat_render::Gen) -> bool {
 
 fn has_tool_calls(m: i64) -> bool {
     let tc = jinja::obj_get_name(m, "tool_calls");
-    return tc >= 0 && jinja::kind(tc) == jinja::K_ARRAY && jinja::arr_len(tc) > 0;
+    return tc >= 0 && jinja::kind(tc) == jinja::ValKind.Array && jinja::arr_len(tc) > 0;
 }
 
 fn role_of(m: i64) -> const u8[:] {
     let r = jinja::obj_get_name(m, "role");
-    return if r >= 0 && jinja::kind(r) == jinja::K_STRING { jinja::sbytes(r) } else { "" };
+    return if r >= 0 && jinja::kind(r) == jinja::ValKind.String { jinja::sbytes(r) } else { "" };
 }
 
 //
@@ -817,13 +796,13 @@ fn g4_child_name(at: i64, len: i64, suffix: const u8[:]) -> i64, i64 {
 recursive fn g4_shaped(node: i64) -> bool {
     let nd = json_schema::nodes[node];
     let k = nd.kind;
-    if k == json_schema::K_REF { return nd.target >= 0; }
-    if k == json_schema::K_ANY_OF {
+    if k == json_schema::Kind.Ref { return nd.target >= 0; }
+    if k == json_schema::Kind.AnyOf {
         for i in nd.kids_n { if g4_shaped(json_schema::kids[nd.kids_at + i]) { return true; } }
         return false;
     }
-    if k == json_schema::K_ALL_OF { return nd.kids_n == 1 && g4_shaped(json_schema::kids[nd.kids_at]); }
-    return k == json_schema::K_ARRAY || k == json_schema::K_TUPLE || k == json_schema::K_OBJECT;
+    if k == json_schema::Kind.AllOf { return nd.kids_n == 1 && g4_shaped(json_schema::kids[nd.kids_at]); }
+    return k == json_schema::Kind.Array || k == json_schema::Kind.Tuple || k == json_schema::Kind.Object;
 }
 
 fn g4_key_name(key: const u8[:]) -> i64 { peg::tag(G4_DICT_KEY_NAME, peg::literal(key)) }
@@ -874,15 +853,15 @@ recursive fn g4_visit(node: i64, at: i64, len: i64) -> i64 {
     }
     let k = json_schema::nodes[node].kind;
     var r = -1;
-    if k == json_schema::K_REF { r = g4_visit_ref(node); }
-    else if k == json_schema::K_ANY_OF { r = g4_visit_any_of(node, at, len); }
-    else if k == json_schema::K_ALL_OF {
+    if k == json_schema::Kind.Ref { r = g4_visit_ref(node); }
+    else if k == json_schema::Kind.AnyOf { r = g4_visit_any_of(node, at, len); }
+    else if k == json_schema::Kind.AllOf {
         let nd = json_schema::nodes[node];
         r = if nd.kids_n == 1 { g4_visit(json_schema::kids[nd.kids_at], at, len) } else { peg::ref("gemma4-value") };
     }
-    else if k == json_schema::K_ARRAY { r = g4_visit_array(node, at, len); }
-    else if k == json_schema::K_TUPLE { r = g4_visit_tuple(node, at, len); }
-    else if k == json_schema::K_OBJECT { r = g4_visit_object(node, at, len); }
+    else if k == json_schema::Kind.Array { r = g4_visit_array(node, at, len); }
+    else if k == json_schema::Kind.Tuple { r = g4_visit_tuple(node, at, len); }
+    else if k == json_schema::Kind.Object { r = g4_visit_object(node, at, len); }
     else { r = peg::ref("gemma4-value"); }
     g4_depth--;
     return r;
@@ -1074,7 +1053,7 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
         gp.append("<|turn>model\n");
         chat_render::append_part(gp, false);
     }
-    chat_render::format = chat_render::FORMAT_PEG_GEMMA4;
+    chat_render::format = chat_render::Format.PegGemma4;
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append("<|channel>thought");
     chat_render::list_push(chat_render::thinking_ends, "<channel|>");
@@ -1092,14 +1071,14 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
         if ends_with(chat_render::prompt, "<turn|>\n") { gp.append("<|turn>model\n"); }
         gp.append("<|channel>thought\n");
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append("<channel|>"); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append("<channel|>"); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     peg::begin();
     peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
     let sm = peg::literal("model\n");
@@ -1139,7 +1118,7 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
         let response_format = peg::spaced(a, l2);
         let o = peg::optional(thought);
         root = peg::chain([peg::ci(start), peg::ci(o), peg::ci(response_format)]);
-    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    } else if tools && g.tool_choice != chat_render::ToolChoice.None {
         gemma4_value_rules();
         var tool_choice = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
@@ -1149,7 +1128,7 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
             // the arguments in the shape of the parameters when they are an object, else any dict
             var args = peg::ref("gemma4-dict");
             let doc = chat_peg::params_schema(func);
-            if doc >= 0 && json_schema::nodes[doc].kind == json_schema::K_OBJECT {
+            if doc >= 0 && json_schema::nodes[doc].kind == json_schema::Kind.Object {
                 args = g4_schema_parser(str("tool-", i, "-args"), doc);
             }
             let pk2 = peg::peek(peg::literal("{"));
@@ -1164,7 +1143,7 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
         let tool_call = peg::rule("tool-call", peg::seq2(tool_call_start, tool_call_rest), false);
         let more = if g.parallel_tool_calls { peg::zero_or_more(tool_call) } else { peg::eps() };
         let tool_calls = peg::trigger_rule_sr("tool-calls", tool_call_start, peg::seq2(tool_call_rest, more));
-        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+        if g.tool_choice == chat_render::ToolChoice.Required {
             root = peg::chain([peg::ci(start), peg::ci(thought), peg::ci(tool_calls)]);
         } else {
             let scan = peg::rule("scan-to-toolcall", peg::until_p(tool_call_start), false);
@@ -1184,7 +1163,7 @@ fn init_gemma4(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar_as(false, !(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
+        build_grammar_as(false, !(rf || (tools && g.tool_choice == chat_render::ToolChoice.Required)));
     }
 }
 
@@ -1286,7 +1265,7 @@ fn context_string(g: chat_render::Gen, key: const u8[:], def: const u8[:]) -> u8
     if g.extra_context.len == 0 { return str(def); }
     let v = json_schema::json_value(g.extra_context);
     let x = chat_peg::jget(v, key);
-    if x >= 0 && json_schema::json_kind(x) == json_schema::J_STRING { return str(json_schema::json_str(x)); }
+    if x >= 0 && json_schema::json_kind(x) == json_schema::JsonKind.String { return str(json_schema::json_str(x)); }
     if x < 0 { write_stderr(str("TranslateGemma: ", key, " not set in chat_template_kwargs, defaulting to en-GB\n")); }
     return str(def);
 }
@@ -1305,13 +1284,13 @@ fn init_translate_gemma(t: chat_render::Template, g: chat_render::Gen) {
             guard role_of(m) == "user" else { continue; }
             var text: u8[>..] = [];
             let c = jinja::obj_get_name(m, "content");
-            if c >= 0 && jinja::kind(c) == jinja::K_STRING {
+            if c >= 0 && jinja::kind(c) == jinja::ValKind.String {
                 text.append(jinja::sbytes(c));
-            } else if c >= 0 && jinja::kind(c) == jinja::K_ARRAY {
+            } else if c >= 0 && jinja::kind(c) == jinja::ValKind.Array {
                 for k in jinja::arr_len(c) {
                     if text.len > 0 { text.push(10); }
                     let tx = jinja::obj_get_name(jinja::arr_at(c, k), "text");
-                    if tx >= 0 && jinja::kind(tx) == jinja::K_STRING { text.append(jinja::sbytes(tx)); }
+                    if tx >= 0 && jinja::kind(tx) == jinja::ValKind.String { text.append(jinja::sbytes(tx)); }
                 }
             }
             let part = jinja::mk_object();
@@ -1330,7 +1309,7 @@ fn init_translate_gemma(t: chat_render::Template, g: chat_render::Gen) {
     if !ok { json_schema::fail(jinja::err); }
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { has_messages: true, messages: adjusted, .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append("<start_of_turn>model\n");
@@ -1351,7 +1330,7 @@ fn init_translate_gemma(t: chat_render::Template, g: chat_render::Gen) {
 fn init_gigachat_v3(t: chat_render::Template, g: chat_render::Gen) {
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     preserve("<|message_sep|>\n\n");
     preserve("<|role_sep|>\n");
     if chat_render::has_continuation(g) {
@@ -1362,11 +1341,11 @@ fn init_gigachat_v3(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::gen_prompt.append(gp);
     let tools = has_tools();
-    var include = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
+    var include = tools && g.tool_choice != chat_render::ToolChoice.None;
     let prefix = "<|message_sep|>\n\nfunction call<|role_sep|>\n";
     peg::begin();
     var ret = peg::eps();
-    if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    if tools && g.tool_choice != chat_render::ToolChoice.None {
         var tool_choice = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
             let func = chat_peg::jget(json_schema::json_at(tools_v, i), "function");
@@ -1388,7 +1367,7 @@ fn init_gigachat_v3(t: chat_render::Template, g: chat_render::Gen) {
             let r = peg::rule(str("tool-", i), peg::spaced(b, close), false);
             tool_choice = peg::choice2(tool_choice, r);
         }
-        let min_calls = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { 1 } else { 0 };
+        let min_calls = if g.tool_choice == chat_render::ToolChoice.Required { 1 } else { 0 };
         let l = peg::literal(prefix);
         let tool_call = peg::rule("tool-call", peg::seq2(l, tool_choice), false);
         let tool_calls = peg::trigger_rule("tool-call-root", peg::repeat(tool_call, min_calls, 1));
@@ -1401,8 +1380,8 @@ fn init_gigachat_v3(t: chat_render::Template, g: chat_render::Gen) {
     let l = peg::literal("assistant<|role_sep|>\n");
     chat_render::parser = peg::build(peg::seq2(l, ret));
     if include {
-        build_grammar(tools && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, prefix);
+        build_grammar(tools && g.tool_choice == chat_render::ToolChoice.Auto);
+        chat_render::add_trigger(chat_render::Trigger.Word, prefix);
     }
 }
 
@@ -1413,10 +1392,10 @@ fn init_gigachat_v3(t: chat_render::Template, g: chat_render::Gen) {
 fn init_functionary_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     preserve(">>>all");
     let tools = has_tools();
-    let include = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
+    let include = tools && g.tool_choice != chat_render::ToolChoice.None;
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append("<|start_header_id|>assistant<|end_header_id|>\n\n>>>all\n");
@@ -1432,7 +1411,7 @@ fn init_functionary_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     let content_until_end = peg::seq2(peg::literal("all\n"), c2);
     let generation_prompt = peg::literal("<|start_header_id|>assistant<|end_header_id|>\n\n>>>");
     var root = -1;
-    if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    if !tools || g.tool_choice == chat_render::ToolChoice.None {
         let e = peg::end();
         root = peg::chain([peg::ci(generation_prompt), peg::ci(content_until_end), peg::ci(e)]);
     } else {
@@ -1454,7 +1433,7 @@ fn init_functionary_v3_2(t: chat_render::Template, g: chat_render::Gen) {
         let tools_only = peg::trigger_rule("tools", peg::one_or_more(tool_choice));
         let content_and_tools = peg::seq2(content_until_tool, tools_only);
         var ret = peg::eps();
-        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+        if g.tool_choice == chat_render::ToolChoice.Required {
             if g.parallel_tool_calls {
                 let e = peg::end();
                 ret = peg::seq2(peg::choice([content_and_tools, tools_only]), e);
@@ -1475,8 +1454,8 @@ fn init_functionary_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, ">>>(?!all)");
+        build_grammar(g.tool_choice == chat_render::ToolChoice.Auto);
+        chat_render::add_trigger(chat_render::Trigger.Pattern, ">>>(?!all)");
     }
 }
 
@@ -1497,7 +1476,7 @@ fn init_cohere2moe(t: chat_render::Template, g: chat_render::Gen) {
     let GEN_PREFIX = str(TURN_START, CHATBOT);
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append(THINK_START);
     chat_render::list_push(chat_render::thinking_ends, THINK_END);
@@ -1505,14 +1484,14 @@ fn init_cohere2moe(t: chat_render::Template, g: chat_render::Gen) {
                ACTION_START, ACTION_END, "<|START_TOOL_RESULT|>", "<|END_TOOL_RESULT|>"] { preserve(tk); }
     let tools = has_tools();
     let rf = has_response_format();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append(GEN_PREFIX);
         gp.append(THINK_START);
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(TEXT_START); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(TEXT_START); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -1546,11 +1525,11 @@ fn init_cohere2moe(t: chat_render::Template, g: chat_render::Gen) {
         text_content = peg::chain([peg::ci(l), peg::ci(c), peg::ci(o)]);
     }
     var root = -1;
-    if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    if !tools || g.tool_choice == chat_render::ToolChoice.None {
         let o = peg::optional(peg::literal(TURN_END));
         root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(text_content), peg::ci(o), peg::ci(end)]);
     } else {
-        let require_tools = g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+        let require_tools = g.tool_choice == chat_render::ToolChoice.Required;
         let tool_calls = chat_peg::standard_json_tools(ACTION_START, ACTION_END, tools_v, g.parallel_tool_calls, true,
             "tool_name", "parameters", true, false, "", "tool_call_id", ["tool_call_id", "tool_name", "parameters"], false);
         // content and tool calls exclude each other
@@ -1560,8 +1539,8 @@ fn init_cohere2moe(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!rf && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, ACTION_START);
+        build_grammar(!rf && g.tool_choice == chat_render::ToolChoice.Auto);
+        chat_render::add_trigger(chat_render::Trigger.Word, ACTION_START);
     }
 }
 
@@ -1580,12 +1559,12 @@ fn init_kimi_k2(t: chat_render::Template, g: chat_render::Gen) {
     let GEN_PROMPT = "<|im_assistant|>assistant<|im_middle|>";
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     for tk in [SECTION_BEGIN, SECTION_END, CALL_BEGIN, ARGS_BEGIN, CALL_END, THINK_START, THINK_END] { preserve(tk); }
     let tools = has_tools();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = tools && g.tool_choice != chat_render::ToolChoice.None;
     chat_render::thinking_start.append(THINK_START);
     chat_render::list_push(chat_render::thinking_ends, THINK_END);
     if chat_render::has_continuation(g) {
@@ -1593,7 +1572,7 @@ fn init_kimi_k2(t: chat_render::Template, g: chat_render::Gen) {
         gp.append(GEN_PROMPT);
         gp.append(THINK_START);
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -1610,7 +1589,7 @@ fn init_kimi_k2(t: chat_render::Template, g: chat_render::Gen) {
     }
     let generation_prompt = peg::literal(GEN_PROMPT);
     var root = -1;
-    if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    if !tools || g.tool_choice == chat_render::ToolChoice.None {
         let c = chat_peg::content(peg::rest());
         root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(c), peg::ci(end)]);
     } else {
@@ -1636,7 +1615,7 @@ fn init_kimi_k2(t: chat_render::Template, g: chat_render::Gen) {
             let r = peg::rule(str("tool-", i), tp, false);
             tool_choice = peg::choice2(tool_choice, r);
         }
-        let min_calls = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { 1 } else { 0 };
+        let min_calls = if g.tool_choice == chat_render::ToolChoice.Required { 1 } else { 0 };
         let max_calls = if g.parallel_tool_calls { -1 } else { 1 };
         // rule("tool-calls", optional(SECTION_BEGIN) + trigger_rule("tool-call", repeat(CALL_BEGIN + tool_choice) + optional(SECTION_END)))
         let o2 = peg::optional(peg::literal(SECTION_END));
@@ -1649,8 +1628,8 @@ fn init_kimi_k2(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, "<|tool_call_begin|>");
+        build_grammar(g.tool_choice == chat_render::ToolChoice.Auto);
+        chat_render::add_trigger(chat_render::Trigger.Word, "<|tool_call_begin|>");
     }
 }
 
@@ -1675,21 +1654,21 @@ fn init_kimi_k3(t: chat_render::Template, g: chat_render::Gen) {
     let EOM_TOKEN = "<|end_of_msg|>";
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     // only the markers are special tokens
     for tk in ["<|open|>", "<|close|>", "<|sep|>", "<|end_of_msg|>"] { preserve(tk); }
     chat_render::thinking_start.append(THINK_START);
     chat_render::list_push(chat_render::thinking_ends, THINK_END);
     let tools = has_tools();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = tools && g.tool_choice != chat_render::ToolChoice.None;
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append(MSG_START);
         gp.append(THINK_START);
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(RESP_START); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(RESP_START); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -1710,7 +1689,7 @@ fn init_kimi_k3(t: chat_render::Template, g: chat_render::Gen) {
     let to1 = peg::optional(peg::literal(MSG_END));
     let trailer = peg::seq2(to1, to2);
     var root = -1;
-    if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    if !tools || g.tool_choice == chat_render::ToolChoice.None {
         root = peg::chain([peg::ci(start), peg::ci(reasoning), peg::ci(response), peg::ci(trailer), peg::ci(end)]);
     } else {
         var tool_choices = peg::choice([]);
@@ -1728,7 +1707,7 @@ fn init_kimi_k3(t: chat_render::Template, g: chat_render::Gen) {
                     let pv = json_schema::json_at(props, k);
                     var ty = str("string");
                     let tyv = chat_peg::jget(pv, "type");
-                    if tyv >= 0 && json_schema::json_kind(tyv) == json_schema::J_STRING { ty = str(json_schema::json_str(tyv)); }
+                    if tyv >= 0 && json_schema::json_kind(tyv) == json_schema::JsonKind.String { ty = str(json_schema::json_str(tyv)); }
                     let value = if ty == "string" { chat_peg::tool_arg_string_value(peg::until(ARG_END)) } else { chat_peg::tool_arg_value(peg::until(ARG_END)) };
                     // the trailing type="..." attribute skipped: anything up to <|sep|>
                     let close = chat_peg::tool_arg_close(peg::literal(ARG_END));
@@ -1764,13 +1743,13 @@ fn init_kimi_k3(t: chat_render::Template, g: chat_render::Gen) {
         let oom = peg::one_or_more(tool_choices);
         let ts = peg::literal(TOOLS_START);
         let section = peg::trigger_rule("kimi-k3-tool-call", peg::chain([peg::ci(ts), peg::ci(oom), peg::ci(te), peg::ci(e1), peg::ci(e2)]));
-        let tools_p = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { section } else { peg::optional(section) };
+        let tools_p = if g.tool_choice == chat_render::ToolChoice.Required { section } else { peg::optional(section) };
         root = peg::chain([peg::ci(start), peg::ci(reasoning), peg::ci(response), peg::ci(tools_p), peg::ci(trailer), peg::ci(end)]);
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(g.tool_choice != chat_render::TOOL_CHOICE_REQUIRED);
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, TOOLS_START);
+        build_grammar(g.tool_choice != chat_render::ToolChoice.Required);
+        chat_render::add_trigger(chat_render::Trigger.Word, TOOLS_START);
     }
 }
 
@@ -1792,7 +1771,7 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
             if role != "system" && role != "assistant" { jinja::arr_push(out, m); continue; }
             let content = jinja::mk_array();
             let rc = jinja::obj_get_name(m, "reasoning_content");
-            if rc >= 0 && jinja::kind(rc) == jinja::K_STRING {
+            if rc >= 0 && jinja::kind(rc) == jinja::ValKind.String {
                 let b = jinja::mk_object();
                 jinja::obj_set_name(b, "type", jinja::mk_str("thinking", false));
                 jinja::obj_set_name(b, "thinking", rc);
@@ -1800,12 +1779,12 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
             }
             let c = jinja::obj_get_name(m, "content");
             if c >= 0 {
-                if jinja::kind(c) == jinja::K_STRING {
+                if jinja::kind(c) == jinja::ValKind.String {
                     let b = jinja::mk_object();
                     jinja::obj_set_name(b, "type", jinja::mk_str("text", false));
                     jinja::obj_set_name(b, "text", c);
                     jinja::arr_push(content, b);
-                } else if jinja::kind(c) == jinja::K_ARRAY {
+                } else if jinja::kind(c) == jinja::ValKind.Array {
                     for k in jinja::arr_len(c) { jinja::arr_push(content, jinja::arr_at(c, k)); }
                 }
             }
@@ -1828,7 +1807,7 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
     if !ok { json_schema::fail(jinja::err); }
     let tools = has_tools();
     let rf = has_response_format();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     var include = true;
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append("[THINK]");
@@ -1837,13 +1816,13 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::list_push(chat_render::thinking_ends, "[TOOL_CALLS]");
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { has_messages: true, messages: adjusted, .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     for tk in ["[THINK]", "[/THINK]", "[TOOL_CALLS]", "[ARGS]"] { preserve(tk); }
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append("[THINK]");
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append("[/THINK]"); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append("[/THINK]"); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -1871,7 +1850,7 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
         let b = peg::spaced(a, c);
         let l2 = peg::literal("```");
         root = peg::seq2(generation_prompt, peg::spaced(b, l2));
-    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    } else if tools && g.tool_choice != chat_render::ToolChoice.None {
         var tool_choice = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
             let func = function_of(i);
@@ -1886,7 +1865,7 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
             let r = peg::rule(str("tool-", i), peg::seq2(open, ta), false);
             tool_choice = peg::choice2(tool_choice, r);
         }
-        let min_calls = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { 1 } else { 0 };
+        let min_calls = if g.tool_choice == chat_render::ToolChoice.Required { 1 } else { 0 };
         let max_calls = if g.parallel_tool_calls { -1 } else { 1 };
         let tool_calls = peg::trigger_rule("tool-call", peg::repeat(peg::chain([peg::cs("[TOOL_CALLS]"), peg::ci(tool_choice)]), min_calls, max_calls));
         let c = chat_peg::content(peg::until("[TOOL_CALLS]"));
@@ -1899,8 +1878,8 @@ fn init_ministral_3(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!rf && tools && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, "[TOOL_CALLS]");
+        build_grammar(!rf && tools && g.tool_choice == chat_render::ToolChoice.Auto);
+        chat_render::add_trigger(chat_render::Trigger.Word, "[TOOL_CALLS]");
     }
 }
 
@@ -1919,7 +1898,7 @@ fn harmony_messages(g: chat_render::Gen, out: u8[>..]&) {
         for i in jinja::arr_len(arr) {
             let m = jinja::arr_at(arr, i);
             let r = jinja::obj_get_name(m, "reasoning_content");
-            if r >= 0 && jinja::kind(r) == jinja::K_STRING {
+            if r >= 0 && jinja::kind(r) == jinja::ValKind.String {
                 let drop_content = has_tool_calls(m);
                 let a = jinja::mk_object();
                 for k in jinja::obj_len(m) {
@@ -1974,7 +1953,7 @@ fn harmony_common(t: chat_render::Template, g: chat_render::Gen, gp: u8[>..]&) {
     render(t, g, ov, gp);
     // during inference with no generation prompt, <|return|> is <|end|>
     if !g.add_generation_prompt { prompt_replace_last("<|return|>", "<|end|>"); }
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append("<|channel|>analysis<|message|>");
     chat_render::list_push(chat_render::thinking_ends, "<|end|>");
@@ -1985,7 +1964,7 @@ fn harmony_common(t: chat_render::Template, g: chat_render::Gen, gp: u8[>..]&) {
         gp.clear();
         gp.append("<|start|>assistant<|channel|>analysis<|message|>");
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+        if g.continue_final_message == chat_render::Continue.Content {
             gp.append("<|end|><|start|>assistant<|channel|>final<|message|>");
             gp.append(g.continue_content);
         }
@@ -1998,9 +1977,9 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
     var gp: u8[>..] = [];
     harmony_common(t, g, gp);
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     peg::begin();
     peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
     // the operands of + are made right to left (GCC); << and {...} left to right
@@ -2065,7 +2044,7 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
         let response_format = peg::rule("response-format", peg::chain([peg::ci(rt), peg::ci(rl), peg::ci(constraint), peg::ci(rm), peg::ci(c)]), false);
         let z = peg::zero_or_more(peg::seq2(start, analysis));
         root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
-    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    } else if tools && g.tool_choice != chat_render::ToolChoice.None {
         var in_role = peg::choice([]);
         var in_channel = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
@@ -2097,7 +2076,7 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
         let s2 = peg::seq2(peg::seq2(start_assistant, channel), to_functions);
         let t2 = peg::trigger_rule_sr("tool-call-in-channel", s2, in_channel);
         let tool_call = peg::choice([t1, t2]);
-        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+        if g.tool_choice == chat_render::ToolChoice.Required {
             let z = peg::zero_or_more(peg::seq2(start, any));
             root = peg::seq2(z, tool_call);
         } else {
@@ -2113,7 +2092,7 @@ fn init_gpt_oss(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::parser = peg::build(root);
     if include {
         // the grammar scans for the triggers itself, so the sampler runs it from the first token
-        build_grammar_as(false, !rf && g.tool_choice == chat_render::TOOL_CHOICE_AUTO);
+        build_grammar_as(false, !rf && g.tool_choice == chat_render::ToolChoice.Auto);
     }
 }
 
@@ -2121,9 +2100,9 @@ fn init_llm_jp_harmony(t: chat_render::Template, g: chat_render::Gen) {
     var gp: u8[>..] = [];
     harmony_common(t, g, gp);
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     peg::begin();
     // the space the tokenizer puts after special tokens (more than GBNF's space)
     let sp = peg::chars("[ ]", 0, -1);
@@ -2170,7 +2149,7 @@ fn init_llm_jp_harmony(t: chat_render::Template, g: chat_render::Gen) {
         let response_format = peg::rule("response-format", peg::chain([peg::ci(channel_tag), peg::ci(l), peg::ci(constraint), peg::ci(message), peg::ci(c)]), false);
         let z = peg::zero_or_more(peg::seq2(start, analysis));
         root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
-    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    } else if tools && g.tool_choice != chat_render::ToolChoice.None {
         var tool_choice = peg::choice([]);
         for i in json_schema::json_len(tools_v) {
             let func = function_of(i);
@@ -2193,7 +2172,7 @@ fn init_llm_jp_harmony(t: chat_render::Template, g: chat_render::Gen) {
             calls = peg::seq2(tool_choice, z);
         }
         let tool_call = peg::trigger_rule("tool-call", calls);
-        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+        if g.tool_choice == chat_render::ToolChoice.Required {
             let z = peg::zero_or_more(peg::seq2(start, any));
             root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(tool_call)]);
         } else {
@@ -2207,11 +2186,11 @@ fn init_llm_jp_harmony(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^\\s+to$");
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to=functions$");
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>\\s*assistant(\\s+to)");
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>\\s*assistant(<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to)");
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::ToolChoice.Required)));
+        chat_render::add_trigger(chat_render::Trigger.Pattern, "^\\s+to$");
+        chat_render::add_trigger(chat_render::Trigger.Pattern, "^<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to=functions$");
+        chat_render::add_trigger(chat_render::Trigger.Pattern, "<\\|start\\|>\\s*assistant(\\s+to)");
+        chat_render::add_trigger(chat_render::Trigger.Pattern, "<\\|start\\|>\\s*assistant(<\\|channel\\|>\\s*(?:commentary|analysis)\\s+to)");
     }
 }
 
@@ -2221,7 +2200,7 @@ fn init_llm_jp_harmony(t: chat_render::Template, g: chat_render::Gen) {
 
 fn str_member(m: i64, key: const u8[:]) -> const u8[:] {
     let v = jinja::obj_get_name(m, key);
-    return if v >= 0 && jinja::kind(v) == jinja::K_STRING { jinja::sbytes(v) } else { "" };
+    return if v >= 0 && jinja::kind(v) == jinja::ValKind.String { jinja::sbytes(v) } else { "" };
 }
 
 // deepseek_v4_sort_tool_results: the tool results of a user block in the
@@ -2305,7 +2284,7 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
                 let m = jinja::arr_at(arr, k);
                 guard role_of(m) == "system" else { continue; }
                 let mt = jinja::obj_get_name(m, "tools");
-                guard mt >= 0 && jinja::kind(mt) == jinja::K_ARRAY else { continue; }
+                guard mt >= 0 && jinja::kind(mt) == jinja::ValKind.Array else { continue; }
                 if tools_text.len == 0 { tools_text.push('['); }
                 for q in jinja::arr_len(mt) {
                     if !first { tools_text.push(','); }
@@ -2321,9 +2300,9 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     if !ok { json_schema::fail(jinja::err); }
     if tools_text.len > 0 { tools_v = json_schema::json_value(tools_text); }
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     // more context: the response format, and V4.1's reasoning effort mapped
     var context: u8[>..] = [];
     if is_v4 && rf {
@@ -2333,7 +2312,7 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     if is_v41 && g.extra_context.len > 0 {
         let ec = json_schema::json_value(g.extra_context);
         let re = chat_peg::jget(ec, "reasoning_effort");
-        if re >= 0 && json_schema::json_kind(re) == json_schema::J_STRING {
+        if re >= 0 && json_schema::json_kind(re) == json_schema::JsonKind.String {
             let effort = json_schema::json_str(re);
             if effort == "minimal" || effort == "xhigh" || effort == "medium" {
                 context.append(if context.len == 0 { "{" } else { "," });
@@ -2360,7 +2339,7 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::user_start.append("<｜User｜>");
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { has_messages: is_v4, messages: adjusted, context: context, .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append(THINK_START);
     chat_render::list_push(chat_render::thinking_ends, THINK_END);
@@ -2373,17 +2352,17 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
         gp.append(GEN_PROMPT);
         if is_v4 && g.continue_reasoning.len == 0 {
             gp.append(THINK_END);
-            if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(g.continue_content); }
+            if g.continue_final_message == chat_render::Continue.Content { gp.append(g.continue_content); }
         } else {
             gp.append(THINK_START);
             gp.append(g.continue_reasoning);
-            if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+            if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(g.continue_content); }
         }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
-    let require_tools = g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
-    let has_tool_calls = tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE;
+    let require_tools = g.tool_choice == chat_render::ToolChoice.Required;
+    let has_tool_calls = tools && g.tool_choice != chat_render::ToolChoice.None;
     peg::begin();
     let generation_prompt = peg::literal(GEN_PROMPT);
     let end = peg::end();
@@ -2529,7 +2508,7 @@ fn init_deepseek_v3_2(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::parser = peg::build(root);
     if include {
         build_grammar(!rf && tools && !require_tools);
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, FC_START);
+        chat_render::add_trigger(chat_render::Trigger.Word, FC_START);
     }
 }
 
@@ -2557,7 +2536,7 @@ fn init_ling3(t: chat_render::Template, g: chat_render::Gen) {
     let ARG_VAL_END = "</arg_value>";
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     for tk in [THINK_START, THINK_END, CALL_START, CALL_END, ARG_KEY, ARG_KEY_END, ARG_VAL, ARG_VAL_END, ROLE_END] { preserve(tk); }
     chat_render::thinking_start.append(THINK_START);
@@ -2574,14 +2553,14 @@ fn init_ling3(t: chat_render::Template, g: chat_render::Gen) {
         gp.push(10);
         gp.append(THINK_START);
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
     // the generation prompt opens the think block when thinking is on
     var think_open = false;
     if chat_render::has_continuation(g) {
-        think_open = g.continue_final_message != chat_render::CONTINUE_CONTENT;
+        think_open = g.continue_final_message != chat_render::Continue.Content;
     } else {
         let last_open = last_index(gp, THINK_START);
         let last_close = last_index(gp, THINK_END);
@@ -2589,8 +2568,8 @@ fn init_ling3(t: chat_render::Template, g: chat_render::Gen) {
     }
     let tools = has_tools();
     let rf = has_response_format();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     peg::begin();
     let end = peg::end();
     let oo = peg::optional(peg::space());
@@ -2615,7 +2594,7 @@ fn init_ling3(t: chat_render::Template, g: chat_render::Gen) {
         let response_format = chat_peg::content(peg::schema(j, "response-format", node, false));
         let x = peg::spaced(closed, response_format);
         root = peg::chain([peg::ci(opener), peg::ci(x), peg::ci(end)]);
-    } else if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    } else if !tools || g.tool_choice == chat_render::ToolChoice.None {
         root = peg::chain([peg::ci(opener), peg::ci(reasoning), peg::ci(tail), peg::ci(end)]);
     } else {
         var tool_choices = peg::choice([]);
@@ -2686,13 +2665,13 @@ fn init_ling3(t: chat_render::Template, g: chat_render::Gen) {
         let so1 = peg::optional(chat_peg::content(peg::until(ROLE_END)));
         let s = peg::space();
         let section = peg::trigger_rule("ling3-tool-call", peg::chain([peg::ci(calls), peg::ci(s), peg::ci(so1), peg::ci(so2)]));
-        let tools_p = if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED { section } else { peg::optional(section) };
+        let tools_p = if g.tool_choice == chat_render::ToolChoice.Required { section } else { peg::optional(section) };
         root = peg::chain([peg::ci(opener), peg::ci(reasoning), peg::ci(content), peg::ci(tools_p), peg::ci(tail), peg::ci(end)]);
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!rf && g.tool_choice != chat_render::TOOL_CHOICE_REQUIRED);
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, CALL_START);
+        build_grammar(!rf && g.tool_choice != chat_render::ToolChoice.Required);
+        chat_render::add_trigger(chat_render::Trigger.Word, CALL_START);
     }
 }
 
@@ -2727,7 +2706,7 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
     if !ok { json_schema::fail(jinja::err); }
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { has_messages: true, messages: adjusted, .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     let effort = context_string_quiet(g, "reasoning_effort", "high");
     let call_format = context_string_quiet(g, "tool_call_format", "xml");
@@ -2760,15 +2739,15 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::user_start.append("<|ifm|im_start|>user");
     let tools = has_tools();
     let rf = has_response_format();
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append(GEN_PREFIX);
         gp.append(THINK_START);
         gp.push(10);
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -2795,7 +2774,7 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
         let node = json_schema::build_document(schema_v);
         let c = chat_peg::content(peg::schema(j, "response-format", node, false));
         root = peg::seq2(generation_prompt, peg::spaced(thoughts, c));
-    } else if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    } else if !tools || g.tool_choice == chat_render::ToolChoice.None {
         let c = chat_peg::content(peg::rest());
         root = peg::seq2(generation_prompt, peg::spaced(reasoning, c));
     } else {
@@ -2867,7 +2846,7 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
                 tool_choice = peg::choice2(tool_choice, r);
             }
         }
-        let required = g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+        let required = g.tool_choice == chat_render::ToolChoice.Required;
         var calls = tool_choice;
         if g.parallel_tool_calls {
             let s = peg::space();
@@ -2888,9 +2867,9 @@ fn init_k2_horizon(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        let lazy = !(rf || g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED);
+        let lazy = !(rf || g.tool_choice == chat_render::ToolChoice.Required);
         build_grammar(lazy);
-        if lazy { chat_render::add_trigger(chat_render::TRIGGER_WORD, SECTION_START); }
+        if lazy { chat_render::add_trigger(chat_render::Trigger.Word, SECTION_START); }
     }
 }
 
@@ -2899,7 +2878,7 @@ fn context_string_quiet(g: chat_render::Gen, key: const u8[:], def: const u8[:])
     if g.extra_context.len == 0 { return str(def); }
     let v = json_schema::json_value(g.extra_context);
     let x = chat_peg::jget(v, key);
-    if x >= 0 && json_schema::json_kind(x) == json_schema::J_STRING { return str(json_schema::json_str(x)); }
+    if x >= 0 && json_schema::json_kind(x) == json_schema::JsonKind.String { return str(json_schema::json_str(x)); }
     return str(def);
 }
 
@@ -2952,7 +2931,7 @@ recursive fn mm3_value_of(n: i64, name: R2, close: R2) -> i64 {
         return peg::through(sv, close_tag);
     }
     let kind = json_schema::node_kind(n);
-    if kind == json_schema::K_ANY_OF {
+    if kind == json_schema::Kind.AnyOf {
         let mark = mm_build.len;
         for k in json_schema::anyof_count(n) {
             let nm0 = mm_names.len;
@@ -2965,14 +2944,14 @@ recursive fn mm3_value_of(n: i64, name: R2, close: R2) -> i64 {
         mm_build.resize(mark);
         return r;
     }
-    if kind == json_schema::K_OBJECT && json_schema::prop_count(n) > 0 {
+    if kind == json_schema::Kind.Object && json_schema::prop_count(n) > 0 {
         // tag(OBJECT, members) + space() + close_tag
         let s = peg::space();
         let members = mm3_members_of(n, name);
         let tg = peg::tag(TOOL_ARG_OBJECT, members);
         return peg::chain([peg::ci(tg), peg::ci(s), peg::ci(close_tag)]);
     }
-    if kind == json_schema::K_ARRAY {
+    if kind == json_schema::Kind.Array {
         let nm0 = mm_names.len;
         let item_close = mm_text(str(MM3_NS, "</item>"));
         let item_name = mm_name(name, "-item", -1);
@@ -3054,7 +3033,7 @@ fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
     let INVOKE_END = str(MM3_NS, "</invoke>");
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_MINIMAX_M3;
+    chat_render::format = chat_render::Format.PegMinimaxM3;
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append(THINK_START);
     chat_render::list_push(chat_render::thinking_ends, THINK_END);
@@ -3062,16 +3041,16 @@ fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
     chat_render::assistant_start.append("]~b]ai");
     chat_render::user_start.append("]~b]user");
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     let GEN_PROMPT = str(gp);
     if chat_render::has_continuation(g) {
         gp.clear();
         gp.append(GEN_PROMPT);
         gp.append(THINK_START);
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(THINK_END); gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(THINK_END); gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
@@ -3108,7 +3087,7 @@ fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
         let l1 = peg::literal("```json");
         let response_format = peg::rule("response-format", peg::chain([peg::ci(l1), peg::ci(s1), peg::ci(c), peg::ci(s2), peg::ci(l2)]), false);
         root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(response_format), peg::ci(end)]);
-    } else if !tools || g.tool_choice == chat_render::TOOL_CHOICE_NONE {
+    } else if !tools || g.tool_choice == chat_render::ToolChoice.None {
         let c = chat_peg::content(peg::rest());
         root = peg::chain([peg::ci(generation_prompt), peg::ci(reasoning), peg::ci(c), peg::ci(end)]);
     } else {
@@ -3119,7 +3098,7 @@ fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
             let name = str(chat_peg::jstr(chat_peg::jget(func, "name")));
             let root_node = chat_peg::params_schema(func);
             var invoke_body = peg::eps();
-            if json_schema::node_kind(root_node) == json_schema::K_OBJECT {
+            if json_schema::node_kind(root_node) == json_schema::Kind.Object {
                 mm_names.clear();
                 mm_build.clear();
                 invoke_body = mm3_members_of(root_node, mm_text(str("tool-", i, "-arg")));
@@ -3136,7 +3115,7 @@ fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
             let r = peg::rule(str("tool-", i), fp, false);
             tool_choice = peg::choice2(tool_choice, r);
         }
-        let require_tools = g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+        let require_tools = g.tool_choice == chat_render::ToolChoice.Required;
         var tool_calls = peg::eps();
         if g.parallel_tool_calls {
             let l2 = peg::literal(FC_END);
@@ -3159,8 +3138,8 @@ fn init_minimax_m3(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-        chat_render::add_trigger(chat_render::TRIGGER_WORD, FC_START);
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::ToolChoice.Required)));
+        chat_render::add_trigger(chat_render::Trigger.Word, FC_START);
     }
 }
 
@@ -3262,7 +3241,7 @@ fn init_muse_glimmer(t: chat_render::Template, g: chat_render::Gen) {
     // the generation prompt is just the assistant's start: the model writes its recipient
     gp.clear();
     gp.append("<|start|>assistant");
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     for tk in ["<|start|>", "<|message|>", "<|eom|>", "<atem:function_calls>", "<atem:invoke", "<atem:parameter",
                "</atem:parameter>", "</atem:invoke>", "</atem:function_calls>"] { preserve(tk); }
@@ -3272,17 +3251,17 @@ fn init_muse_glimmer(t: chat_render::Template, g: chat_render::Gen) {
         gp.clear();
         gp.append("<|start|>assistant to=self<|message|>");
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+        if g.continue_final_message == chat_render::Continue.Content {
             gp.append("<|eom|><|start|>assistant to=user<|message|>");
             gp.append(g.continue_content);
         }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     peg::begin();
     peg::use_tokens = peg::n_tokens() > 0;     // build_chat_peg_parser(inputs.specials, ...)
     let start_token = peg::token("<|start|>");
@@ -3315,7 +3294,7 @@ fn init_muse_glimmer(t: chat_render::Template, g: chat_render::Gen) {
             let response_format = peg::rule("response-format", peg::chain([peg::ci(recipient), peg::ci(message), peg::ci(ch)]), false);
             let z = peg::zero_or_more(peg::seq2(start, analysis));
             root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
-        } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+        } else if tools && g.tool_choice != chat_render::ToolChoice.None {
             let cl0 = chat_peg::tool_arg_close(peg::literal("</atem:parameter>"));
             let sv0 = chat_peg::tool_arg_string_value(peg::until("</atem:parameter>"));
             let string_value = peg::through(sv0, cl0);
@@ -3369,7 +3348,7 @@ fn init_muse_glimmer(t: chat_render::Template, g: chat_render::Gen) {
             }
             let more = if g.parallel_tool_calls { peg::zero_or_more(peg::seq2(eom, tool_choice)) } else { peg::eps() };
             let tool_calls = peg::rule("tool-calls", peg::seq2(tool_choice, more), false);
-            if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+            if g.tool_choice == chat_render::ToolChoice.Required {
                 let z = peg::zero_or_more(peg::seq2(start, analysis));
                 root = peg::seq2(z, tool_calls);
             } else {
@@ -3402,7 +3381,7 @@ fn init_muse_spark(t: chat_render::Template, g: chat_render::Gen) {
     // the generation prompt is just the assistant's start: the model writes its recipient
     gp.clear();
     gp.append("<|start|>assistant");
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     for tk in ["<|start|>", "<|message|>", "<|eom|>", "<|eot|>", "<atem:function_calls>", "<atem:invoke", "<atem:parameter",
                "</atem:parameter>", "</atem:invoke>", "</atem:function_calls>"] { preserve(tk); }
@@ -3412,17 +3391,17 @@ fn init_muse_spark(t: chat_render::Template, g: chat_render::Gen) {
         gp.clear();
         gp.append("<|start|>assistant to=self<|message|>");
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+        if g.continue_final_message == chat_render::Continue.Content {
             gp.append("<|eom|><|start|>assistant to=user<|message|>");
             gp.append(g.continue_content);
         }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
     peg::begin();
     let start = peg::rule("start", peg::literal("<|start|>assistant"), false);
     var root = -1;
@@ -3460,7 +3439,7 @@ fn init_muse_spark(t: chat_render::Template, g: chat_render::Gen) {
             let response_format = peg::rule("response-format", peg::chain([peg::ci(recipient), peg::ci(lm), peg::ci(ch)]), false);
             let z = peg::zero_or_more(peg::seq2(start, analysis));
             root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(response_format)]);
-        } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+        } else if tools && g.tool_choice != chat_render::ToolChoice.None {
             let cl0 = chat_peg::tool_arg_close(peg::literal("</atem:parameter>"));
             let sv0 = chat_peg::tool_arg_string_value(peg::until("</atem:parameter>"));
             let string_value = peg::through(sv0, cl0);
@@ -3522,7 +3501,7 @@ fn init_muse_spark(t: chat_render::Template, g: chat_render::Gen) {
             } else {
                 tool_calls = peg::trigger_rule("tool-call", tool_choice);
             }
-            if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+            if g.tool_choice == chat_render::ToolChoice.Required {
                 let z = peg::zero_or_more(peg::seq2(start, aside));
                 root = peg::chain([peg::ci(z), peg::ci(start), peg::ci(tool_calls)]);
             } else {
@@ -3539,8 +3518,8 @@ fn init_muse_spark(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        build_grammar(!(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED)));
-        chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant( to=(?!self<\\|message\\|>)(?!commentary<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
+        build_grammar(!(rf || (tools && g.tool_choice == chat_render::ToolChoice.Required)));
+        chat_render::add_trigger(chat_render::Trigger.Pattern, "<\\|start\\|>assistant( to=(?!self<\\|message\\|>)(?!commentary<\\|message\\|>)(?!user<\\|message\\|>)[^<]*?<\\|message\\|>)");
     }
 }
 
@@ -3558,7 +3537,7 @@ fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
     for e in ["<|call|>", "<|return|>", "<|endoftext|>", "<|im_end|>", "<|fim_pad|>", "<|repo_name|>", "<|file_sep|>"] { eog_list.push(e); }
     var gp: u8[>..] = [];
     render(t, g, chat_render::Override { .. }, gp);
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::supports_thinking = true;
     chat_render::thinking_start.append("<|channel|>analysis<|message|>");
     chat_render::list_push(chat_render::thinking_ends, "<|end|>");
@@ -3570,7 +3549,7 @@ fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
         gp.clear();
         gp.append("<|start|>assistant<|channel|>analysis<|message|>");
         gp.append(g.continue_reasoning);
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT {
+        if g.continue_final_message == chat_render::Continue.Content {
             gp.append("<|end|><|start|>assistant<|channel|>final<|message|>");
             gp.append(g.continue_content);
         }
@@ -3578,9 +3557,9 @@ fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::gen_prompt.append(gp);
     let tools = has_tools();
-    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT;
-    let include = rf || (tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE);
-    let extract = g.reasoning_format != chat_render::REASONING_NONE;
+    let rf = schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object;
+    let include = rf || (tools && g.tool_choice != chat_render::ToolChoice.None);
+    let extract = g.reasoning_format != chat_render::ReasoningFormat.None;
     peg::begin();
     let start = peg::rule("start", peg::literal("<|start|>assistant"), false);
     var eog = peg::choice([]);
@@ -3626,7 +3605,7 @@ fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
         let response_format = peg::rule("response-format", peg::chain([peg::ci(l1), peg::ci(constraint), peg::ci(l2), peg::ci(c), peg::ci(ro)]), false);
         let z = peg::zero_or_more(peg::seq2(analysis, start));
         root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(response_format)]);
-    } else if tools && g.tool_choice != chat_render::TOOL_CHOICE_NONE {
+    } else if tools && g.tool_choice != chat_render::ToolChoice.None {
         // a missing closing tag is tolerated
         let ve0 = [PARAM_OPEN, "<|end|>"];
         let value_ends = with_eog(ve0);
@@ -3728,7 +3707,7 @@ fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
             calls = peg::seq2(tool_choice, z);
         }
         let tool_call = peg::trigger_rule("tool-call", calls);
-        if g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED {
+        if g.tool_choice == chat_render::ToolChoice.Required {
             let z = peg::zero_or_more(peg::seq2(analysis, start));
             root = peg::chain([peg::ci(start), peg::ci(z), peg::ci(tool_call)]);
         } else {
@@ -3748,11 +3727,11 @@ fn init_harmony_xml(t: chat_render::Template, g: chat_render::Gen) {
     }
     chat_render::parser = peg::build(root);
     if include {
-        let lazy = !(rf || (tools && g.tool_choice == chat_render::TOOL_CHOICE_REQUIRED));
+        let lazy = !(rf || (tools && g.tool_choice == chat_render::ToolChoice.Required));
         build_grammar(lazy);
         if lazy {
-            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "^\\s+to$");
-            chat_render::add_trigger(chat_render::TRIGGER_PATTERN, "<\\|start\\|>assistant(\\s+to)");
+            chat_render::add_trigger(chat_render::Trigger.Pattern, "^\\s+to$");
+            chat_render::add_trigger(chat_render::Trigger.Pattern, "<\\|start\\|>assistant(\\s+to)");
         }
     }
 }

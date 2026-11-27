@@ -52,33 +52,27 @@ fn cmp_bytes(x: const u8[:], y: const u8[:]) -> i64 {
 // the schema's JSON
 //
 
-let J_NULL = 0;
-let J_BOOL = 1;
-let J_INT = 2;
-let J_FLOAT = 3;
-let J_STRING = 4;
-let J_ARRAY = 5;
-let J_OBJECT = 6;
+enum JsonKind { Null, Bool, Int, Float, String, Array, Object }
 
 // A JSON value: its kind, its number, its string (s), its key in its
 // object, and its elements or members (jl[at..at + n]).
-struct JV { kind: u8, i: i64 = 0, f: f64 = 0.0, s: Str = Str { .. }, key: Str = Str { .. }, at: i64 = 0, n: i64 = 0 }
+struct JV { kind: JsonKind, i: i64 = 0, f: f64 = 0.0, s: Str = Str { .. }, key: Str = Str { .. }, at: i64 = 0, n: i64 = 0 }
 
 var jv: JV[>..] = [];
 var jl: i64[>..] = [];
 var jstack: i64[>..<] = [];
 
 recursive fn convert(n: json::Node&) -> i64 {
-    var v = JV { kind: J_NULL, key: lit(n.key), .. };
+    var v = JV { kind: JsonKind.Null, key: lit(n.key), .. };
     var container = false;
     match n.val {
         Null => {},
-        Bool b => { v.kind = J_BOOL; v.i = if b.v { 1 } else { 0 }; },
-        Int x => { v.kind = J_INT; v.i = x.v; v.f = x.v; },
-        Num x => { v.kind = J_FLOAT; v.f = x.v; v.i = cast_i64(x.v); },
-        Str x => { v.kind = J_STRING; v.s = lit(x.s); },
-        Arr => { v.kind = J_ARRAY; container = true; },
-        Obj => { v.kind = J_OBJECT; container = true; },
+        Bool b => { v.kind = JsonKind.Bool; v.i = if b.v { 1 } else { 0 }; },
+        Int x => { v.kind = JsonKind.Int; v.i = x.v; v.f = x.v; },
+        Num x => { v.kind = JsonKind.Float; v.f = x.v; v.i = cast_i64(x.v); },
+        Str x => { v.kind = JsonKind.String; v.s = lit(x.s); },
+        Arr => { v.kind = JsonKind.Array; container = true; },
+        Obj => { v.kind = JsonKind.Object; container = true; },
     }
     if container {
         let mark = jstack.len;
@@ -114,7 +108,7 @@ fn parse_json(text: const u8[:]) -> i64 {
     return convert(root);
 }
 
-fn kind(v: i64) -> u8 { jv[v].kind }
+fn kind(v: i64) -> JsonKind { jv[v].kind }
 fn arr_len(v: i64) -> i64 { jv[v].n }
 fn arr_at(v: i64, k: i64) -> i64 { jl[jv[v].at + k] }
 fn obj_len(v: i64) -> i64 { jv[v].n }
@@ -180,20 +174,22 @@ fn utf8_decode(s: const u8[:], at: i64) -> i64, i64 {
 // errors
 //
 
-let F_ERROR = 0;         // std::invalid_argument / std::runtime_error: the conversion fails
-let F_UNSUPPORTED = 1;   // a pattern with no grammar equivalent
-let F_INVALID = 2;       // a pattern that is not a valid regex
+enum FailKind {
+    Error,        // std::invalid_argument / std::runtime_error: the conversion fails
+    Unsupported,  // a pattern with no grammar equivalent
+    Invalid,      // a pattern that is not a valid regex
+}
 
-struct Fail { kind: i32 }
+struct Fail { kind: FailKind }
 var err: u8[>..<] = [];
 
 fn fail(msg: const u8[:]) {
     err.clear();
     err.append(msg);
-    exception::throw(Fail { kind: F_ERROR });
+    exception::throw(Fail { kind: FailKind.Error });
 }
 
-fn fail_pattern(kind: i32, msg: const u8[:]) {
+fn fail_pattern(kind: FailKind, msg: const u8[:]) {
     err.clear();
     err.append(msg);
     exception::throw(Fail { kind: kind });
@@ -203,26 +199,12 @@ fn fail_pattern(kind: i32, msg: const u8[:]) {
 // the schema, parsed (common_chat_schema)
 //
 
-let K_ANY = 0;
-let K_REF = 1;
-let K_ANY_OF = 2;
-let K_ALL_OF = 3;
-let K_CONST = 4;
-let K_ENUM = 5;
-let K_NULL = 6;
-let K_BOOLEAN = 7;
-let K_NUMBER = 8;
-let K_INTEGER = 9;
-let K_STRING = 10;
-let K_ARRAY = 11;
-let K_TUPLE = 12;
-let K_OBJECT = 13;
+enum Kind {
+    Any, Ref, AnyOf, AllOf, Const, Enum, Null, Boolean, Number, Integer, String, Array, Tuple,
+    Object,
+}
 
-let FORMAT_NONE = 0;
-let FORMAT_UUID = 1;
-let FORMAT_DATE = 2;
-let FORMAT_TIME = 3;
-let FORMAT_DATE_TIME = 4;
+enum Format { None, Uuid, Date, Time, DateTime }
 
 let I64_MIN = -9223372036854775807 - 1;
 let I64_MAX = 9223372036854775807;
@@ -234,7 +216,7 @@ let I32_MAX = 2147483647;
 // -1. lo, hi: an integer's bounds, an array's or string's counts (hi -1:
 // none). ref, target: a $ref and the node it names.
 struct SNode {
-    kind: u8,
+    kind: Kind,
     kids_at: i64 = 0,
     kids_n: i64 = 0,
     value: i64 = -1,
@@ -244,7 +226,7 @@ struct SNode {
     hi: i64 = -1,
     pattern: Str = Str { .. },
     has_pattern: bool = false,
-    format: u8 = 0,
+    format: Format = Format.None,
     ref: Str = Str { .. },
     target: i64 = -1,
 }
@@ -278,13 +260,13 @@ fn sfail(path: Str, msg: const u8[:]) {
     fail(str("JSON schema error at ", t(path), ": ", msg));
 }
 
-fn get(v: i64, key: const u8[:]) -> i64 { if kind(v) == J_OBJECT { obj_get_name(v, key) } else { -1 } }
+fn get(v: i64, key: const u8[:]) -> i64 { if kind(v) == JsonKind.Object { obj_get_name(v, key) } else { -1 } }
 fn has(v: i64, key: const u8[:]) -> bool { get(v, key) >= 0 }
-fn is_int(v: i64) -> bool { kind(v) == J_INT }
-fn is_str(v: i64) -> bool { kind(v) == J_STRING }
-fn is_bool(v: i64) -> bool { kind(v) == J_BOOL }
-fn is_obj(v: i64) -> bool { kind(v) == J_OBJECT }
-fn is_arr(v: i64) -> bool { kind(v) == J_ARRAY }
+fn is_int(v: i64) -> bool { kind(v) == JsonKind.Int }
+fn is_str(v: i64) -> bool { kind(v) == JsonKind.String }
+fn is_bool(v: i64) -> bool { kind(v) == JsonKind.Bool }
+fn is_obj(v: i64) -> bool { kind(v) == JsonKind.Object }
+fn is_arr(v: i64) -> bool { kind(v) == JsonKind.Array }
 
 fn get_count(schema: i64, key: const u8[:], path: Str, def: i64) -> i64 {
     let v = get(schema, key);
@@ -297,7 +279,7 @@ fn get_count(schema: i64, key: const u8[:], path: Str, def: i64) -> i64 {
 fn get_bound(schema: i64, key: const u8[:], path: Str, round_up: bool) -> i64 {
     let v = get(schema, key);
     if is_int(v) { return jv[v].i; }
-    if kind(v) != J_FLOAT { sfail(path, str(key, " must be a number")); }
+    if kind(v) != JsonKind.Float { sfail(path, str(key, " must be a number")); }
     let d = jv[v].f;
     let r = if round_up { ceil_f(d) } else { floor_f(d) };
     return cast_i64(r);
@@ -306,16 +288,16 @@ fn get_bound(schema: i64, key: const u8[:], path: Str, round_up: bool) -> i64 {
 fn floor_f(d: f64) -> f64 { let i = cast_i64(d); let f: f64 = i; return if f > d { f - 1.0 } else { f }; }
 fn ceil_f(d: f64) -> f64 { let i = cast_i64(d); let f: f64 = i; return if f < d { f + 1.0 } else { f }; }
 
-fn get_format(schema: i64, path: Str) -> u8 {
+fn get_format(schema: i64, path: Str) -> Format {
     let v = get(schema, "format");
-    if v < 0 { return FORMAT_NONE; }
+    if v < 0 { return Format.None; }
     if !is_str(v) { sfail(path, "format must be a string"); }
     let f = sbytes(v);
-    if f == "date" { return FORMAT_DATE; }
-    if f == "time" { return FORMAT_TIME; }
-    if f == "date-time" { return FORMAT_DATE_TIME; }
-    if f == "uuid" || (f.len == 5 && starts_with(f, "uuid") && f[4] >= '1' && f[4] <= '5') { return FORMAT_UUID; }
-    return FORMAT_NONE;
+    if f == "date" { return Format.Date; }
+    if f == "time" { return Format.Time; }
+    if f == "date-time" { return Format.DateTime; }
+    if f == "uuid" || (f.len == 5 && starts_with(f, "uuid") && f[4] >= '1' && f[4] <= '5') { return Format.Uuid; }
+    return Format.None;
 }
 
 fn path_plus(path: Str, a: const u8[:], b: const u8[:]) -> Str { let s0 = sb.len; put(path); put_b(a); put_b(b); return fin(s0); }
@@ -369,10 +351,10 @@ recursive fn build_ref(v: i64, path: Str) -> i64 {
         let n = build_node(target, ref);
         refs[k].node = n;
     }
-    return new_node(SNode { kind: K_REF, ref: ref, .. });
+    return new_node(SNode { kind: Kind.Ref, ref: ref, .. });
 }
 
-recursive fn build_alternatives(kind: u8, alts: i64, path: Str) -> i64 {
+recursive fn build_alternatives(kind: Kind, alts: i64, path: Str) -> i64 {
     if !is_arr(alts) { sfail(path, "must be an array of schemas"); }
     if arr_len(alts) == 0 { sfail(path, "must not be empty"); }
     let mark = kstack.len;
@@ -409,7 +391,7 @@ recursive fn build_object(schema: i64, path: Str) -> i64 {
     let ap = get(schema, "additionalProperties");
     if ap >= 0 {
         if is_bool(ap) {
-            if jv[ap].i != 0 { additional = new_node(SNode { kind: K_ANY, .. }); }
+            if jv[ap].i != 0 { additional = new_node(SNode { kind: Kind.Any, .. }); }
         } else if is_obj(ap) {
             additional = build_node(ap, path_plus(path, "/additionalProperties", ""));
         } else {
@@ -417,13 +399,13 @@ recursive fn build_object(schema: i64, path: Str) -> i64 {
         }
     } else if properties < 0 {
         // {"type": "object"} on its own accepts any object
-        additional = new_node(SNode { kind: K_ANY, .. });
+        additional = new_node(SNode { kind: Kind.Any, .. });
     }
     let at0 = props.len;
     for k in pmark..pstack.len { props.push(pstack[k]); }
     let n = pstack.len - pmark;
     pstack.resize(pmark);
-    return new_node(SNode { kind: K_OBJECT, kids_at: at0, kids_n: n, additional: additional, .. });
+    return new_node(SNode { kind: Kind.Object, kids_at: at0, kids_n: n, additional: additional, .. });
 }
 
 recursive fn build_array(schema: i64, path: Str) -> i64 {
@@ -440,19 +422,19 @@ recursive fn build_array(schema: i64, path: Str) -> i64 {
                 kstack.push(child);
             }
             let at0, n = take_kids(mark);
-            return new_node(SNode { kind: K_TUPLE, kids_at: at0, kids_n: n, .. });
+            return new_node(SNode { kind: Kind.Tuple, kids_at: at0, kids_n: n, .. });
         }
         item = build_node(items, path_plus(path, "/", key));
     } else {
-        item = new_node(SNode { kind: K_ANY, .. });
+        item = new_node(SNode { kind: Kind.Any, .. });
     }
     let lo = get_count(schema, "minItems", path, 0);
     let hi = get_count(schema, "maxItems", path, -1);
-    return new_node(SNode { kind: K_ARRAY, items: item, lo: lo, hi: hi, .. });
+    return new_node(SNode { kind: Kind.Array, items: item, lo: lo, hi: hi, .. });
 }
 
 fn build_string(schema: i64, path: Str) -> i64 {
-    var node = SNode { kind: K_STRING, .. };
+    var node = SNode { kind: Kind.String, .. };
     let p = get(schema, "pattern");
     if p >= 0 {
         if !is_str(p) { sfail(path, "pattern must be a string"); }
@@ -472,7 +454,7 @@ fn build_integer(schema: i64, path: Str) -> i64 {
     else if has(schema, "exclusiveMinimum") { lo = get_bound(schema, "exclusiveMinimum", path, false) + 1; }
     if has(schema, "maximum") { hi = get_bound(schema, "maximum", path, false); }
     else if has(schema, "exclusiveMaximum") { hi = get_bound(schema, "exclusiveMaximum", path, true) - 1; }
-    return new_node(SNode { kind: K_INTEGER, lo: lo, hi: hi, .. });
+    return new_node(SNode { kind: Kind.Integer, lo: lo, hi: hi, .. });
 }
 
 var depth = 0;
@@ -494,7 +476,7 @@ recursive fn build_node_impl(schema: i64, path: Str, type_override: i64) -> i64 
     if has(schema, "$ref") { return build_ref(get(schema, "$ref"), path); }
     if has(schema, "oneOf") || has(schema, "anyOf") {
         let key = if has(schema, "oneOf") { "oneOf" } else { "anyOf" };
-        return build_alternatives(K_ANY_OF, get(schema, key), path_plus(path, "/", key));
+        return build_alternatives(Kind.AnyOf, get(schema, key), path_plus(path, "/", key));
     }
     let type_v = if type_override >= 0 { type_override } else { get(schema, "type") };
     if type_v >= 0 && is_arr(type_v) {
@@ -506,18 +488,18 @@ recursive fn build_node_impl(schema: i64, path: Str, type_override: i64) -> i64 
             kstack.push(child);
         }
         let at0, n = take_kids(mark);
-        return new_node(SNode { kind: K_ANY_OF, kids_at: at0, kids_n: n, .. });
+        return new_node(SNode { kind: Kind.AnyOf, kids_at: at0, kids_n: n, .. });
     }
-    if has(schema, "const") { return new_node(SNode { kind: K_CONST, value: get(schema, "const"), .. }); }
+    if has(schema, "const") { return new_node(SNode { kind: Kind.Const, value: get(schema, "const"), .. }); }
     if has(schema, "enum") {
         let values = get(schema, "enum");
         if !is_arr(values) || arr_len(values) == 0 { sfail(path, "enum must be a non-empty array"); }
         let mark = kstack.len;
         for i in arr_len(values) { kstack.push(arr_at(values, i)); }
         let at0, n = take_kids(mark);
-        return new_node(SNode { kind: K_ENUM, kids_at: at0, kids_n: n, .. });
+        return new_node(SNode { kind: Kind.Enum, kids_at: at0, kids_n: n, .. });
     }
-    if type_v >= 0 && kind(type_v) != J_NULL && !is_str(type_v) {
+    if type_v >= 0 && kind(type_v) != JsonKind.Null && !is_str(type_v) {
         sfail(path, "type must be a string or an array of strings");
     }
     let tn = if type_v >= 0 && is_str(type_v) { lit(sbytes(type_v)) } else { lit("") };
@@ -527,26 +509,26 @@ recursive fn build_node_impl(schema: i64, path: Str, type_override: i64) -> i64 
     if type_name.len == 0 {
         // without a type the structural keywords decide
         if has_properties { return build_object(schema, path); }
-        if has(schema, "allOf") { return build_alternatives(K_ALL_OF, get(schema, "allOf"), path_plus(path, "/allOf", "")); }
+        if has(schema, "allOf") { return build_alternatives(Kind.AllOf, get(schema, "allOf"), path_plus(path, "/allOf", "")); }
         if has(schema, "items") || has(schema, "prefixItems") { return build_array(schema, path); }
-        if has(schema, "pattern") || has(schema, "minLength") || has(schema, "maxLength") || get_format(schema, path) != FORMAT_NONE {
+        if has(schema, "pattern") || has(schema, "minLength") || has(schema, "maxLength") || get_format(schema, path) != Format.None {
             return build_string(schema, path);
         }
-        return new_node(SNode { kind: K_ANY, .. });
+        return new_node(SNode { kind: Kind.Any, .. });
     }
     if type_name == "object" {
-        if !has_properties && has(schema, "allOf") { return build_alternatives(K_ALL_OF, get(schema, "allOf"), path_plus(path, "/allOf", "")); }
+        if !has_properties && has(schema, "allOf") { return build_alternatives(Kind.AllOf, get(schema, "allOf"), path_plus(path, "/allOf", "")); }
         return build_object(schema, path);
     }
     if type_name == "string" {
-        if has(schema, "allOf") { return build_alternatives(K_ALL_OF, get(schema, "allOf"), path_plus(path, "/allOf", "")); }
+        if has(schema, "allOf") { return build_alternatives(Kind.AllOf, get(schema, "allOf"), path_plus(path, "/allOf", "")); }
         return build_string(schema, path);
     }
     if type_name == "array" { return build_array(schema, path); }
     if type_name == "integer" { return build_integer(schema, path); }
-    if type_name == "number" { return new_node(SNode { kind: K_NUMBER, .. }); }
-    if type_name == "boolean" { return new_node(SNode { kind: K_BOOLEAN, .. }); }
-    if type_name == "null" { return new_node(SNode { kind: K_NULL, .. }); }
+    if type_name == "number" { return new_node(SNode { kind: Kind.Number, .. }); }
+    if type_name == "boolean" { return new_node(SNode { kind: Kind.Boolean, .. }); }
+    if type_name == "null" { return new_node(SNode { kind: Kind.Null, .. }); }
     sfail(path, str("unrecognized type ", type_name));
     return -1;
 }
@@ -563,7 +545,7 @@ fn build_document(v: i64) -> i64 {
     let root = build_node(v, lit("#"));
     // the $refs get their targets once all are built
     for k in first..nodes.len {
-        guard nodes[k].kind == K_REF else { continue; }
+        guard nodes[k].kind == Kind.Ref else { continue; }
         let e = find_ref(t(nodes[k].ref));
         nodes[k].target = refs[e].node;
     }
@@ -722,12 +704,12 @@ fn dump(v: i64) -> Str {
 recursive fn dump_into(out: u8[>..]&, v: i64) {
     let x = jv[v];
     let k = x.kind;
-    if k == J_NULL { out.append("null"); return; }
-    if k == J_BOOL { out.append(if x.i != 0 { "true" } else { "false" }); return; }
-    if k == J_INT { format(out, x.i); return; }
-    if k == J_FLOAT { number::float_json(out, x.f); return; }
-    if k == J_STRING { json_string(out, sbytes(v)); return; }
-    if k == J_ARRAY {
+    if k == JsonKind.Null { out.append("null"); return; }
+    if k == JsonKind.Bool { out.append(if x.i != 0 { "true" } else { "false" }); return; }
+    if k == JsonKind.Int { format(out, x.i); return; }
+    if k == JsonKind.Float { number::float_json(out, x.f); return; }
+    if k == JsonKind.String { json_string(out, sbytes(v)); return; }
+    if k == JsonKind.Array {
         out.push('[');
         for i in x.n {
             if i > 0 { out.push(','); }
@@ -1057,10 +1039,10 @@ recursive fn transform() -> Item {
             pi++;
             if pi < length && pc(pi) == '?' {
                 if pi + 1 < length && pc(pi + 1) == ':' { pi += 2; }
-                else { fail_pattern(F_UNSUPPORTED, "unsupported group syntax"); }
+                else { fail_pattern(FailKind.Unsupported, "unsupported group syntax"); }
             }
             paren_depth++;
-            if paren_depth > LIMIT { fail_pattern(F_UNSUPPORTED, "pattern nesting too deep"); }
+            if paren_depth > LIMIT { fail_pattern(FailKind.Unsupported, "pattern nesting too deep"); }
             let inner = transform();
             let r = to_rule(inner);
             let s0 = sb.len;
@@ -1070,11 +1052,11 @@ recursive fn transform() -> Item {
             seq.push(Item { s: fin(s0), literal: false });
         } else if c == ')' {
             pi++;
-            if paren_depth == 0 { fail_pattern(F_INVALID, "unbalanced parentheses"); }
+            if paren_depth == 0 { fail_pattern(FailKind.Invalid, "unbalanced parentheses"); }
             paren_depth--;
             return join_seq(mark);
         } else if c == '^' || c == '$' {
-            fail_pattern(F_UNSUPPORTED, "anchor inside the pattern");
+            fail_pattern(FailKind.Unsupported, "anchor inside the pattern");
         } else if c == '[' {
             let s0 = sb.len;
             sb.push('[');
@@ -1082,7 +1064,7 @@ recursive fn transform() -> Item {
             while pi < length && pc(pi) != ']' {
                 if pc(pi) == '\\' {
                     let n = escape_length(t(pat), pi);
-                    if n == 0 { fail_pattern(F_UNSUPPORTED, str("unsupported escape in character class: ", t(pat)[pi..min(pi + 2, length)])); }
+                    if n == 0 { fail_pattern(FailKind.Unsupported, str("unsupported escape in character class: ", t(pat)[pi..min(pi + 2, length)])); }
                     for q in n { sb.push(pc(pi + q)); }
                     pi += n;
                 } else {
@@ -1090,7 +1072,7 @@ recursive fn transform() -> Item {
                     pi++;
                 }
             }
-            if pi >= length { fail_pattern(F_INVALID, "unterminated character class"); }
+            if pi >= length { fail_pattern(FailKind.Invalid, "unterminated character class"); }
             sb.push(']');
             pi++;
             seq.push(Item { s: fin(s0), literal: false });
@@ -1098,7 +1080,7 @@ recursive fn transform() -> Item {
             seq.push(Item { s: lit("|"), literal: false });
             pi++;
         } else if c == '*' || c == '+' || c == '?' {
-            if seq.len == mark { fail_pattern(F_INVALID, "nothing to repeat"); }
+            if seq.len == mark { fail_pattern(FailKind.Invalid, "nothing to repeat"); }
             let r = to_rule(seq[seq.len - 1]);
             let s0 = sb.len;
             put(r);
@@ -1109,13 +1091,13 @@ recursive fn transform() -> Item {
             let start = pi + 1;
             pi++;
             while pi < length && pc(pi) != '}' { pi++; }
-            if pi >= length { fail_pattern(F_UNSUPPORTED, "unterminated curly brackets"); }
+            if pi >= length { fail_pattern(FailKind.Unsupported, "unterminated curly brackets"); }
             let inside = t(pat)[start..pi];
             pi++;
             var lo = 0;
             var hi = I32_MAX;
             let comma = find(inside, ",");
-            if comma >= 0 && find(inside[comma + 1..], ",") >= 0 { fail_pattern(F_UNSUPPORTED, "wrong number of values in curly brackets"); }
+            if comma >= 0 && find(inside[comma + 1..], ",") >= 0 { fail_pattern(FailKind.Unsupported, "wrong number of values in curly brackets"); }
             if comma < 0 {
                 let v = stoi(inside);
                 lo = v;
@@ -1124,7 +1106,7 @@ recursive fn transform() -> Item {
                 if comma > 0 { lo = stoi(inside[..comma]); }
                 if comma + 1 < inside.len { hi = stoi(inside[comma + 1..]); }
             }
-            if seq.len == mark { fail_pattern(F_INVALID, "nothing to repeat"); }
+            if seq.len == mark { fail_pattern(FailKind.Invalid, "nothing to repeat"); }
             let last = seq[seq.len - 1];
             var sub = last.s;
             if !last.literal {
@@ -1151,7 +1133,7 @@ recursive fn transform() -> Item {
             while pi < length {
                 let ch = pc(pi);
                 if ch == '\\' {
-                    if pi == length - 1 { fail_pattern(F_INVALID, "trailing backslash"); }
+                    if pi == length - 1 { fail_pattern(FailKind.Invalid, "trailing backslash"); }
                     let next = pc(pi + 1);
                     if escaped_in_regex_only(next) {
                         pi++;
@@ -1159,7 +1141,7 @@ recursive fn transform() -> Item {
                         pi++;
                     } else {
                         let n = escape_length(t(pat), pi);
-                        if n == 0 { fail_pattern(F_UNSUPPORTED, str("unsupported escape: ", t(pat)[pi..min(pi + 2, length)])); }
+                        if n == 0 { fail_pattern(FailKind.Unsupported, str("unsupported escape: ", t(pat)[pi..min(pi + 2, length)])); }
                         for q in n { sb.push(pc(pi + q)); }
                         pi += n;
                     }
@@ -1177,7 +1159,7 @@ recursive fn transform() -> Item {
                 var msg: u8[>..] = [];
                 msg.append("unsupported character: ");
                 msg.push(c);
-                fail_pattern(F_UNSUPPORTED, msg);
+                fail_pattern(FailKind.Unsupported, msg);
             }
             seq.push(Item { s: fin(s0), literal: true });
         }
@@ -1195,18 +1177,18 @@ fn stoi(s: const u8[:]) -> i64 {
     var v = 0;
     while i < s.len && s[i] >= '0' && s[i] <= '9' {
         v = v * 10 + (s[i] - '0');
-        if v > 2147483648 { fail_pattern(F_UNSUPPORTED, "invalid number in curly brackets"); }
+        if v > 2147483648 { fail_pattern(FailKind.Unsupported, "invalid number in curly brackets"); }
         i++;
     }
-    if i == d0 { fail_pattern(F_UNSUPPORTED, "invalid number in curly brackets"); }
+    if i == d0 { fail_pattern(FailKind.Unsupported, "invalid number in curly brackets"); }
     if neg { v = -v; }
-    if v > 2147483647 { fail_pattern(F_UNSUPPORTED, "invalid number in curly brackets"); }
+    if v > 2147483647 { fail_pattern(FailKind.Unsupported, "invalid number in curly brackets"); }
     return v;
 }
 
 fn pattern_to_rule(pattern: Str, name: Str) -> Str {
     let p = t(pattern);
-    if p.len < 2 || p[0] != '^' || p[p.len - 1] != '$' { fail_pattern(F_UNSUPPORTED, "not anchored with '^' and '$'"); }
+    if p.len < 2 || p[0] != '^' || p[p.len - 1] != '$' { fail_pattern(FailKind.Unsupported, "not anchored with '^' and '$'"); }
     pat = Str { at: pattern.at + 1, len: pattern.len - 2 };
     pi = 0;
     paren_depth = 0;
@@ -1214,7 +1196,7 @@ fn pattern_to_rule(pattern: Str, name: Str) -> Str {
     sub_rules.clear();
     seq.clear();
     let r = to_rule(transform());
-    if paren_depth != 0 { fail_pattern(F_INVALID, "unbalanced parentheses"); }
+    if paren_depth != 0 { fail_pattern(FailKind.Invalid, "unbalanced parentheses"); }
     let s0 = sb.len;
     put_b("\"\\\"\" (");
     put(r);
@@ -1227,14 +1209,15 @@ fn visit_pattern(pattern: Str, name: Str) -> Str {
     var snapshot: Rule[>..] = [];
     snapshot.append(rules);
     var result = Str { .. };
-    var kind = -1;
+    var failed = false;
+    var kind = FailKind.Error;
     fn body() { result = pattern_to_rule(pattern, name); }
-    exception::try<Fail>(body) { f => kind = f.kind; };
-    if kind < 0 { return result; }
-    if kind == F_ERROR { exception::throw(Fail { kind: F_ERROR }); }
+    exception::try<Fail>(body) { f => failed = true; kind = f.kind; };
+    guard failed else { return result; }
+    if kind == FailKind.Error { exception::throw(Fail { kind: FailKind.Error }); }
     rules.clear();
     rules.append(snapshot);
-    if kind == F_UNSUPPORTED {
+    if kind == FailKind.Unsupported {
         warnings.push(lit(str("pattern ", t(pattern), " is not supported (", err, "), accepting any string")));
         return add_rule(name, add_primitive_b("string"));
     }
@@ -1396,7 +1379,7 @@ recursive fn build_object_rule(first: i64, n: i64, name: Str, additional: i64) -
         if name.len > 0 { sb.push('-'); }
         put_b("additional");
         let sub = fin(s0);
-        let value_rule = if nodes[additional].kind != K_ANY { visit(additional, cat2(sub, "-value")) } else { add_primitive_b("value") };
+        let value_rule = if nodes[additional].kind != Kind.Any { visit(additional, cat2(sub, "-value")) } else { add_primitive_b("value") };
         var key_rule = Str { .. };
         if n == 0 {
             key_rule = add_primitive_b("string");
@@ -1479,17 +1462,17 @@ recursive fn visit_all_of(node: i64, name: Str, rule_name: Str) -> Str {
             var lo = I64_MIN;
             var hi = I64_MAX;
             for l in leaves[leaves_first..] {
-                if nodes[l].kind == K_INTEGER {
+                if nodes[l].kind == Kind.Integer {
                     any_integer = true;
                     lo = max(lo, nodes[l].lo);
                     hi = min(hi, nodes[l].hi);
-                } else if nodes[l].kind != K_NUMBER {
+                } else if nodes[l].kind != Kind.Number {
                     all_numeric = false;
                 }
             }
             if all_numeric {
                 if lo > hi { fail("allOf has an empty numeric range"); }
-                merged = if any_integer { new_node(SNode { kind: K_INTEGER, lo: lo, hi: hi, .. }) } else { leaves[leaves_first] };
+                merged = if any_integer { new_node(SNode { kind: Kind.Integer, lo: lo, hi: hi, .. }) } else { leaves[leaves_first] };
             }
         }
     }
@@ -1513,7 +1496,7 @@ fn all_of_enums(node: i64) -> Str {
     let nd = nodes[node];
     for c in nd.kids_n {
         let child = kids[nd.kids_at + c];
-        if nodes[child].kind == K_ANY_OF {
+        if nodes[child].kind == Kind.AnyOf {
             for a in nodes[child].kids_n { add_component(kids[nodes[child].kids_at + a], false, 0, enum_rules, enum_counts); }
         } else {
             add_component(child, true, 0, enum_rules, enum_counts);
@@ -1541,21 +1524,21 @@ var leaves: i64[>..<] = [];
 recursive fn add_component(comp: i64, required: bool, d: i64, enum_rules: Str[>..]&, enum_counts: i64[>..]&) {
     if d >= LIMIT { fail(str("JSON schema is nested more than ", LIMIT, " levels deep")); }
     let c = nodes[comp];
-    if c.kind == K_REF {
+    if c.kind == Kind.Ref {
         if c.target >= 0 { add_component(c.target, required, d + 1, enum_rules, enum_counts); }
-    } else if c.kind == K_OBJECT {
+    } else if c.kind == Kind.Object {
         for k in c.kids_n {
             let p = props[c.kids_at + k];
             oprops.push(OProp { name: p.name, node: p.node, required: required, kv: Str { .. } });
         }
-    } else if c.kind == K_ENUM {
+    } else if c.kind == Kind.Enum {
         for k in c.kids_n {
             let r = constant_rule(kids[c.kids_at + k]);
             var hit = false;
             for e, j in enum_rules { if !hit && eq(e, r) { enum_counts[j] += 1; hit = true; } }
             if !hit { enum_rules.push(r); enum_counts.push(1); }
         }
-    } else if required && c.kind != K_ANY {
+    } else if required && c.kind != Kind.Any {
         leaves.push(comp);
     }
 }
@@ -1611,8 +1594,8 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
     let sub_name = if name.len == 0 { name } else { cat2(name, "-") };
     let nd = nodes[node];
     let k = nd.kind;
-    if k == K_REF { return add_rule(rule_name, resolve_ref_rule(node)); }
-    if k == K_ANY_OF {
+    if k == Kind.Ref { return add_rule(rule_name, resolve_ref_rule(node)); }
+    if k == Kind.AnyOf {
         let mark = onames.len;
         for i in nd.kids_n {
             let s0 = sb.len;
@@ -1632,9 +1615,9 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
         onames.resize(mark);
         return add_rule(rule_name, union);
     }
-    if k == K_ALL_OF { return visit_all_of(node, name, rule_name); }
-    if k == K_CONST { return add_rule(rule_name, constant_rule(nd.value)); }
-    if k == K_ENUM {
+    if k == Kind.AllOf { return visit_all_of(node, name, rule_name); }
+    if k == Kind.Const { return add_rule(rule_name, constant_rule(nd.value)); }
+    if k == Kind.Enum {
         let mark = onames.len;
         for i in nd.kids_n { onames.push(constant_rule(kids[nd.kids_at + i])); }
         let s0 = sb.len;
@@ -1647,8 +1630,8 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
         onames.resize(mark);
         return add_rule(rule_name, fin(s0));
     }
-    if k == K_OBJECT {
-        if nd.kids_n == 0 && nd.additional >= 0 && nodes[nd.additional].kind == K_ANY {
+    if k == Kind.Object {
+        if nd.kids_n == 0 && nd.additional >= 0 && nodes[nd.additional].kind == Kind.Any {
             return add_rule(rule_name, add_primitive_b("object"));
         }
         let first = oprops.len;
@@ -1660,7 +1643,7 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
         oprops.resize(first);
         return add_rule(rule_name, r);
     }
-    if k == K_TUPLE {
+    if k == Kind.Tuple {
         let mark = onames.len;
         for i in nd.kids_n {
             let s0 = sb.len;
@@ -1681,8 +1664,8 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
         onames.resize(mark);
         return add_rule(rule_name, fin(s0));
     }
-    if k == K_ARRAY {
-        if nodes[nd.items].kind == K_ANY && nd.lo == 0 && nd.hi < 0 { return primitive_rule(rule_name, "array"); }
+    if k == Kind.Array {
+        if nodes[nd.items].kind == Kind.Any && nd.lo == 0 && nd.hi < 0 { return primitive_rule(rule_name, "array"); }
         let item = visit(nd.items, cat2(sub_name, "item"));
         let hi = if nd.hi < 0 { I32_MAX } else { nd.hi };
         let rep = build_repetition(item, nd.lo, hi, lit("\",\" space"));
@@ -1692,11 +1675,11 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
         put_b(" space \"]\"");
         return add_rule(rule_name, fin(s0));
     }
-    if k == K_STRING {
+    if k == Kind.String {
         if nd.has_pattern { return visit_pattern(nd.pattern, rule_name); }
-        if nd.format == FORMAT_UUID { return primitive_rule(rule_name, "uuid"); }
-        if nd.format != FORMAT_NONE {
-            let prim = if nd.format == FORMAT_DATE { "date-string" } else if nd.format == FORMAT_TIME { "time-string" } else { "date-time-string" };
+        if nd.format == Format.Uuid { return primitive_rule(rule_name, "uuid"); }
+        if nd.format != Format.None {
+            let prim = if nd.format == Format.Date { "date-string" } else if nd.format == Format.Time { "time-string" } else { "date-time-string" };
             return add_rule(rule_name, add_primitive_b(prim));
         }
         if nd.lo > 0 || nd.hi >= 0 {
@@ -1711,7 +1694,7 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
         }
         return primitive_rule(rule_name, "string");
     }
-    if k == K_INTEGER {
+    if k == Kind.Integer {
         if nd.lo == I64_MIN && nd.hi == I64_MAX { return primitive_rule(rule_name, "integer"); }
         nb.clear();
         let s0 = sb.len;
@@ -1720,9 +1703,9 @@ recursive fn visit_impl(node: i64, name: Str) -> Str {
         sb.push(')');
         return add_rule(rule_name, fin(s0));
     }
-    if k == K_NUMBER { return primitive_rule(rule_name, "number"); }
-    if k == K_BOOLEAN { return primitive_rule(rule_name, "boolean"); }
-    if k == K_NULL { return primitive_rule(rule_name, "null"); }
+    if k == Kind.Number { return primitive_rule(rule_name, "number"); }
+    if k == Kind.Boolean { return primitive_rule(rule_name, "boolean"); }
+    if k == Kind.Null { return primitive_rule(rule_name, "null"); }
     return add_rule(rule_name, add_primitive_b("value"));
 }
 
@@ -1809,7 +1792,7 @@ fn from_value(v: i64) -> i64 {
 
 // A JSON value's members and elements, for the chat code.
 fn get_member(v: i64, name: const u8[:]) -> i64 { get(v, name) }
-fn json_kind(v: i64) -> u8 { kind(v) }
+fn json_kind(v: i64) -> JsonKind { kind(v) }
 fn json_len(v: i64) -> i64 { jv[v].n }
 fn json_at(v: i64, k: i64) -> i64 { jl[jv[v].at + k] }
 fn json_key(v: i64, k: i64) -> const u8[:] { t(jv[jl[jv[v].at + k]].key) }
@@ -1825,13 +1808,13 @@ fn may_be_string(node: i64) -> bool {
 recursive fn may_be_string_impl(node: i64, visited: i64[>..]&, d: i64) -> bool {
     let nd = nodes[node];
     let k = nd.kind;
-    if k == K_STRING { return true; }
-    if k == K_CONST { return kind(nd.value) == J_STRING; }
-    if k == K_ENUM {
-        for i in nd.kids_n { if kind(kids[nd.kids_at + i]) == J_STRING { return true; } }
+    if k == Kind.String { return true; }
+    if k == Kind.Const { return kind(nd.value) == JsonKind.String; }
+    if k == Kind.Enum {
+        for i in nd.kids_n { if kind(kids[nd.kids_at + i]) == JsonKind.String { return true; } }
         return false;
     }
-    if k == K_REF {
+    if k == Kind.Ref {
         // a cycle is taken as not a string, to be safe
         if nd.target < 0 { return false; }
         for v in visited { if v == nd.target { return false; } }
@@ -1840,16 +1823,16 @@ recursive fn may_be_string_impl(node: i64, visited: i64[>..]&, d: i64) -> bool {
         visited.pop();
         return r;
     }
-    if k == K_ANY_OF {
+    if k == Kind.AnyOf {
         for i in nd.kids_n { if may_be_string_impl(kids[nd.kids_at + i], visited, d + 1) { return true; } }
         return false;
     }
-    if k == K_ALL_OF {
+    if k == Kind.AllOf {
         // every child must allow a string, an any child constrains nothing
         var any_string = false;
         for i in nd.kids_n {
             let c = kids[nd.kids_at + i];
-            guard nodes[c].kind != K_ANY else { continue; }
+            guard nodes[c].kind != Kind.Any else { continue; }
             if !may_be_string_impl(c, visited, d + 1) { return false; }
             any_string = true;
         }
@@ -1894,8 +1877,8 @@ fn to_grammar(schema: const u8[:], out: u8[>..]&) -> bool {
 }
 
 // A schema node's kind, and an object node's properties (in schema order).
-fn node_kind(n: i64) -> u8 { nodes[n].kind }
-fn prop_count(n: i64) -> i64 { if nodes[n].kind == K_OBJECT { nodes[n].kids_n } else { 0 } }
+fn node_kind(n: i64) -> Kind { nodes[n].kind }
+fn prop_count(n: i64) -> i64 { if nodes[n].kind == Kind.Object { nodes[n].kids_n } else { 0 } }
 fn prop_name(n: i64, k: i64) -> const u8[:] { t(props[nodes[n].kids_at + k].name) }
 fn prop_node(n: i64, k: i64) -> i64 { props[nodes[n].kids_at + k].node }
 fn prop_required(n: i64, k: i64) -> bool { props[nodes[n].kids_at + k].required }
@@ -1913,12 +1896,12 @@ let TYPES_ALL = 127;
 
 fn json_type(v: i64) -> i64 {
     let k = kind(v);
-    if k == J_NULL { return TYPE_NULL; }
-    if k == J_BOOL { return TYPE_BOOLEAN; }
-    if k == J_INT { return TYPE_INTEGER; }
-    if k == J_FLOAT { return TYPE_NUMBER; }
-    if k == J_STRING { return TYPE_STRING; }
-    if k == J_ARRAY { return TYPE_ARRAY; }
+    if k == JsonKind.Null { return TYPE_NULL; }
+    if k == JsonKind.Bool { return TYPE_BOOLEAN; }
+    if k == JsonKind.Int { return TYPE_INTEGER; }
+    if k == JsonKind.Float { return TYPE_NUMBER; }
+    if k == JsonKind.String { return TYPE_STRING; }
+    if k == JsonKind.Array { return TYPE_ARRAY; }
     return TYPE_OBJECT;
 }
 
@@ -1930,21 +1913,21 @@ fn value_types(node: i64) -> i64 {
 recursive fn value_types_impl(node: i64, visited: i64[>..]&) -> i64 {
     let nd = nodes[node];
     let k = nd.kind;
-    if k == K_ANY { return TYPES_ALL; }
-    if k == K_NULL { return 1 << TYPE_NULL; }
-    if k == K_BOOLEAN { return 1 << TYPE_BOOLEAN; }
-    if k == K_NUMBER { return (1 << TYPE_NUMBER) | (1 << TYPE_INTEGER); }
-    if k == K_INTEGER { return 1 << TYPE_INTEGER; }
-    if k == K_STRING { return 1 << TYPE_STRING; }
-    if k == K_ARRAY || k == K_TUPLE { return 1 << TYPE_ARRAY; }
-    if k == K_OBJECT { return 1 << TYPE_OBJECT; }
-    if k == K_CONST { return 1 << json_type(nd.value); }
-    if k == K_ENUM {
+    if k == Kind.Any { return TYPES_ALL; }
+    if k == Kind.Null { return 1 << TYPE_NULL; }
+    if k == Kind.Boolean { return 1 << TYPE_BOOLEAN; }
+    if k == Kind.Number { return (1 << TYPE_NUMBER) | (1 << TYPE_INTEGER); }
+    if k == Kind.Integer { return 1 << TYPE_INTEGER; }
+    if k == Kind.String { return 1 << TYPE_STRING; }
+    if k == Kind.Array || k == Kind.Tuple { return 1 << TYPE_ARRAY; }
+    if k == Kind.Object { return 1 << TYPE_OBJECT; }
+    if k == Kind.Const { return 1 << json_type(nd.value); }
+    if k == Kind.Enum {
         var types = 0;
         for i in nd.kids_n { types |= 1 << json_type(kids[nd.kids_at + i]); }
         return types;
     }
-    if k == K_REF {
+    if k == Kind.Ref {
         // a cycle contributes no type, to be safe
         if nd.target < 0 { return 0; }
         for v in visited { if v == nd.target { return 0; } }
@@ -1953,12 +1936,12 @@ recursive fn value_types_impl(node: i64, visited: i64[>..]&) -> i64 {
         visited.pop();
         return r;
     }
-    if k == K_ANY_OF {
+    if k == Kind.AnyOf {
         var types = 0;
         for i in nd.kids_n { types |= value_types_impl(kids[nd.kids_at + i], visited); }
         return types;
     }
-    if k == K_ALL_OF {
+    if k == Kind.AllOf {
         var types = TYPES_ALL;
         for i in nd.kids_n { types &= value_types_impl(kids[nd.kids_at + i], visited); }
         return types;
@@ -1967,6 +1950,6 @@ recursive fn value_types_impl(node: i64, visited: i64[>..]&) -> i64 {
 }
 
 // An anyOf node's alternatives, and an array node's items.
-fn anyof_count(n: i64) -> i64 { if nodes[n].kind == K_ANY_OF { nodes[n].kids_n } else { 0 } }
+fn anyof_count(n: i64) -> i64 { if nodes[n].kind == Kind.AnyOf { nodes[n].kids_n } else { 0 } }
 fn anyof_child(n: i64, k: i64) -> i64 { kids[nodes[n].kids_at + k] }
 fn array_items(n: i64) -> i64 { nodes[n].items }

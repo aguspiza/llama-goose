@@ -123,8 +123,8 @@ fn optspace(tag_text: const u8[:]) -> i64 {
 // tools
 //
 
-fn jget(v: i64, key: const u8[:]) -> i64 { if v >= 0 && json_schema::json_kind(v) == json_schema::J_OBJECT { json_schema::get_member(v, key) } else { -1 } }
-fn jstr(v: i64) -> const u8[:] { if v >= 0 && json_schema::json_kind(v) == json_schema::J_STRING { json_schema::json_str(v) } else { "" } }
+fn jget(v: i64, key: const u8[:]) -> i64 { if v >= 0 && json_schema::json_kind(v) == json_schema::JsonKind.Object { json_schema::get_member(v, key) } else { -1 } }
+fn jstr(v: i64) -> const u8[:] { if v >= 0 && json_schema::json_kind(v) == json_schema::JsonKind.String { json_schema::json_str(v) } else { "" } }
 
 var default_params = -1;
 
@@ -134,7 +134,7 @@ fn tool_parameters(function: i64) -> i64 {
     let params = jget(function, "parameters");
     if params >= 0 {
         let k = json_schema::json_kind(params);
-        if k != json_schema::J_NULL && !(k == json_schema::J_OBJECT && json_schema::json_len(params) == 0) { return params; }
+        if k != json_schema::JsonKind.Null && !(k == json_schema::JsonKind.Object && json_schema::json_len(params) == 0) { return params; }
     }
     if default_params < 0 || default_params >= json_schema::jv.len {
         default_params = json_schema::json_value("{\"type\": \"object\", \"properties\": {}}");
@@ -440,7 +440,7 @@ fn json_tools_flat_keys(tools: i64, effective_name_key: const u8[:], effective_a
 fn standard_json_tools(section_start: const u8[:], section_end: const u8[:], tools: i64, parallel_tool_calls: bool, force_tool_calls: bool,
                        name_key: const u8[:], args_key: const u8[:], array_wrapped: bool, function_is_key: bool,
                        call_id_key: const u8[:], gen_call_id_key: const u8[:], parameters_order: const u8[:][:], accept_openai_wrapper: bool) -> i64 {
-    if tools < 0 || json_schema::json_kind(tools) != json_schema::J_ARRAY || json_schema::json_len(tools) == 0 { return peg::eps(); }
+    if tools < 0 || json_schema::json_kind(tools) != json_schema::JsonKind.Array || json_schema::json_len(tools) == 0 { return peg::eps(); }
     let effective_name_key = if name_key.len == 0 { "name" } else { name_key };
     let effective_args_key = if args_key.len == 0 { "arguments" } else { args_key };
     var tool_choices = peg::eps();
@@ -500,10 +500,8 @@ var last_name: u8[>..] = [];
 var last_args: u8[>..] = [];
 var last_id: u8[>..] = [];
 var has_last = false;
-let CUR_NONE = 0;
-let CUR_PENDING = 1;
-let CUR_LAST = 2;
-var cur = CUR_NONE;
+enum Cur { None, Pending, Last }
+var cur = Cur.None;
 var arg_count = 0;
 var closing_quote_pending = false;
 var args_buffer: u8[>..] = [];
@@ -521,7 +519,7 @@ fn mapper_reset() {
     last_args.clear();
     last_id.clear();
     has_last = false;
-    cur = CUR_NONE;
+    cur = Cur.None;
     arg_count = 0;
     closing_quote_pending = false;
     args_buffer.clear();
@@ -547,20 +545,20 @@ fn push_pending() {
     has_last = true;
 }
 
-fn cur_name() -> const u8[:] { if cur == CUR_PENDING { pend_name[..] } else { last_name[..] } }
+fn cur_name() -> const u8[:] { if cur == Cur.Pending { pend_name[..] } else { last_name[..] } }
 
 // args_target: the current tool's arguments once it has a name, else the buffer.
 fn args_target_append(b: const u8[:]) {
-    if cur != CUR_NONE && cur_name().len > 0 {
-        if cur == CUR_PENDING { pend_args.append(b); } else { last_args.append(b); }
+    if cur != Cur.None && cur_name().len > 0 {
+        if cur == Cur.Pending { pend_args.append(b); } else { last_args.append(b); }
     } else {
         args_buffer.append(b);
     }
 }
 
 fn args_target_set(b: const u8[:]) {
-    if cur != CUR_NONE && cur_name().len > 0 {
-        if cur == CUR_PENDING { pend_args.clear(); pend_args.append(b); } else { last_args.clear(); last_args.append(b); }
+    if cur != Cur.None && cur_name().len > 0 {
+        if cur == Cur.Pending { pend_args.clear(); pend_args.append(b); } else { last_args.clear(); last_args.append(b); }
     } else {
         args_buffer.clear();
         args_buffer.append(b);
@@ -568,7 +566,7 @@ fn args_target_set(b: const u8[:]) {
 }
 
 fn args_target_empty() -> bool {
-    if cur != CUR_NONE && cur_name().len > 0 { return if cur == CUR_PENDING { pend_args.len == 0 } else { last_args.len == 0 }; }
+    if cur != Cur.None && cur_name().len > 0 { return if cur == Cur.Pending { pend_args.len == 0 } else { last_args.len == 0 }; }
     return args_buffer.len == 0;
 }
 
@@ -663,41 +661,41 @@ fn map_node(n: i64) {
         pend_args.clear();
         pend_id.clear();
         has_pending = true;
-        cur = CUR_PENDING;
+        cur = Cur.Pending;
         arg_count = 0;
         args_buffer.clear();
         closing_quote_pending = false;
     }
-    if tag_name == TOOL_ID && cur != CUR_NONE {
+    if tag_name == TOOL_ID && cur != Cur.None {
         var sanitized: u8[>..] = [];
         peg::sanitized_text(n, sanitized);
         var x = trim_trailing(sanitized);
         if x.len >= 2 && x[0] == '"' && x[x.len - 1] == '"' { x = x[1..x.len - 1]; }
         let id = str(x);
-        if cur == CUR_PENDING { pend_id.clear(); pend_id.append(id); } else { last_id.clear(); last_id.append(id); }
+        if cur == Cur.Pending { pend_id.clear(); pend_id.append(id); } else { last_id.clear(); last_id.append(id); }
     }
-    if tag_name == TOOL_NAME && cur != CUR_NONE {
+    if tag_name == TOOL_NAME && cur != Cur.None {
         let nm = str(trim_trailing(text));
-        if cur == CUR_PENDING { pend_name.clear(); pend_name.append(nm); } else { last_name.clear(); last_name.append(nm); }
+        if cur == Cur.Pending { pend_name.clear(); pend_name.append(nm); } else { last_name.clear(); last_name.append(nm); }
         // the arguments so far are the tool's now
         if args_buffer.len > 0 {
-            if cur == CUR_PENDING { pend_args.clear(); pend_args.append(args_buffer); } else { last_args.clear(); last_args.append(args_buffer); }
+            if cur == Cur.Pending { pend_args.clear(); pend_args.append(args_buffer); } else { last_args.clear(); last_args.append(args_buffer); }
             args_buffer.clear();
-        } else if (if cur == CUR_PENDING { pend_args.len } else { last_args.len }) == 0 {
-            if cur == CUR_PENDING { pend_args.append("{"); } else { last_args.append("{"); }
+        } else if (if cur == Cur.Pending { pend_args.len } else { last_args.len }) == 0 {
+            if cur == Cur.Pending { pend_args.append("{"); } else { last_args.append("{"); }
         }
         if has_pending {
             push_pending();
             has_pending = false;
-            cur = CUR_LAST;
+            cur = Cur.Last;
         }
     }
-    if tag_name == TOOL_ARGS && cur != CUR_NONE {
+    if tag_name == TOOL_ARGS && cur != Cur.None {
         let x = trim_trailing(text);
         if x.len > 0 && x[0] == '{' { args_target_set(x); }
     }
     if tag_name == TOOL_ARG_OPEN { closing_quote_pending = false; }
-    if tag_name == TOOL_ARG_NAME && cur != CUR_NONE {
+    if tag_name == TOOL_ARG_NAME && cur != Cur.None {
         var entry: u8[>..] = [];
         if arg_count > 0 { entry.push(','); }
         json_schema::json_string(entry, trim_trailing(trim_one_leading(text)));
@@ -708,7 +706,7 @@ fn map_node(n: i64) {
     }
     let is_value = tag_name == TOOL_ARG_VALUE;
     let is_string_value = tag_name == TOOL_ARG_STRING_VALUE;
-    if (is_value || is_string_value) && cur != CUR_NONE {
+    if (is_value || is_string_value) && cur != Cur.None {
         var value: u8[>..] = [];
         peg::sanitized_text(n, value);
         var add: u8[>..] = [];
@@ -723,28 +721,28 @@ fn map_node(n: i64) {
         }
         args_target_append(add);
     }
-    if tag_name == TOOL_ARG_CLOSE && cur != CUR_NONE {
+    if tag_name == TOOL_ARG_CLOSE && cur != Cur.None {
         if closing_quote_pending { args_target_append("\""); closing_quote_pending = false; }
     }
-    if tag_name == TOOL_CLOSE && cur != CUR_NONE {
+    if tag_name == TOOL_CLOSE && cur != Cur.None {
         var name_empty = cur_name().len == 0;
         if name_empty && args_buffer.len > 0 {
-            if cur == CUR_PENDING { pend_args.clear(); pend_args.append(args_buffer); } else { last_args.clear(); last_args.append(args_buffer); }
+            if cur == Cur.Pending { pend_args.clear(); pend_args.append(args_buffer); } else { last_args.clear(); last_args.append(args_buffer); }
             args_buffer.clear();
         }
         if closing_quote_pending {
-            if cur == CUR_PENDING { pend_args.push('"'); } else { last_args.push('"'); }
+            if cur == Cur.Pending { pend_args.push('"'); } else { last_args.push('"'); }
             closing_quote_pending = false;
         }
-        var d = brace_depth(if cur == CUR_PENDING { pend_args[..] } else { last_args[..] });
+        var d = brace_depth(if cur == Cur.Pending { pend_args[..] } else { last_args[..] });
         while d > 0 {
-            if cur == CUR_PENDING { pend_args.push('}'); } else { last_args.push('}'); }
+            if cur == Cur.Pending { pend_args.push('}'); } else { last_args.push('}'); }
             d--;
         }
         if has_pending {
             if pend_name.len > 0 { push_pending(); }
             has_pending = false;
-            cur = CUR_NONE;
+            cur = Cur.None;
         }
     }
 }
@@ -801,7 +799,7 @@ fn parse_and_extract(a: i64, input: const u8[:]) -> bool {
     mt.clear();
     let r, ok = peg::parse(a, input, 0, 0);
     collect_tags();
-    return ok && r.kind == peg::SUCCESS;
+    return ok && r.kind == peg::ResultKind.Success;
 }
 
 // parse_anywhere_and_extract: the parse from the first place it succeeds
@@ -812,10 +810,10 @@ fn parse_anywhere_and_extract(a: i64, input: const u8[:]) -> bool {
     peg::input.append(input);
     for i in input.len {
         let r, ok = peg::parse_input(a, 0, i);
-        if (ok && r.kind == peg::SUCCESS) || i == input.len - 1 {
+        if (ok && r.kind == peg::ResultKind.Success) || i == input.len - 1 {
             mt.clear();
             collect_tags();
-            return ok && r.kind == peg::SUCCESS;
+            return ok && r.kind == peg::ResultKind.Success;
         }
     }
     return false;
@@ -864,7 +862,7 @@ recursive fn python_or_json_value() -> i64 {
 // python_style_tool_calls: [name(arg1="value1", arg2=123), ...]
 // allow_undeclared: also calls to names not in tools (any identifier, any arguments).
 fn python_style_tool_calls(tools: i64, parallel_tool_calls: bool, allow_json_literals: bool, allow_undeclared: bool = false) -> i64 {
-    if tools < 0 || json_schema::json_kind(tools) != json_schema::J_ARRAY || json_schema::json_len(tools) == 0 { return peg::eps(); }
+    if tools < 0 || json_schema::json_kind(tools) != json_schema::JsonKind.Array || json_schema::json_len(tools) == 0 { return peg::eps(); }
     var tool_choices = peg::choice([]);
     for i in json_schema::json_len(tools) {
         let function = tool_function(tools, i);

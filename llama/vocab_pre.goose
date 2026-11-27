@@ -3,430 +3,372 @@
 namespace vocab;
 
 // enum llama_vocab_pre_type
-let PRE_DEFAULT = 0;
-let PRE_LLAMA3 = 1;
-let PRE_DEEPSEEK_LLM = 2;
-let PRE_DEEPSEEK_CODER = 3;
-let PRE_FALCON = 4;
-let PRE_MPT = 5;
-let PRE_STARCODER = 6;
-let PRE_GPT2 = 7;
-let PRE_REFACT = 8;
-let PRE_COMMAND_R = 9;
-let PRE_STABLELM2 = 10;
-let PRE_QWEN2 = 11;
-let PRE_OLMO = 12;
-let PRE_DBRX = 13;
-let PRE_SMAUG = 14;
-let PRE_PORO = 15;
-let PRE_CHATGLM3 = 16;
-let PRE_CHATGLM4 = 17;
-let PRE_VIKING = 18;
-let PRE_JAIS = 19;
-let PRE_TEKKEN = 20;
-let PRE_SMOLLM = 21;
-let PRE_CODESHELL = 22;
-let PRE_BLOOM = 23;
-let PRE_GPT3_FINNISH = 24;
-let PRE_EXAONE = 25;
-let PRE_CHAMELEON = 26;
-let PRE_MINERVA = 27;
-let PRE_DEEPSEEK3_LLM = 28;
-let PRE_GPT4O = 29;
-let PRE_SUPERBPE = 30;
-let PRE_TRILLION = 31;
-let PRE_BAILINGMOE = 32;
-let PRE_LLAMA4 = 33;
-let PRE_PIXTRAL = 34;
-let PRE_SEED_CODER = 35;
-let PRE_HUNYUAN = 36;
-let PRE_KIMI_K2 = 37;
-let PRE_HUNYUAN_DENSE = 38;
-let PRE_GROK_2 = 39;
-let PRE_GRANITE_DOCLING = 40;
-let PRE_MINIMAX_M2 = 41;
-let PRE_AFMOE = 42;
-let PRE_SOLAR_OPEN = 43;
-let PRE_YOUTU = 44;
-let PRE_EXAONE_MOE = 45;
-let PRE_QWEN35 = 46;
-let PRE_TINY_AYA = 47;
-let PRE_JOYAI_LLM = 48;
-let PRE_JAIS2 = 49;
-let PRE_GEMMA4 = 50;
-let PRE_SARVAM_MOE = 51;
-let PRE_MINICPM5 = 52;
-let PRE_WHITESPACE = 53;
-let PRE_GRANITE_EMB_MULTI = 54;
-let PRE_MELLUM2 = 55;
-let PRE_LAGUNA = 56;
-let PRE_HY_V4 = 57;
-let PRE_SPARK2_5 = 58;
-let PRE_UFAKZEKA = 59;
-let PRE_MMBERT = 60;
-let PRE_K2_HORIZON = 61;
-let PRE_FLINT = 62;
-let PRE_DOMYN_SMALL = 63;
-let PRE_NEMOTRON_3_5_EMBD = 64;
-let PRE_SOPRANO = 65;
-let PRE_TEKKEN_NUM3 = 66;
-let PRE_ZONOS3 = 67;
+enum Pre {
+    Default, Llama3, DeepseekLlm, DeepseekCoder, Falcon, Mpt, Starcoder, Gpt2, Refact, CommandR,
+    Stablelm2, Qwen2, Olmo, Dbrx, Smaug, Poro, Chatglm3, Chatglm4, Viking, Jais, Tekken, Smollm,
+    Codeshell, Bloom, Gpt3Finnish, Exaone, Chameleon, Minerva, Deepseek3Llm, Gpt4o, Superbpe,
+    Trillion, Bailingmoe, Llama4, Pixtral, SeedCoder, Hunyuan, KimiK2, HunyuanDense, Grok2,
+    GraniteDocling, MinimaxM2, Afmoe, SolarOpen, Youtu, ExaoneMoe, Qwen35, TinyAya, JoyaiLlm,
+    Jais2, Gemma4, SarvamMoe, Minicpm5, Whitespace, GraniteEmbMulti, Mellum2, Laguna, HyV4,
+    Spark2_5, Ufakzeka, Mmbert, K2Horizon, Flint, DomynSmall, Nemotron3_5Embd, Soprano,
+    TekkenNum3, Zonos3,
+}
 
 // What a BPE vocab's tokenizer.ggml.pre name sets; false for an unknown name.
 // The empty name (default, with a warning) is handled by the caller.
 fn apply_pre_name(name: const u8[:]) -> bool {
     if name == "flint" {
-        pre_type = PRE_FLINT;
+        pre_type = Pre.Flint;
         clean_spaces = false;
         return true;
     }
     if name == "default" {
-        pre_type = PRE_DEFAULT;
+        pre_type = Pre.Default;
         return true;
     }
     if name == "minicpm5" {
-        pre_type = PRE_MINICPM5;
+        pre_type = Pre.Minicpm5;
         ignore_merges = true;
         clean_spaces = false;
         return true;
     }
     if name == "llama3" || name == "llama-v3" || name == "llama-bpe" || name == "falcon3" || name == "falcon-h1" || name == "midm-2.0" || name == "jina-v5-nano" {
-        pre_type = PRE_LLAMA3;
+        pre_type = Pre.Llama3;
         ignore_merges = true;
         add_bos = true;
         return true;
     }
     if name == "lfm2" {
-        pre_type = PRE_LLAMA3;
+        pre_type = Pre.Llama3;
         ignore_merges = true;
         add_bos = true;
         clean_spaces = false;
         return true;
     }
     if name == "deepseek-llm" {
-        pre_type = PRE_DEEPSEEK_LLM;
+        pre_type = Pre.DeepseekLlm;
         clean_spaces = false;
         return true;
     }
     if name == "deepseek-coder" {
-        pre_type = PRE_DEEPSEEK_CODER;
+        pre_type = Pre.DeepseekCoder;
         clean_spaces = false;
         return true;
     }
     if name == "deepseek-v3" {
-        pre_type = PRE_DEEPSEEK3_LLM;
+        pre_type = Pre.Deepseek3Llm;
         clean_spaces = false;
         return true;
     }
     if name == "spark2_5" {
-        pre_type = PRE_SPARK2_5;
+        pre_type = Pre.Spark2_5;
         clean_spaces = false;
         return true;
     }
     if name == "youtu" {
-        pre_type = PRE_YOUTU;
+        pre_type = Pre.Youtu;
         clean_spaces = false;
         ignore_merges = true;
         return true;
     }
     if name == "falcon" {
-        pre_type = PRE_FALCON;
+        pre_type = Pre.Falcon;
         return true;
     }
     if name == "mpt" {
-        pre_type = PRE_MPT;
+        pre_type = Pre.Mpt;
         return true;
     }
     if name == "starcoder" {
-        pre_type = PRE_STARCODER;
+        pre_type = Pre.Starcoder;
         return true;
     }
     if name == "gpt-2" || name == "phi-2" || name == "jina-es" || name == "jina-de" || name == "gigachat" || name == "jina-v2-es" || name == "jina-v2-de" || name == "a.x-4.0" || name == "mellum" || name == "modern-bert" {
-        pre_type = PRE_GPT2;
+        pre_type = Pre.Gpt2;
         return true;
     }
     if name == "jais-2" {
-        pre_type = PRE_JAIS2;
+        pre_type = Pre.Jais2;
         return true;
     }
     if name == "gemma4" || name == "granite-embed-multi-311m" {
-        pre_type = PRE_GEMMA4;
+        pre_type = Pre.Gemma4;
         escape_whitespaces = true;
         clean_spaces = false;
         return true;
     }
     if name == "mmbert" {
-        pre_type = PRE_MMBERT;
+        pre_type = Pre.Mmbert;
         escape_whitespaces = true;
         return true;
     }
     if name == "sarvam-moe" {
-        pre_type = PRE_SARVAM_MOE;
+        pre_type = Pre.SarvamMoe;
         escape_whitespaces = true;
         clean_spaces = false;
         return true;
     }
     if name == "jina-v1-en" || name == "jina-v2-code" || name == "roberta-bpe" {
-        pre_type = PRE_GPT2;
+        pre_type = Pre.Gpt2;
         add_sep = true;
         return true;
     }
     if name == "whitespace" {
-        pre_type = PRE_WHITESPACE;
+        pre_type = Pre.Whitespace;
         normalizer_lowercase = false;
         return true;
     }
     if name == "refact" {
-        pre_type = PRE_REFACT;
+        pre_type = Pre.Refact;
         return true;
     }
     if name == "command-r" {
-        pre_type = PRE_COMMAND_R;
+        pre_type = Pre.CommandR;
         clean_spaces = false;
         return true;
     }
     if name == "qwen2" || name == "deepseek-r1-qwen" || name == "kormo" || name == "f2llmv2" || name == "domyn-edge" {
-        pre_type = PRE_QWEN2;
+        pre_type = Pre.Qwen2;
         clean_spaces = false;
         return true;
     }
     if name == "qwen35" {
-        pre_type = PRE_QWEN35;
+        pre_type = Pre.Qwen35;
         clean_spaces = false;
         return true;
     }
     if name == "stablelm2" {
-        pre_type = PRE_STABLELM2;
+        pre_type = Pre.Stablelm2;
         return true;
     }
     if name == "olmo" {
-        pre_type = PRE_OLMO;
+        pre_type = Pre.Olmo;
         return true;
     }
     if name == "dbrx" {
-        pre_type = PRE_DBRX;
+        pre_type = Pre.Dbrx;
         clean_spaces = false;
         return true;
     }
     if name == "smaug-bpe" {
-        pre_type = PRE_SMAUG;
+        pre_type = Pre.Smaug;
         return true;
     }
     if name == "poro-chat" {
-        pre_type = PRE_PORO;
+        pre_type = Pre.Poro;
         clean_spaces = false;
         return true;
     }
     if name == "chatglm-bpe" {
-        pre_type = PRE_CHATGLM4;
+        pre_type = Pre.Chatglm4;
         special_bos_id = TOKEN_NULL;
         clean_spaces = false;
         return true;
     }
     if name == "glm4" || name == "glm5" {
-        pre_type = PRE_CHATGLM4;
+        pre_type = Pre.Chatglm4;
         special_bos_id = TOKEN_NULL;
         ignore_merges = true;
         clean_spaces = false;
         return true;
     }
     if name == "viking" {
-        pre_type = PRE_VIKING;
+        pre_type = Pre.Viking;
         clean_spaces = false;
         return true;
     }
     if name == "jais" {
-        pre_type = PRE_JAIS;
+        pre_type = Pre.Jais;
         return true;
     }
     if name == "tekken" || name == "pixtral" {
-        pre_type = PRE_TEKKEN;
+        pre_type = Pre.Tekken;
         clean_spaces = false;
         ignore_merges = true;
         add_bos = true;
         return true;
     }
     if name == "tekken-num3" {
-        pre_type = PRE_TEKKEN_NUM3;
+        pre_type = Pre.TekkenNum3;
         clean_spaces = false;
         ignore_merges = true;
         add_bos = true;
         return true;
     }
     if name == "smollm" {
-        pre_type = PRE_SMOLLM;
+        pre_type = Pre.Smollm;
         clean_spaces = false;
         return true;
     }
     if name == "codeshell" {
-        pre_type = PRE_CODESHELL;
+        pre_type = Pre.Codeshell;
         return true;
     }
     if name == "bloom" {
-        pre_type = PRE_BLOOM;
+        pre_type = Pre.Bloom;
         return true;
     }
     if name == "gpt3-finnish" {
-        pre_type = PRE_GPT3_FINNISH;
+        pre_type = Pre.Gpt3Finnish;
         return true;
     }
     if name == "exaone" {
-        pre_type = PRE_EXAONE;
+        pre_type = Pre.Exaone;
         return true;
     }
     if name == "exaone4" {
-        pre_type = PRE_GPT2;
+        pre_type = Pre.Gpt2;
         clean_spaces = false;
         return true;
     }
     if name == "exaone-moe" {
-        pre_type = PRE_EXAONE_MOE;
+        pre_type = Pre.ExaoneMoe;
         return true;
     }
     if name == "chameleon" {
-        pre_type = PRE_CHAMELEON;
+        pre_type = Pre.Chameleon;
         add_bos = true;
         clean_spaces = false;
         return true;
     }
     if name == "minerva-7b" {
-        pre_type = PRE_MINERVA;
+        pre_type = Pre.Minerva;
         return true;
     }
     if name == "domyn-small" {
-        pre_type = PRE_DOMYN_SMALL;
+        pre_type = Pre.DomynSmall;
         escape_whitespaces = true;
         return true;
     }
     if name == "megrez" {
-        pre_type = PRE_QWEN2;
+        pre_type = Pre.Qwen2;
         return true;
     }
     if name == "gpt-4o" || name == "llama4" || name == "kanana2" || name == "talkie" {
-        pre_type = PRE_GPT4O;
+        pre_type = Pre.Gpt4o;
         clean_spaces = false;
         return true;
     }
     if name == "inkling2" {
-        pre_type = PRE_GPT4O;
+        pre_type = Pre.Gpt4o;
         special_bos_id = TOKEN_NULL;
         clean_spaces = false;
         ignore_merges = true;
         return true;
     }
     if name == "granite-embed-multi-97m" {
-        pre_type = PRE_GRANITE_EMB_MULTI;
+        pre_type = Pre.GraniteEmbMulti;
         clean_spaces = false;
         ignore_merges = true;
         return true;
     }
     if name == "tiny_aya" || name == "cohere2moe" {
-        pre_type = PRE_TINY_AYA;
+        pre_type = Pre.TinyAya;
         clean_spaces = false;
         return true;
     }
     if name == "superbpe" {
-        pre_type = PRE_SUPERBPE;
+        pre_type = Pre.Superbpe;
         clean_spaces = false;
         return true;
     }
     if name == "trillion" {
-        pre_type = PRE_TRILLION;
+        pre_type = Pre.Trillion;
         clean_spaces = false;
         return true;
     }
     if name == "granite-docling" {
-        pre_type = PRE_GRANITE_DOCLING;
+        pre_type = Pre.GraniteDocling;
         clean_spaces = false;
         return true;
     }
     if name == "bailingmoe" || name == "bailingmoe2" || name == "llada-moe" {
-        pre_type = PRE_BAILINGMOE;
+        pre_type = Pre.Bailingmoe;
         clean_spaces = false;
         return true;
     }
     if name == "seed-coder" {
-        pre_type = PRE_SEED_CODER;
+        pre_type = Pre.SeedCoder;
         clean_spaces = false;
         return true;
     }
     if name == "hunyuan" {
-        pre_type = PRE_HUNYUAN;
+        pre_type = Pre.Hunyuan;
         clean_spaces = false;
         return true;
     }
     if name == "hunyuan-dense" {
-        pre_type = PRE_HUNYUAN_DENSE;
+        pre_type = Pre.HunyuanDense;
         clean_spaces = false;
         return true;
     }
     if name == "hy_v4" {
-        pre_type = PRE_HY_V4;
+        pre_type = Pre.HyV4;
         clean_spaces = false;
         return true;
     }
     if name == "joyai-llm" {
-        pre_type = PRE_JOYAI_LLM;
+        pre_type = Pre.JoyaiLlm;
         clean_spaces = false;
         return true;
     }
     if name == "kimi-k2" {
-        pre_type = PRE_KIMI_K2;
+        pre_type = Pre.KimiK2;
         clean_spaces = false;
         return true;
     }
     if name == "ufakzeka" {
-        pre_type = PRE_UFAKZEKA;
+        pre_type = Pre.Ufakzeka;
         clean_spaces = false;
         return true;
     }
     if name == "grok-2" {
-        pre_type = PRE_GROK_2;
+        pre_type = Pre.Grok2;
         clean_spaces = false;
         return true;
     }
     if name == "afmoe" {
-        pre_type = PRE_AFMOE;
+        pre_type = Pre.Afmoe;
         clean_spaces = false;
         return true;
     }
     if name == "laguna" {
-        pre_type = PRE_LAGUNA;
+        pre_type = Pre.Laguna;
         clean_spaces = false;
         return true;
     }
     if name == "minimax-m2" {
-        pre_type = PRE_MINIMAX_M2;
+        pre_type = Pre.MinimaxM2;
         clean_spaces = false;
         return true;
     }
     if name == "solar-open" {
-        pre_type = PRE_SOLAR_OPEN;
+        pre_type = Pre.SolarOpen;
         clean_spaces = false;
         return true;
     }
     if name == "mellum2" {
-        pre_type = PRE_MELLUM2;
+        pre_type = Pre.Mellum2;
         clean_spaces = false;
         return true;
     }
     if name == "k2-horizon" {
-        pre_type = PRE_K2_HORIZON;
+        pre_type = Pre.K2Horizon;
         clean_spaces = false;
         return true;
     }
     if name == "nemotron-3.5-embed" {
-        pre_type = PRE_NEMOTRON_3_5_EMBD;
+        pre_type = Pre.Nemotron3_5Embd;
         ignore_merges = true;
         add_bos = true;
         return true;
     }
     if name == "soprano" {
-        pre_type = PRE_SOPRANO;
+        pre_type = Pre.Soprano;
         return true;
     }
     if name == "zonos3" {
-        pre_type = PRE_ZONOS3;
+        pre_type = Pre.Zonos3;
         clean_spaces = false;
         return true;
     }
@@ -595,46 +537,46 @@ let PRE_REGEXES_40 = [
 
 // The regexes a BPE pre-tokenizer type splits text with, and whether
 // its words are then written in GPT-2's byte-level encoding.
-fn pre_regexes(t: i64) -> const u8[:][:], bool {
-    if t == PRE_FLINT { return PRE_REGEXES_0, true; }
-    if t == PRE_LLAMA3 { return PRE_REGEXES_1, true; }
-    if t == PRE_JAIS2 { return PRE_REGEXES_2, true; }
-    if t == PRE_DBRX || t == PRE_SMAUG { return PRE_REGEXES_3, true; }
-    if t == PRE_DEEPSEEK_LLM { return PRE_REGEXES_4, true; }
-    if t == PRE_DEEPSEEK3_LLM || t == PRE_HUNYUAN_DENSE || t == PRE_JOYAI_LLM || t == PRE_HY_V4 { return PRE_REGEXES_5, true; }
-    if t == PRE_SPARK2_5 { return PRE_REGEXES_6, true; }
-    if t == PRE_YOUTU { return PRE_REGEXES_7, true; }
-    if t == PRE_DEEPSEEK_CODER { return PRE_REGEXES_8, true; }
-    if t == PRE_FALCON { return PRE_REGEXES_9, true; }
-    if t == PRE_STARCODER || t == PRE_REFACT || t == PRE_COMMAND_R || t == PRE_SMOLLM || t == PRE_CODESHELL || t == PRE_EXAONE || t == PRE_MINERVA || t == PRE_MELLUM2 { return PRE_REGEXES_10, true; }
-    if t == PRE_GPT2 || t == PRE_MPT || t == PRE_OLMO || t == PRE_JAIS || t == PRE_TRILLION || t == PRE_GRANITE_DOCLING { return PRE_REGEXES_11, true; }
-    if t == PRE_STABLELM2 || t == PRE_QWEN2 || t == PRE_HUNYUAN || t == PRE_SOLAR_OPEN { return PRE_REGEXES_12, true; }
-    if t == PRE_QWEN35 { return PRE_REGEXES_13, true; }
-    if t == PRE_PORO || t == PRE_BLOOM || t == PRE_GPT3_FINNISH { return PRE_REGEXES_14, true; }
-    if t == PRE_CHATGLM4 { return PRE_REGEXES_15, true; }
-    if t == PRE_VIKING { return PRE_REGEXES_16, true; }
-    if t == PRE_TEKKEN || t == PRE_NEMOTRON_3_5_EMBD { return PRE_REGEXES_17, true; }
-    if t == PRE_TEKKEN_NUM3 { return PRE_REGEXES_18, true; }
-    if t == PRE_CHAMELEON { return PRE_REGEXES_19, true; }
-    if t == PRE_GPT4O || t == PRE_MINIMAX_M2 { return PRE_REGEXES_20, true; }
-    if t == PRE_GRANITE_EMB_MULTI { return PRE_REGEXES_21, true; }
-    if t == PRE_TINY_AYA { return PRE_REGEXES_22, true; }
-    if t == PRE_KIMI_K2 { return PRE_REGEXES_23, true; }
-    if t == PRE_SUPERBPE { return PRE_REGEXES_24, true; }
-    if t == PRE_BAILINGMOE { return PRE_REGEXES_25, true; }
-    if t == PRE_SEED_CODER { return PRE_REGEXES_26, true; }
-    if t == PRE_UFAKZEKA { return PRE_REGEXES_27, true; }
-    if t == PRE_GROK_2 { return PRE_REGEXES_28, true; }
-    if t == PRE_AFMOE { return PRE_REGEXES_29, true; }
-    if t == PRE_LAGUNA { return PRE_REGEXES_30, true; }
-    if t == PRE_EXAONE_MOE { return PRE_REGEXES_31, true; }
-    if t == PRE_GEMMA4 { return PRE_REGEXES_32, false; }
-    if t == PRE_SARVAM_MOE || t == PRE_DOMYN_SMALL { return PRE_REGEXES_33, false; }
-    if t == PRE_MMBERT { return PRE_REGEXES_34, false; }
-    if t == PRE_MINICPM5 { return PRE_REGEXES_35, true; }
-    if t == PRE_K2_HORIZON { return PRE_REGEXES_36, true; }
-    if t == PRE_SOPRANO { return PRE_REGEXES_37, false; }
-    if t == PRE_ZONOS3 { return PRE_REGEXES_38, true; }
-    if t == PRE_WHITESPACE { return PRE_REGEXES_39, false; }
+fn pre_regexes(t: Pre) -> const u8[:][:], bool {
+    if t == Pre.Flint { return PRE_REGEXES_0, true; }
+    if t == Pre.Llama3 { return PRE_REGEXES_1, true; }
+    if t == Pre.Jais2 { return PRE_REGEXES_2, true; }
+    if t == Pre.Dbrx || t == Pre.Smaug { return PRE_REGEXES_3, true; }
+    if t == Pre.DeepseekLlm { return PRE_REGEXES_4, true; }
+    if t == Pre.Deepseek3Llm || t == Pre.HunyuanDense || t == Pre.JoyaiLlm || t == Pre.HyV4 { return PRE_REGEXES_5, true; }
+    if t == Pre.Spark2_5 { return PRE_REGEXES_6, true; }
+    if t == Pre.Youtu { return PRE_REGEXES_7, true; }
+    if t == Pre.DeepseekCoder { return PRE_REGEXES_8, true; }
+    if t == Pre.Falcon { return PRE_REGEXES_9, true; }
+    if t == Pre.Starcoder || t == Pre.Refact || t == Pre.CommandR || t == Pre.Smollm || t == Pre.Codeshell || t == Pre.Exaone || t == Pre.Minerva || t == Pre.Mellum2 { return PRE_REGEXES_10, true; }
+    if t == Pre.Gpt2 || t == Pre.Mpt || t == Pre.Olmo || t == Pre.Jais || t == Pre.Trillion || t == Pre.GraniteDocling { return PRE_REGEXES_11, true; }
+    if t == Pre.Stablelm2 || t == Pre.Qwen2 || t == Pre.Hunyuan || t == Pre.SolarOpen { return PRE_REGEXES_12, true; }
+    if t == Pre.Qwen35 { return PRE_REGEXES_13, true; }
+    if t == Pre.Poro || t == Pre.Bloom || t == Pre.Gpt3Finnish { return PRE_REGEXES_14, true; }
+    if t == Pre.Chatglm4 { return PRE_REGEXES_15, true; }
+    if t == Pre.Viking { return PRE_REGEXES_16, true; }
+    if t == Pre.Tekken || t == Pre.Nemotron3_5Embd { return PRE_REGEXES_17, true; }
+    if t == Pre.TekkenNum3 { return PRE_REGEXES_18, true; }
+    if t == Pre.Chameleon { return PRE_REGEXES_19, true; }
+    if t == Pre.Gpt4o || t == Pre.MinimaxM2 { return PRE_REGEXES_20, true; }
+    if t == Pre.GraniteEmbMulti { return PRE_REGEXES_21, true; }
+    if t == Pre.TinyAya { return PRE_REGEXES_22, true; }
+    if t == Pre.KimiK2 { return PRE_REGEXES_23, true; }
+    if t == Pre.Superbpe { return PRE_REGEXES_24, true; }
+    if t == Pre.Bailingmoe { return PRE_REGEXES_25, true; }
+    if t == Pre.SeedCoder { return PRE_REGEXES_26, true; }
+    if t == Pre.Ufakzeka { return PRE_REGEXES_27, true; }
+    if t == Pre.Grok2 { return PRE_REGEXES_28, true; }
+    if t == Pre.Afmoe { return PRE_REGEXES_29, true; }
+    if t == Pre.Laguna { return PRE_REGEXES_30, true; }
+    if t == Pre.ExaoneMoe { return PRE_REGEXES_31, true; }
+    if t == Pre.Gemma4 { return PRE_REGEXES_32, false; }
+    if t == Pre.SarvamMoe || t == Pre.DomynSmall { return PRE_REGEXES_33, false; }
+    if t == Pre.Mmbert { return PRE_REGEXES_34, false; }
+    if t == Pre.Minicpm5 { return PRE_REGEXES_35, true; }
+    if t == Pre.K2Horizon { return PRE_REGEXES_36, true; }
+    if t == Pre.Soprano { return PRE_REGEXES_37, false; }
+    if t == Pre.Zonos3 { return PRE_REGEXES_38, true; }
+    if t == Pre.Whitespace { return PRE_REGEXES_39, false; }
     return PRE_REGEXES_40, true;
 }

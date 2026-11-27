@@ -12,13 +12,9 @@ import .image;
 namespace mtmd;
 
 // enum projector_type, the ones ported
-let PROJ_UNKNOWN = 0;
-let PROJ_GEMMA3 = 1;
-let PROJ_IDEFICS3 = 2;
+enum Projector { Unknown, Gemma3, Idefics3 }
 
-let FFN_GELU = 0;
-let FFN_SILU = 1;
-let FFN_GELU_QUICK = 2;
+enum Ffn { Gelu, Silu, GeluQuick }
 
 struct ClipLayer {
     q_w: ggml::Tensor, q_b: ggml::Tensor,
@@ -39,19 +35,19 @@ struct Clip {
     backend: ggml::Backend,
     galloc: ggml::Gallocr,
     n_threads: i32,
-    proj: i64,
+    proj: Projector,
     n_embd: i64,
     n_head: i64,
     n_ff: i64,
     n_layer: i64,
     projection_dim: i64,
     eps: f32,
-    ffn_op: i64,
+    ffn_op: Ffn,
     image_size: i64,
     patch_size: i64,
     n_merge: i64,
     image_longest_edge: i64,
-    resize_algo: i64,
+    resize_algo: Resize,
     image_mean: f32[..3],
     image_std: f32[..3],
     patch_embd: ggml::Tensor,
@@ -115,8 +111,8 @@ fn load_clip(c: Clip&, path: const u8[:], n_threads: i32) {
     var id = gguf::find_key(c.meta, "clip.projector_type");
     if id < 0 { id = gguf::find_key(c.meta, "clip.vision.projector_type"); }
     if id >= 0 { gguf::get_val_str(c.meta, id, proj_name); }
-    c.proj = if proj_name == "gemma3" { PROJ_GEMMA3 } else if proj_name == "idefics3" { PROJ_IDEFICS3 } else { PROJ_UNKNOWN };
-    guard c.proj != PROJ_UNKNOWN else { abort(str("mmproj: projector type '", proj_name, "' is not ported yet")); }
+    c.proj = if proj_name == "gemma3" { Projector.Gemma3 } else if proj_name == "idefics3" { Projector.Idefics3 } else { Projector.Unknown };
+    guard c.proj != Projector.Unknown else { abort(str("mmproj: projector type '", proj_name, "' is not ported yet")); }
 
     c.n_embd = key_u32(c, "clip.vision.embedding_length");
     c.n_head = key_u32(c, "clip.vision.attention.head_count");
@@ -126,16 +122,16 @@ fn load_clip(c: Clip&, path: const u8[:], n_threads: i32) {
     c.eps = key_f32(c, "clip.vision.attention.layer_norm_epsilon");
     c.image_size = key_u32(c, "clip.vision.image_size");
     c.patch_size = key_u32(c, "clip.vision.patch_size");
-    c.ffn_op = if key_bool(c, "clip.use_gelu") { FFN_GELU } else if key_bool(c, "clip.use_silu") { FFN_SILU } else { FFN_GELU_QUICK };
+    c.ffn_op = if key_bool(c, "clip.use_gelu") { Ffn.Gelu } else if key_bool(c, "clip.use_silu") { Ffn.Silu } else { Ffn.GeluQuick };
     key_f32x3(c, "clip.vision.image_mean", c.image_mean);
     key_f32x3(c, "clip.vision.image_std", c.image_std);
     let merge = key_u32(c, "clip.vision.projector.scale_factor", false);
-    if c.proj == PROJ_GEMMA3 {
+    if c.proj == Projector.Gemma3 {
         c.n_merge = if merge > 0 { merge } else { 4 };
-        c.resize_algo = RESIZE_BILINEAR;
+        c.resize_algo = Resize.Bilinear;
     } else {
         c.n_merge = merge;
-        c.resize_algo = RESIZE_LANCZOS;
+        c.resize_algo = Resize.Lanczos;
         c.image_longest_edge = key_u32(c, "clip.vision.preproc_image_size", false);
     }
 
@@ -171,7 +167,7 @@ fn load_clip(c: Clip&, path: const u8[:], n_threads: i32) {
         }
         c.layers.push(ly);
     }
-    if c.proj == PROJ_IDEFICS3 {
+    if c.proj == Projector.Idefics3 {
         c.mm_fc_w = get_tensor(c, "mm.model.fc.weight", true);
     } else {
         c.mm_input_proj_w = get_tensor(c, "mm.input_projection.weight", true);
@@ -187,7 +183,7 @@ fn load_clip(c: Clip&, path: const u8[:], n_threads: i32) {
 
 // The embeddings an image of nx by ny pixels becomes (n_mmproj_embd, n_output_tokens).
 fn n_mmproj_embd(c: Clip&) -> i64 {
-    return if c.proj == PROJ_IDEFICS3 { ggml::ne(c.mm_fc_w, 1) } else { ggml::ne(c.mm_input_proj_w, 0) };
+    return if c.proj == Projector.Idefics3 { ggml::ne(c.mm_fc_w, 1) } else { ggml::ne(c.mm_input_proj_w, 0) };
 }
 
 fn n_output_tokens(c: Clip&, nx: i64, ny: i64) -> i64 {
@@ -219,14 +215,14 @@ fn build_ffn(g: G&, c: Clip&, cur_in: ggml::Tensor, ly: ClipLayer) -> ggml::Tens
         cur = ggml::mul_mat(ctx, ly.ff_gate_w, cur_in);
         if ly.ff_gate_b.p != 0 { cur = ggml::add(ctx, cur, ly.ff_gate_b); }
         cur = match c.ffn_op {
-            FFN_SILU => ggml::swiglu_split(ctx, cur, tmp),
-            FFN_GELU => ggml::geglu_split(ctx, cur, tmp),
+            Silu => ggml::swiglu_split(ctx, cur, tmp),
+            Gelu => ggml::geglu_split(ctx, cur, tmp),
             _ => ggml::geglu_quick_split(ctx, cur, tmp),
         };
     } else {
         cur = match c.ffn_op {
-            FFN_SILU => ggml::silu(ctx, cur),
-            FFN_GELU => ggml::gelu(ctx, cur),
+            Silu => ggml::silu(ctx, cur),
+            Gelu => ggml::gelu(ctx, cur),
             _ => ggml::gelu_quick(ctx, cur),
         };
     }
@@ -327,7 +323,7 @@ fn build_siglip(g: G&, c: Clip&) -> ggml::Tensor, ggml::Tensor {
     inp = ggml::cont(ctx, ggml::transpose(ctx, inp));
     if c.patch_bias.p != 0 { inp = ggml::add(ctx, inp, c.patch_bias); }
     var cur = build_vit(g, c, inp, n_patches);
-    if c.proj == PROJ_GEMMA3 {
+    if c.proj == Projector.Gemma3 {
         guard n_px == n_py else { abort("gemma3: the image must be square"); }
         let k = c.n_merge as i32;
         cur = ggml::transpose(ctx, cur);
@@ -410,7 +406,7 @@ fn preprocess(c: Clip&, img: ImageU8&, out: Preproc&) {
     out.grid_x = 0;
     out.grid_y = 0;
     let sz = c.image_size;
-    if c.proj == PROJ_GEMMA3 {
+    if c.proj == Projector.Gemma3 {
         // mtmd_image_preprocessor_fixed_size
         var r = ImageU8 { nx: 0, ny: 0, buf: [] };
         resize_image_padded(img, sz, sz, c.resize_algo, r);
@@ -446,8 +442,8 @@ fn preprocess(c: Clip&, img: ImageU8&, out: Preproc&) {
         // calc_size_preserved_ratio aligned to the tile; the llava-uhd slicing, bicubic
         let w = max(sz, round_by(img.nx, sz));
         let h = max(sz, round_by(img.ny, sz));
-        resize_image(img, sz, sz, RESIZE_BICUBIC, overview);
-        resize_image_padded(img, w, h, RESIZE_BICUBIC, refined);
+        resize_image(img, sz, sz, Resize.Bicubic, overview);
+        resize_image_padded(img, w, h, Resize.Bicubic, refined);
         out.grid_x = (w + sz - 1) / sz;
         out.grid_y = (h + sz - 1) / sz;
     }

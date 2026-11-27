@@ -26,9 +26,7 @@ fn decode_image(bytes: const u8[:], img: ImageU8&) -> bool {
     return c_image_decode(bytes, img.buf[..]) != 0;
 }
 
-let RESIZE_BILINEAR = 0;
-let RESIZE_BICUBIC = 1;
-let RESIZE_LANCZOS = 2;
+enum Resize { Bilinear, Bicubic, Lanczos }
 
 // Pillow's fixed point: 32 bits less 8 for a pixel, less 2 of headroom.
 let PRECISION_BITS = 22;
@@ -39,13 +37,13 @@ fn sinc(v: f64) -> f64 {
     return sin(pi_v) / pi_v;
 }
 
-fn resample_filter(algo: i64, x_in: f64) -> f64 {
-    if algo == RESIZE_LANCZOS {
+fn resample_filter(algo: Resize, x_in: f64) -> f64 {
+    if algo == Resize.Lanczos {
         if -3.0 <= x_in && x_in < 3.0 { return sinc(x_in) * sinc(x_in / 3.0); }
         return 0.0;
     }
     let x = if x_in < 0.0 { -x_in } else { x_in };
-    if algo == RESIZE_BILINEAR { return if x < 1.0 { 1.0 - x } else { 0.0 }; }
+    if algo == Resize.Bilinear { return if x < 1.0 { 1.0 - x } else { 0.0 }; }
     let a = -0.5;
     if x < 1.0 { return ((a + 2.0) * x - (a + 3.0)) * x * x + 1.0; }
     if x < 2.0 { return (((x - 5.0) * x + 8.0) * x - 4.0) * a; }
@@ -57,8 +55,8 @@ fn clip8(v: i64) -> u8 { if v < 0 { 0 } else if v > 255 { 255 } else { v as u8 }
 // The filter of one dimension (precompute_weights): for each output pixel,
 // its first input pixel and how many, in bounds, and their fixed-point
 // weights, ksize each, in weights; returns ksize.
-fn precompute_weights(algo: i64, in_size: i64, out_size: i64, bounds: i64[>..]&, weights: i64[>..]&) -> i64 {
-    let filter_support = if algo == RESIZE_BILINEAR { 1.0 } else if algo == RESIZE_BICUBIC { 2.0 } else { 3.0 };
+fn precompute_weights(algo: Resize, in_size: i64, out_size: i64, bounds: i64[>..]&, weights: i64[>..]&) -> i64 {
+    let filter_support = if algo == Resize.Bilinear { 1.0 } else if algo == Resize.Bicubic { 2.0 } else { 3.0 };
     let scale: f64 = in_size as f64 / out_size;
     let filterscale = if scale < 1.0 { 1.0 } else { scale };
     let support = filter_support * filterscale;
@@ -144,7 +142,7 @@ fn resample_vertical(src: const u8[:], in_nx: i64, out_ny: i64, ksize: i64,
 }
 
 // img resized to nx by ny (img_tool::resize with PAD_NONE, resize_pillow).
-fn resize_image(img: ImageU8&, nx: i64, ny: i64, algo: i64, dst: ImageU8&) {
+fn resize_image(img: ImageU8&, nx: i64, ny: i64, algo: Resize, dst: ImageU8&) {
     guard nx > 0 && nx <= 65536 && ny > 0 && ny <= 65536 else { abort(str("resize target ", nx, "x", ny, " is out of range (max 65536)")); }
     dst.nx = nx;
     dst.ny = ny;
@@ -172,7 +170,7 @@ fn resize_image(img: ImageU8&, nx: i64, ny: i64, algo: i64, dst: ImageU8&) {
 
 // img resized into nx by ny keeping its aspect ratio, centered on black
 // (img_tool::resize with PAD_CEIL); the same as resize_image when it fits.
-fn resize_image_padded(img: ImageU8&, nx: i64, ny: i64, algo: i64, dst: ImageU8&) {
+fn resize_image_padded(img: ImageU8&, nx: i64, ny: i64, algo: Resize, dst: ImageU8&) {
     if img.nx == nx && img.ny == ny {
         dst.nx = nx;
         dst.ny = ny;

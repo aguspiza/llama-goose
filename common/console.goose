@@ -32,15 +32,10 @@ fn utf8_args() -> const u8[:][>..] {
     return out;
 }
 
-let RESET = 0;
-let INFO = 1;
-let PROMPT = 2;
-let REASONING = 3;
-let USER_INPUT = 4;
-let ERROR = 5;
+enum Display { Reset, Info, Prompt, Reasoning, UserInput, Error }
 
 var advanced_display = false;
-var current = RESET;
+var current = Display.Reset;
 
 fn init(use_color: bool) { advanced_display = use_color; }
 
@@ -55,21 +50,21 @@ fn tty_can_use_colors() -> bool {
 }
 
 // The color for what comes next, written only when it changes.
-fn set_display(d: i64) {
+fn set_display(d: Display) {
     if !advanced_display || current == d { return; }
     write_stdout(match d {
-        RESET => "\x1b[0m",
-        INFO => "\x1b[35m",
-        PROMPT => "\x1b[33m",
-        REASONING => "\x1b[90m",
-        USER_INPUT => "\x1b[1m\x1b[32m",
+        Reset => "\x1b[0m",
+        Info => "\x1b[35m",
+        Prompt => "\x1b[33m",
+        Reasoning => "\x1b[90m",
+        UserInput => "\x1b[1m\x1b[32m",
         _ => "\x1b[1m\x1b[31m",
     });
     current = d;
     flush_stdout();
 }
 
-fn cleanup() { set_display(RESET); }
+fn cleanup() { set_display(Display.Reset); }
 
 // One line of input, with its newline, appended to line: whether more
 // lines follow (multiline_input, or the other way round when the line ends

@@ -44,8 +44,17 @@ def enum_values(header):
     return re.findall(r"LLAMA_VOCAB_PRE_TYPE_(\w+)\s*=\s*(\d+)", body)
 
 
+# A variant of enum Pre: LLAMA3 is Llama3, SPARK2_5 is Spark2_5.
+def variant(name):
+    parts = name.split("_")
+    out = parts[0].capitalize()
+    for p in parts[1:]:
+        out += ("_" if out[-1].isdigit() and p[:1].isdigit() else "") + p.capitalize()
+    return out
+
+
 def goose_name(cpp_value):
-    return "PRE_" + cpp_value.replace("LLAMA_VOCAB_PRE_TYPE_", "")
+    return "Pre." + variant(cpp_value.replace("LLAMA_VOCAB_PRE_TYPE_", ""))
 
 
 # What a statement in a pre-tokenizer branch of load() becomes.
@@ -112,8 +121,15 @@ def main():
         "",
         "// enum llama_vocab_pre_type",
     ]
-    for name, value in enum_values(header):
-        out.append(f"let PRE_{name} = {value};")
+    variants = [variant(name) for name, value in sorted(enum_values(header), key=lambda nv: int(nv[1]))]
+    out.append("enum Pre {")
+    line = "   "
+    for v in variants:
+        if len(line) + len(v) + 2 > 96:
+            out.append(line.rstrip())
+            line = "   "
+        line += " " + v + ","
+    out += [line.rstrip(), "}"]
 
     out += [
         "",
@@ -140,7 +156,7 @@ def main():
         "",
         "// The regexes a BPE pre-tokenizer type splits text with, and whether",
         "// its words are then written in GPT-2's byte-level encoding.",
-        "fn pre_regexes(t: i64) -> const u8[:][:], bool {",
+        "fn pre_regexes(t: Pre) -> const u8[:][:], bool {",
     ]
     default = None
     for k, (types, regexes, byte_encode) in enumerate(groups):

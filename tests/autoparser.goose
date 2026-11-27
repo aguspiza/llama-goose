@@ -76,14 +76,19 @@ fn main() {
             k++;
         }
         fn put_i(v: i64) { put(str(v)); }
+        // the modes as llama.cpp's enums number them
+        fn put_m(m: autoparser::Mode) { put_i(match m { None => 0, TagBased => 1, ToolsOnly => 2 }); }
+        fn put_m(m: autoparser::Content) { put_i(match m { Plain => 0, AlwaysWrapped => 1, WrappedWithReasoning => 2 }); }
+        fn put_m(m: autoparser::Tools) { put_i(match m { None => 0, JsonNative => 1, TagWithJson => 2, TagWithTagged => 3 }); }
+        fn put_m(m: autoparser::IdPlace) { put_i(match m { None => 0, PreFuncName => 1, BetweenFuncAndArgs => 2, PostArgs => 3 }); }
         fn put_b(v: bool) { put(if v { "1" } else { "0" }); }
-        put_i(autoparser::r_mode);
+        put_m(autoparser::r_mode);
         put(autoparser::r_start);
         put(autoparser::r_end);
-        put_i(autoparser::c_mode);
+        put_m(autoparser::c_mode);
         put(autoparser::c_start);
         put(autoparser::c_end);
-        put_i(autoparser::f_mode);
+        put_m(autoparser::f_mode);
         put(autoparser::section_start);
         put(autoparser::section_end);
         put(autoparser::per_call_start);
@@ -109,7 +114,7 @@ fn main() {
         put(autoparser::a_value_suffix);
         put(autoparser::a_separator);
         put_b(autoparser::a_tolerate_ws);
-        put_i(autoparser::id_pos);
+        put_m(autoparser::id_pos);
         put(autoparser::id_prefix);
         put(autoparser::id_suffix);
         put(autoparser::user_start);

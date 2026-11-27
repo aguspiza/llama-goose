@@ -27,85 +27,28 @@ namespace model;
 let MAX_LAYERS = 512;
 
 // enum llama_expert_gating_func_type
-let GATING_NONE = 0;
-let GATING_SOFTMAX = 1;
-let GATING_SIGMOID = 2;
-let GATING_SOFTMAX_WEIGHT = 3;
-let GATING_SQRT_SOFTPLUS = 4;
+enum Gating { None, Softmax, Sigmoid, SoftmaxWeight, SqrtSoftplus }
+
+// The gating of the GGUF's expert_gating_func value.
+fn gating_of(v: u32) -> Gating {
+    match v { 1 => Gating.Softmax, 2 => Gating.Sigmoid, 3 => Gating.SoftmaxWeight, 4 => Gating.SqrtSoftplus, _ => Gating.None }
+}
 
 // enum llama_swa_type
-let SWA_NONE = 0;
-let SWA_STANDARD = 1;
+enum Swa { None, Standard }
 
-let ARCH_UNKNOWN = 0;
-let ARCH_GEMMA3 = 1;
-let ARCH_LLAMA = 2;
-let ARCH_LFM2 = 3;
-let ARCH_LFM3 = 4;
-let ARCH_QWEN2 = 5;
-let ARCH_QWEN3 = 6;
-let ARCH_QWEN35 = 7;
-let ARCH_GEMMA2 = 8;
-let ARCH_PHI2 = 9;
-let ARCH_PHI3 = 10;
-let ARCH_STABLELM = 11;
-let ARCH_SMOLLM3 = 12;
-let ARCH_GRANITE = 13;
-let ARCH_INTERNLM2 = 14;
-let ARCH_EXAONE = 15;
-let ARCH_ERNIE4_5 = 16;
-let ARCH_ARCEE = 17;
-let ARCH_OLMO2 = 18;
-let ARCH_EXAONE4 = 19;
-let ARCH_HUNYUAN_DENSE = 20;
-let ARCH_GPT2 = 21;
-let ARCH_STARCODER = 22;
-let ARCH_GPTNEOX = 23;
-let ARCH_STARCODER2 = 24;
-let ARCH_BLOOM = 25;
-let ARCH_OPENELM = 26;
-let ARCH_MISTRAL3 = 27;
-let ARCH_GRANITE_MOE = 28;
-let ARCH_SMALLTHINKER = 29;
-let ARCH_GEMMA = 30;
-let ARCH_OLMO = 31;
-let ARCH_QWEN = 32;
-let ARCH_REFACT = 33;
-let ARCH_MPT = 34;
-let ARCH_JAIS = 35;
-let ARCH_NEMOTRON = 36;
-let ARCH_MAINCODER = 37;
-let ARCH_NANBEIGE = 38;
-let ARCH_BITNET = 39;
-let ARCH_CHATGLM = 40;
-let ARCH_MAMBA = 41;
-let ARCH_MAMBA2 = 42;
-let ARCH_FALCON_H1 = 43;
-let ARCH_GRANITE_HYBRID = 44;
-let ARCH_JAMBA = 45;
-let ARCH_PLAMO2 = 46;
-let ARCH_RWKV6 = 47;
-let ARCH_RWKV7 = 48;
-let ARCH_MINICPM3 = 49;
-let ARCH_QWEN2VL = 50;
-let ARCH_QWEN3VL = 51;
-let ARCH_NEMOTRON_H = 52;
-let ARCH_AFMOE = 53;
-let ARCH_GEMMA3N = 54;
-let ARCH_GEMMA4 = 55;
-let ARCH_T5 = 56;
-let ARCH_MINICPM = 57;
-let ARCH_PLAMO3 = 58;
-let ARCH_COHERE2 = 59;
-let ARCH_PANGU_EMBED = 60;
-let ARCH_LIMITE = 61;
-let ARCH_HRM_TEXT = 62;
-let ARCH_SPARK2_5 = 63;
-let ARCH_K2_HORIZON = 64;
-let ARCH_GLM4 = 65;
+enum Arch {
+    Unknown, Gemma3, Llama, Lfm2, Lfm3, Qwen2, Qwen3, Qwen35, Gemma2, Phi2, Phi3, Stablelm,
+    Smollm3, Granite, Internlm2, Exaone, Ernie4_5, Arcee, Olmo2, Exaone4, HunyuanDense, Gpt2,
+    Starcoder, Gptneox, Starcoder2, Bloom, Openelm, Mistral3, GraniteMoe, Smallthinker, Gemma,
+    Olmo, Qwen, Refact, Mpt, Jais, Nemotron, Maincoder, Nanbeige, Bitnet, Chatglm, Mamba,
+    Mamba2, FalconH1, GraniteHybrid, Jamba, Plamo2, Rwkv6, Rwkv7, Minicpm3, Qwen2vl, Qwen3vl,
+    NemotronH, Afmoe, Gemma3n, Gemma4, T5, Minicpm, Plamo3, Cohere2, PanguEmbed, Limite,
+    HrmText, Spark2_5, K2Horizon, Glm4,
+}
 
 struct HParams {
-    arch: i64,
+    arch: Arch,
     n_ctx_train: u32,
     n_embd: u32,
     n_layer: u32,
@@ -127,7 +70,7 @@ struct HParams {
     n_expert_used: u32,          // how many each token uses,
     n_ff_shexp: u32,             // the shared expert's size,
     expert_weights_scale: f32,   // a scale of the experts' weights
-    expert_gating_func: i64,     // and how the router's logits become them
+    expert_gating_func: Gating = Gating.None,  // and how the router's logits become them
     expert_weights_norm: bool,   // the weights divided by their sum
     n_expert_shared: u32,
     n_layer_dense_lead: u32,     // the first layers without experts
@@ -170,7 +113,7 @@ struct HParams {
     rope_scaling_none: bool,
     rope_yarn_log_mul: f32,
     n_swa: u32,
-    swa_type: i64,
+    swa_type: Swa = Swa.None,
     f_norm_rms_eps: f32,
     f_norm_eps: f32,             // LayerNorm's
     f_logit_scale: f32,          // granite: the logits divided by it,
@@ -388,85 +331,85 @@ struct Model {
 // metadata
 //
 
-fn arch_name_of(arch: i64) -> const u8[:] {
-    match arch { ARCH_GEMMA3 => "gemma3", ARCH_LLAMA => "llama", ARCH_LFM2 => "lfm2", ARCH_LFM3 => "lfm3",
-            ARCH_QWEN2 => "qwen2", ARCH_QWEN3 => "qwen3", ARCH_QWEN35 => "qwen35", ARCH_GEMMA2 => "gemma2",
-            ARCH_PHI2 => "phi2", ARCH_PHI3 => "phi3", ARCH_STABLELM => "stablelm", ARCH_SMOLLM3 => "smollm3", ARCH_GRANITE => "granite",
-            ARCH_INTERNLM2 => "internlm2", ARCH_EXAONE => "exaone", ARCH_ERNIE4_5 => "ernie4_5", ARCH_ARCEE => "arcee", ARCH_OLMO2 => "olmo2", ARCH_EXAONE4 => "exaone4", ARCH_HUNYUAN_DENSE => "hunyuan-dense",
-            ARCH_GPT2 => "gpt2", ARCH_STARCODER => "starcoder", ARCH_GPTNEOX => "gptneox", ARCH_STARCODER2 => "starcoder2", ARCH_BLOOM => "bloom", ARCH_OPENELM => "openelm", ARCH_MISTRAL3 => "mistral3",
-            ARCH_GRANITE_MOE => "granitemoe", ARCH_SMALLTHINKER => "smallthinker",
-            ARCH_GEMMA => "gemma", ARCH_OLMO => "olmo", ARCH_QWEN => "qwen", ARCH_REFACT => "refact", ARCH_MPT => "mpt", ARCH_JAIS => "jais", ARCH_NEMOTRON => "nemotron",
-            ARCH_MAINCODER => "maincoder", ARCH_NANBEIGE => "nanbeige", ARCH_BITNET => "bitnet", ARCH_CHATGLM => "chatglm", ARCH_MAMBA => "mamba", ARCH_MAMBA2 => "mamba2",
-            ARCH_FALCON_H1 => "falcon-h1", ARCH_GRANITE_HYBRID => "granitehybrid", ARCH_JAMBA => "jamba", ARCH_PLAMO2 => "plamo2", ARCH_RWKV6 => "rwkv6", ARCH_RWKV7 => "rwkv7", ARCH_MINICPM3 => "minicpm3", ARCH_QWEN2VL => "qwen2vl", ARCH_QWEN3VL => "qwen3vl", ARCH_NEMOTRON_H => "nemotron_h", ARCH_AFMOE => "afmoe", ARCH_GEMMA3N => "gemma3n", ARCH_GEMMA4 => "gemma4", ARCH_T5 => "t5", ARCH_MINICPM => "minicpm", ARCH_PLAMO3 => "plamo3", ARCH_COHERE2 => "cohere2", ARCH_PANGU_EMBED => "pangu-embedded", ARCH_LIMITE => "limite", ARCH_HRM_TEXT => "hrm_text", ARCH_SPARK2_5 => "spark2_5", ARCH_K2_HORIZON => "k2-horizon", ARCH_GLM4 => "glm4", _ => "unknown" }
+fn arch_name_of(arch: Arch) -> const u8[:] {
+    match arch { Gemma3 => "gemma3", Llama => "llama", Lfm2 => "lfm2", Lfm3 => "lfm3",
+            Qwen2 => "qwen2", Qwen3 => "qwen3", Qwen35 => "qwen35", Gemma2 => "gemma2",
+            Phi2 => "phi2", Phi3 => "phi3", Stablelm => "stablelm", Smollm3 => "smollm3", Granite => "granite",
+            Internlm2 => "internlm2", Exaone => "exaone", Ernie4_5 => "ernie4_5", Arcee => "arcee", Olmo2 => "olmo2", Exaone4 => "exaone4", HunyuanDense => "hunyuan-dense",
+            Gpt2 => "gpt2", Starcoder => "starcoder", Gptneox => "gptneox", Starcoder2 => "starcoder2", Bloom => "bloom", Openelm => "openelm", Mistral3 => "mistral3",
+            GraniteMoe => "granitemoe", Smallthinker => "smallthinker",
+            Gemma => "gemma", Olmo => "olmo", Qwen => "qwen", Refact => "refact", Mpt => "mpt", Jais => "jais", Nemotron => "nemotron",
+            Maincoder => "maincoder", Nanbeige => "nanbeige", Bitnet => "bitnet", Chatglm => "chatglm", Mamba => "mamba", Mamba2 => "mamba2",
+            FalconH1 => "falcon-h1", GraniteHybrid => "granitehybrid", Jamba => "jamba", Plamo2 => "plamo2", Rwkv6 => "rwkv6", Rwkv7 => "rwkv7", Minicpm3 => "minicpm3", Qwen2vl => "qwen2vl", Qwen3vl => "qwen3vl", NemotronH => "nemotron_h", Afmoe => "afmoe", Gemma3n => "gemma3n", Gemma4 => "gemma4", T5 => "t5", Minicpm => "minicpm", Plamo3 => "plamo3", Cohere2 => "cohere2", PanguEmbed => "pangu-embedded", Limite => "limite", HrmText => "hrm_text", Spark2_5 => "spark2_5", K2Horizon => "k2-horizon", Glm4 => "glm4", _ => "unknown" }
 }
 
-fn arch_from_name(name: const u8[:]) -> i64 {
-    if name == "gemma3" { return ARCH_GEMMA3; }
-    if name == "llama" { return ARCH_LLAMA; }
-    if name == "lfm2" { return ARCH_LFM2; }
-    if name == "lfm3" { return ARCH_LFM3; }
-    if name == "qwen2" { return ARCH_QWEN2; }
-    if name == "qwen3" { return ARCH_QWEN3; }
-    if name == "qwen35" { return ARCH_QWEN35; }
-    if name == "gemma2" { return ARCH_GEMMA2; }
-    if name == "phi2" { return ARCH_PHI2; }
-    if name == "phi3" { return ARCH_PHI3; }
-    if name == "stablelm" { return ARCH_STABLELM; }
-    if name == "smollm3" { return ARCH_SMOLLM3; }
-    if name == "granite" { return ARCH_GRANITE; }
-    if name == "internlm2" { return ARCH_INTERNLM2; }
-    if name == "exaone" { return ARCH_EXAONE; }
-    if name == "ernie4_5" { return ARCH_ERNIE4_5; }
-    if name == "arcee" { return ARCH_ARCEE; }
-    if name == "olmo2" { return ARCH_OLMO2; }
-    if name == "exaone4" { return ARCH_EXAONE4; }
-    if name == "hunyuan-dense" { return ARCH_HUNYUAN_DENSE; }
-    if name == "gpt2" { return ARCH_GPT2; }
-    if name == "starcoder" { return ARCH_STARCODER; }
-    if name == "gptneox" { return ARCH_GPTNEOX; }
-    if name == "starcoder2" { return ARCH_STARCODER2; }
-    if name == "bloom" { return ARCH_BLOOM; }
-    if name == "openelm" { return ARCH_OPENELM; }
-    if name == "mistral3" { return ARCH_MISTRAL3; }
-    if name == "granitemoe" { return ARCH_GRANITE_MOE; }
-    if name == "smallthinker" { return ARCH_SMALLTHINKER; }
-    if name == "gemma" { return ARCH_GEMMA; }
-    if name == "olmo" { return ARCH_OLMO; }
-    if name == "qwen" { return ARCH_QWEN; }
-    if name == "refact" { return ARCH_REFACT; }
-    if name == "mpt" { return ARCH_MPT; }
-    if name == "jais" { return ARCH_JAIS; }
-    if name == "nemotron" { return ARCH_NEMOTRON; }
-    if name == "maincoder" { return ARCH_MAINCODER; }
-    if name == "nanbeige" { return ARCH_NANBEIGE; }
-    if name == "bitnet" { return ARCH_BITNET; }
-    if name == "chatglm" { return ARCH_CHATGLM; }
-    if name == "mamba" { return ARCH_MAMBA; }
-    if name == "mamba2" { return ARCH_MAMBA2; }
-    if name == "falcon-h1" { return ARCH_FALCON_H1; }
-    if name == "granitehybrid" { return ARCH_GRANITE_HYBRID; }
-    if name == "jamba" { return ARCH_JAMBA; }
-    if name == "plamo2" { return ARCH_PLAMO2; }
-    if name == "rwkv6" { return ARCH_RWKV6; }
-    if name == "rwkv7" { return ARCH_RWKV7; }
-    if name == "minicpm3" { return ARCH_MINICPM3; }
-    if name == "qwen2vl" { return ARCH_QWEN2VL; }
-    if name == "qwen3vl" { return ARCH_QWEN3VL; }
-    if name == "nemotron_h" { return ARCH_NEMOTRON_H; }
-    if name == "afmoe" { return ARCH_AFMOE; }
-    if name == "gemma3n" { return ARCH_GEMMA3N; }
-    if name == "gemma4" { return ARCH_GEMMA4; }
-    if name == "t5" { return ARCH_T5; }
-    if name == "minicpm" { return ARCH_MINICPM; }
-    if name == "plamo3" { return ARCH_PLAMO3; }
-    if name == "cohere2" { return ARCH_COHERE2; }
-    if name == "pangu-embedded" { return ARCH_PANGU_EMBED; }
-    if name == "limite" { return ARCH_LIMITE; }
-    if name == "hrm_text" { return ARCH_HRM_TEXT; }
-    if name == "spark2_5" { return ARCH_SPARK2_5; }
-    if name == "k2-horizon" { return ARCH_K2_HORIZON; }
-    if name == "glm4" { return ARCH_GLM4; }
-    return ARCH_UNKNOWN;
+fn arch_from_name(name: const u8[:]) -> Arch {
+    if name == "gemma3" { return Arch.Gemma3; }
+    if name == "llama" { return Arch.Llama; }
+    if name == "lfm2" { return Arch.Lfm2; }
+    if name == "lfm3" { return Arch.Lfm3; }
+    if name == "qwen2" { return Arch.Qwen2; }
+    if name == "qwen3" { return Arch.Qwen3; }
+    if name == "qwen35" { return Arch.Qwen35; }
+    if name == "gemma2" { return Arch.Gemma2; }
+    if name == "phi2" { return Arch.Phi2; }
+    if name == "phi3" { return Arch.Phi3; }
+    if name == "stablelm" { return Arch.Stablelm; }
+    if name == "smollm3" { return Arch.Smollm3; }
+    if name == "granite" { return Arch.Granite; }
+    if name == "internlm2" { return Arch.Internlm2; }
+    if name == "exaone" { return Arch.Exaone; }
+    if name == "ernie4_5" { return Arch.Ernie4_5; }
+    if name == "arcee" { return Arch.Arcee; }
+    if name == "olmo2" { return Arch.Olmo2; }
+    if name == "exaone4" { return Arch.Exaone4; }
+    if name == "hunyuan-dense" { return Arch.HunyuanDense; }
+    if name == "gpt2" { return Arch.Gpt2; }
+    if name == "starcoder" { return Arch.Starcoder; }
+    if name == "gptneox" { return Arch.Gptneox; }
+    if name == "starcoder2" { return Arch.Starcoder2; }
+    if name == "bloom" { return Arch.Bloom; }
+    if name == "openelm" { return Arch.Openelm; }
+    if name == "mistral3" { return Arch.Mistral3; }
+    if name == "granitemoe" { return Arch.GraniteMoe; }
+    if name == "smallthinker" { return Arch.Smallthinker; }
+    if name == "gemma" { return Arch.Gemma; }
+    if name == "olmo" { return Arch.Olmo; }
+    if name == "qwen" { return Arch.Qwen; }
+    if name == "refact" { return Arch.Refact; }
+    if name == "mpt" { return Arch.Mpt; }
+    if name == "jais" { return Arch.Jais; }
+    if name == "nemotron" { return Arch.Nemotron; }
+    if name == "maincoder" { return Arch.Maincoder; }
+    if name == "nanbeige" { return Arch.Nanbeige; }
+    if name == "bitnet" { return Arch.Bitnet; }
+    if name == "chatglm" { return Arch.Chatglm; }
+    if name == "mamba" { return Arch.Mamba; }
+    if name == "mamba2" { return Arch.Mamba2; }
+    if name == "falcon-h1" { return Arch.FalconH1; }
+    if name == "granitehybrid" { return Arch.GraniteHybrid; }
+    if name == "jamba" { return Arch.Jamba; }
+    if name == "plamo2" { return Arch.Plamo2; }
+    if name == "rwkv6" { return Arch.Rwkv6; }
+    if name == "rwkv7" { return Arch.Rwkv7; }
+    if name == "minicpm3" { return Arch.Minicpm3; }
+    if name == "qwen2vl" { return Arch.Qwen2vl; }
+    if name == "qwen3vl" { return Arch.Qwen3vl; }
+    if name == "nemotron_h" { return Arch.NemotronH; }
+    if name == "afmoe" { return Arch.Afmoe; }
+    if name == "gemma3n" { return Arch.Gemma3n; }
+    if name == "gemma4" { return Arch.Gemma4; }
+    if name == "t5" { return Arch.T5; }
+    if name == "minicpm" { return Arch.Minicpm; }
+    if name == "plamo3" { return Arch.Plamo3; }
+    if name == "cohere2" { return Arch.Cohere2; }
+    if name == "pangu-embedded" { return Arch.PanguEmbed; }
+    if name == "limite" { return Arch.Limite; }
+    if name == "hrm_text" { return Arch.HrmText; }
+    if name == "spark2_5" { return Arch.Spark2_5; }
+    if name == "k2-horizon" { return Arch.K2Horizon; }
+    if name == "glm4" { return Arch.Glm4; }
+    return Arch.Unknown;
 }
 
 // "<arch>.<key>"
@@ -579,55 +522,55 @@ fn load_hparams(m: Model&) {
     }
 
     match hp.arch {
-        ARCH_GEMMA3 => load_hparams_gemma3(m),
-        ARCH_LLAMA => load_hparams_llama(m),
-        ARCH_LFM2 => load_hparams_lfm2(m),
-        ARCH_LFM3 => load_hparams_lfm3(m),
-        ARCH_QWEN2, ARCH_QWEN3 => load_hparams_qwen(m),
-        ARCH_QWEN35 => load_hparams_qwen35(m),
-        ARCH_GEMMA2 => load_hparams_gemma2(m),
-        ARCH_PHI2, ARCH_STABLELM => load_hparams_layernorm(m),
-        ARCH_PHI3 => load_hparams_phi3(m),
-        ARCH_SMOLLM3 => load_hparams_smollm3(m),
-        ARCH_GRANITE => load_hparams_granite(m),
-        ARCH_INTERNLM2, ARCH_ERNIE4_5, ARCH_ARCEE => load_hparams_rms(m, ggml::ROPE_TYPE_NORMAL),
-        ARCH_EXAONE => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
-        ARCH_OLMO2 => load_hparams_olmo2(m),
-        ARCH_EXAONE4 => load_hparams_exaone4(m),
-        ARCH_HUNYUAN_DENSE => load_hparams_hunyuan_dense(m),
-        ARCH_GPT2, ARCH_STARCODER, ARCH_GPTNEOX, ARCH_STARCODER2, ARCH_BLOOM => load_hparams_classic(m),
-        ARCH_OPENELM => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
-        ARCH_MISTRAL3 => load_hparams_mistral3(m),
-        ARCH_GRANITE_MOE => load_hparams_granite(m),
-        ARCH_SMALLTHINKER => load_hparams_smallthinker(m),
-        ARCH_GEMMA, ARCH_QWEN => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
-        ARCH_REFACT => load_hparams_refact(m),
-        ARCH_OLMO, ARCH_MPT, ARCH_JAIS, ARCH_NEMOTRON => load_hparams_classic(m),
-        ARCH_MAINCODER, ARCH_CHATGLM => load_hparams_rms(m, ggml::ROPE_TYPE_NORMAL),
-        ARCH_BITNET => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
-        ARCH_NANBEIGE => load_hparams_nanbeige(m),
-        ARCH_MAMBA, ARCH_MAMBA2 => load_hparams_mamba(m),
-        ARCH_FALCON_H1 => load_hparams_falcon_h1(m),
-        ARCH_GRANITE_HYBRID => load_hparams_granite_hybrid(m),
-        ARCH_JAMBA => load_hparams_jamba(m),
-        ARCH_PLAMO2 => load_hparams_plamo2(m),
-        ARCH_RWKV6, ARCH_RWKV7 => load_hparams_rwkv(m),
-        ARCH_MINICPM3 => load_hparams_minicpm3(m),
-        ARCH_QWEN2VL, ARCH_QWEN3VL => load_hparams_qwenvl(m),
-        ARCH_NEMOTRON_H => load_hparams_nemotron_h(m),
-        ARCH_AFMOE => load_hparams_afmoe(m),
-        ARCH_GEMMA3N => load_hparams_gemma3n(m),
-        ARCH_GEMMA4 => load_hparams_gemma4(m),
-        ARCH_T5 => load_hparams_t5(m),
-        ARCH_MINICPM => load_hparams_minicpm(m),
-        ARCH_PLAMO3 => load_hparams_plamo3(m),
-        ARCH_COHERE2 => load_hparams_cohere2(m),
-        ARCH_PANGU_EMBED => load_hparams_pangu_embed(m),
-        ARCH_LIMITE => load_hparams_limite(m),
-        ARCH_HRM_TEXT => load_hparams_hrm_text(m),
-        ARCH_SPARK2_5 => load_hparams_spark2_5(m),
-        ARCH_K2_HORIZON => load_hparams_k2_horizon(m),
-        ARCH_GLM4 => load_hparams_glm4(m),
+        Gemma3 => load_hparams_gemma3(m),
+        Llama => load_hparams_llama(m),
+        Lfm2 => load_hparams_lfm2(m),
+        Lfm3 => load_hparams_lfm3(m),
+        Qwen2, Qwen3 => load_hparams_qwen(m),
+        Qwen35 => load_hparams_qwen35(m),
+        Gemma2 => load_hparams_gemma2(m),
+        Phi2, Stablelm => load_hparams_layernorm(m),
+        Phi3 => load_hparams_phi3(m),
+        Smollm3 => load_hparams_smollm3(m),
+        Granite => load_hparams_granite(m),
+        Internlm2, Ernie4_5, Arcee => load_hparams_rms(m, ggml::ROPE_TYPE_NORMAL),
+        Exaone => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
+        Olmo2 => load_hparams_olmo2(m),
+        Exaone4 => load_hparams_exaone4(m),
+        HunyuanDense => load_hparams_hunyuan_dense(m),
+        Gpt2, Starcoder, Gptneox, Starcoder2, Bloom => load_hparams_classic(m),
+        Openelm => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
+        Mistral3 => load_hparams_mistral3(m),
+        GraniteMoe => load_hparams_granite(m),
+        Smallthinker => load_hparams_smallthinker(m),
+        Gemma, Qwen => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
+        Refact => load_hparams_refact(m),
+        Olmo, Mpt, Jais, Nemotron => load_hparams_classic(m),
+        Maincoder, Chatglm => load_hparams_rms(m, ggml::ROPE_TYPE_NORMAL),
+        Bitnet => load_hparams_rms(m, ggml::ROPE_TYPE_NEOX),
+        Nanbeige => load_hparams_nanbeige(m),
+        Mamba, Mamba2 => load_hparams_mamba(m),
+        FalconH1 => load_hparams_falcon_h1(m),
+        GraniteHybrid => load_hparams_granite_hybrid(m),
+        Jamba => load_hparams_jamba(m),
+        Plamo2 => load_hparams_plamo2(m),
+        Rwkv6, Rwkv7 => load_hparams_rwkv(m),
+        Minicpm3 => load_hparams_minicpm3(m),
+        Qwen2vl, Qwen3vl => load_hparams_qwenvl(m),
+        NemotronH => load_hparams_nemotron_h(m),
+        Afmoe => load_hparams_afmoe(m),
+        Gemma3n => load_hparams_gemma3n(m),
+        Gemma4 => load_hparams_gemma4(m),
+        T5 => load_hparams_t5(m),
+        Minicpm => load_hparams_minicpm(m),
+        Plamo3 => load_hparams_plamo3(m),
+        Cohere2 => load_hparams_cohere2(m),
+        PanguEmbed => load_hparams_pangu_embed(m),
+        Limite => load_hparams_limite(m),
+        HrmText => load_hparams_hrm_text(m),
+        Spark2_5 => load_hparams_spark2_5(m),
+        K2Horizon => load_hparams_k2_horizon(m),
+        Glm4 => load_hparams_glm4(m),
         _ => abort("unknown architecture"),
     }
     resolve_rope(hp);
@@ -680,7 +623,7 @@ fn load_swa_pattern(m: Model&, n_pattern_default: u32, dense_first: bool = false
 // models/internlm2.cpp, exaone.cpp, ernie4-5.cpp (dense), arcee.cpp.
 fn load_hparams_rms(m: Model&, rope_type: i32) {
     get_f32(m, "attention.layer_norm_rms_epsilon", m.hp.f_norm_rms_eps);
-    if m.hp.arch == ARCH_ERNIE4_5 && gguf::find_key(m.meta, akey(m, "rope.dimension_sections")) >= 0 {
+    if m.hp.arch == Arch.Ernie4_5 && gguf::find_key(m.meta, akey(m, "rope.dimension_sections")) >= 0 {
         abort("ernie4_5 with rope sections (VL): not ported yet");
     }
     m.hp.rope_type = rope_type;
@@ -691,13 +634,13 @@ fn load_hparams_olmo2(m: Model&) {
     let hp .= m.hp;
     get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
     if get_u32(m, "attention.sliding_window", hp.n_swa, false) && hp.n_swa > 0 {
-        hp.swa_type = SWA_STANDARD;
+        hp.swa_type = Swa.Standard;
         load_swa_pattern(m, 4);
         hp.rope_freq_base_train_swa = hp.rope_freq_base_train;
         hp.rope_freq_scale_train_swa = 1.0;    // see build_olmo2
         get_f32(m, "rope.freq_base_swa", hp.rope_freq_base_train_swa, false);
     } else {
-        hp.swa_type = SWA_NONE;
+        hp.swa_type = Swa.None;
     }
     hp.rope_type = ggml::ROPE_TYPE_NEOX;
 }
@@ -707,7 +650,7 @@ fn load_hparams_olmo2(m: Model&) {
 fn load_hparams_exaone4(m: Model&) {
     let hp .= m.hp;
     if hp.n_layer == 64 {
-        hp.swa_type = SWA_STANDARD;
+        hp.swa_type = Swa.Standard;
         hp.n_swa = 4096;
         load_swa_pattern(m, 4);
         hp.rope_freq_base_train_swa = hp.rope_freq_base_train;
@@ -746,8 +689,8 @@ fn load_ssm(m: Model&, groups: bool) {
 // models/mamba.cpp, models/mamba2.cpp: every layer recurrent, no attention.
 fn load_hparams_mamba(m: Model&) {
     let hp .= m.hp;
-    load_ssm(m, hp.arch == ARCH_MAMBA2);
-    if hp.arch == ARCH_MAMBA { vocab::get_bool(m.meta, akey(m, "ssm.dt_b_c_rms"), hp.ssm_dt_b_c_rms); }
+    load_ssm(m, hp.arch == Arch.Mamba2);
+    if hp.arch == Arch.Mamba { vocab::get_bool(m.meta, akey(m, "ssm.dt_b_c_rms"), hp.ssm_dt_b_c_rms); }
     get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
     for il in hp.n_layer as i64 { hp.is_recr[il] = true; }
     hp.rope_type = -1;
@@ -803,7 +746,7 @@ fn load_hparams_rwkv(m: Model&) {
     get_f32(m, "attention.layer_norm_epsilon", hp.f_norm_eps, false);
     get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps, false);
     get_u32(m, "wkv.head_size", hp.wkv_head_size);
-    if hp.arch == ARCH_RWKV6 { get_u32(m, "rescale_every_n_layers", hp.rescale_every_n_layers, false); }
+    if hp.arch == Arch.Rwkv6 { get_u32(m, "rescale_every_n_layers", hp.rescale_every_n_layers, false); }
     get_u32(m, "token_shift_count", hp.token_shift_count, false);
     guard hp.token_shift_count == 2 else { abort("GGML_ASSERT(hparams.token_shift_count == 2) failed"); }
     for il in hp.n_layer as i64 { hp.is_recr[il] = true; }
@@ -841,22 +784,22 @@ fn load_hparams_afmoe(m: Model&) {
     get_u32(m, "expert_shared_count", hp.n_expert_shared);
     var gating: u32 = 0;
     get_u32(m, "expert_gating_func", gating, false);
-    hp.expert_gating_func = gating;
+    hp.expert_gating_func = gating_of(gating);
     get_f32(m, "expert_weights_scale", hp.expert_weights_scale, false);
     vocab::get_bool(m.meta, akey(m, "expert_weights_norm"), hp.expert_weights_norm);
     var n_groups: u32 = 0;
     if get_u32(m, "expert_group_count", n_groups, false) && n_groups > 1 { abort("expert groups: not ported yet"); }
     get_u32(m, "attention.sliding_window", hp.n_swa, false);
     if hp.n_swa > 0 {
-        hp.swa_type = SWA_STANDARD;
+        hp.swa_type = Swa.Standard;
         load_swa_pattern(m, 4);
         hp.rope_freq_base_train_swa = hp.rope_freq_base_train;
         hp.rope_freq_scale_train_swa = hp.rope_freq_scale_train;
         get_f32(m, "rope.freq_base_swa", hp.rope_freq_base_train_swa, false);
     } else {
-        hp.swa_type = SWA_NONE;
+        hp.swa_type = Swa.None;
     }
-    if hp.expert_gating_func == GATING_NONE { hp.expert_gating_func = GATING_SIGMOID; }
+    if hp.expert_gating_func == Gating.None { hp.expert_gating_func = Gating.Sigmoid; }
     hp.n_no_rope_layer_step = 4;    // llama_hparams' default
     hp.rope_type = ggml::ROPE_TYPE_NEOX;
 }
@@ -865,7 +808,7 @@ fn load_hparams_afmoe(m: Model&) {
 // layer before them of the same kind (sliding window or not).
 fn load_hparams_gemma3n(m: Model&) {
     let hp .= m.hp;
-    hp.swa_type = SWA_STANDARD;
+    hp.swa_type = Swa.Standard;
     load_swa_pattern(m, 5);
     hp.n_layer_kv_from_start = 20;
     hp.f_attention_scale = 1.0;
@@ -884,7 +827,7 @@ fn load_hparams_gemma3n(m: Model&) {
 // their own head sizes.
 fn load_hparams_gemma4(m: Model&) {
     let hp .= m.hp;
-    hp.swa_type = SWA_STANDARD;
+    hp.swa_type = Swa.Standard;
     {
         let k = akey(m, "attention.sliding_window_pattern");
         let id = gguf::find_key(m.meta, k);
@@ -927,7 +870,7 @@ fn load_hparams_t5(m: Model&) {
 }
 
 // Whether the model encodes its input first (llama_model_has_encoder).
-fn has_encoder(m: Model&) -> bool { m.hp.arch == ARCH_T5 }
+fn has_encoder(m: Model&) -> bool { m.hp.arch == Arch.T5 }
 
 // The decoder's first token, or -1 (llama_model_decoder_start_token).
 fn decoder_start_token(m: Model&) -> i32 { m.hp.dec_start_token_id }
@@ -936,8 +879,8 @@ fn decoder_start_token(m: Model&) -> i32 { m.hp.dec_start_token_id }
 // of falcon-h1 (llama_memory_hybrid's attention filter).
 fn has_kv(hp: HParams&, il: i64) -> bool {
     if hp.kv_source[il] != il { return false; }     // gemma3n: it reads another layer's
-    if hp.arch == ARCH_NEMOTRON_H { return !hp.is_recr[il] && hp.n_ff[il] == 0; }     // not its feed-forward layers
-    return !hp.is_recr[il] || hp.arch == ARCH_FALCON_H1;
+    if hp.arch == Arch.NemotronH { return !hp.is_recr[il] && hp.n_ff[il] == 0; }     // not its feed-forward layers
+    return !hp.is_recr[il] || hp.arch == Arch.FalconH1;
 }
 
 // models/nanbeige.cpp: the stored layers may run several times (loops),
@@ -977,16 +920,16 @@ fn load_hparams_refact(m: Model&) {
 fn load_hparams_classic(m: Model&) {
     let hp .= m.hp;
     get_f32(m, "attention.layer_norm_epsilon", hp.f_norm_eps);
-    if hp.arch == ARCH_OLMO || hp.arch == ARCH_MPT { get_f32(m, "attention.clamp_kqv", hp.f_clamp_kqv, false); }
-    if hp.arch == ARCH_MPT || hp.arch == ARCH_JAIS { get_f32(m, "attention.max_alibi_bias", hp.f_max_alibi_bias, false); }
-    if hp.arch == ARCH_GPTNEOX {
+    if hp.arch == Arch.Olmo || hp.arch == Arch.Mpt { get_f32(m, "attention.clamp_kqv", hp.f_clamp_kqv, false); }
+    if hp.arch == Arch.Mpt || hp.arch == Arch.Jais { get_f32(m, "attention.max_alibi_bias", hp.f_max_alibi_bias, false); }
+    if hp.arch == Arch.Gptneox {
         guard vocab::get_bool(m.meta, akey(m, "use_parallel_residual"), hp.use_par_res) else {
             abort(str("key not found in model: ", akey(m, "use_parallel_residual")));
         }
     }
-    if hp.arch == ARCH_BLOOM { hp.f_max_alibi_bias = 8.0; }
-    hp.rope_type = if hp.arch == ARCH_GPTNEOX || hp.arch == ARCH_STARCODER2 || hp.arch == ARCH_NEMOTRON { ggml::ROPE_TYPE_NEOX }
-                   else if hp.arch == ARCH_OLMO { ggml::ROPE_TYPE_NORMAL } else { -1 };
+    if hp.arch == Arch.Bloom { hp.f_max_alibi_bias = 8.0; }
+    hp.rope_type = if hp.arch == Arch.Gptneox || hp.arch == Arch.Starcoder2 || hp.arch == Arch.Nemotron { ggml::ROPE_TYPE_NEOX }
+                   else if hp.arch == Arch.Olmo { ggml::ROPE_TYPE_NORMAL } else { -1 };
 }
 
 // models/mistral3.cpp
@@ -1012,7 +955,7 @@ fn load_hparams_mistral3(m: Model&) {
 fn load_hparams_smallthinker(m: Model&) {
     let hp .= m.hp;
     if get_u32(m, "attention.sliding_window", hp.n_swa, false) && hp.n_swa > 0 {
-        hp.swa_type = SWA_STANDARD;
+        hp.swa_type = Swa.Standard;
         hp.n_swa = 4096;
         load_swa_pattern(m, 4, true);
         hp.rope_freq_base_train_swa = hp.rope_freq_base_train;
@@ -1020,13 +963,13 @@ fn load_hparams_smallthinker(m: Model&) {
         get_f32(m, "rope.freq_base_swa", hp.rope_freq_base_train_swa, false);
         hp.n_no_rope_layer_step = 4;
     } else {
-        hp.swa_type = SWA_NONE;
+        hp.swa_type = Swa.None;
         hp.n_no_rope_layer_step = hp.n_layer;
     }
     get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
     var gating: u32 = 0;
     get_u32(m, "expert_gating_func", gating, false);
-    hp.expert_gating_func = gating;
+    hp.expert_gating_func = gating_of(gating);
     guard hp.n_expert > 0 && hp.n_expert_used > 0 else { abort("n_expert and n_expert_used must be > 0 for SMALLTHINKER"); }
     hp.rope_type = ggml::ROPE_TYPE_NEOX;
 }
@@ -1041,7 +984,7 @@ fn load_hparams_layernorm(m: Model&) {
 fn load_hparams_phi3(m: Model&) {
     get_f32(m, "attention.layer_norm_rms_epsilon", m.hp.f_norm_rms_eps);
     m.hp.n_swa = 0;
-    m.hp.swa_type = SWA_NONE;
+    m.hp.swa_type = Swa.None;
     m.hp.rope_type = ggml::ROPE_TYPE_NEOX;
 }
 
@@ -1085,11 +1028,11 @@ fn load_hparams_plamo3(m: Model&) {
     let hp .= m.hp;
     get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
     if get_u32(m, "attention.sliding_window", hp.n_swa, false) && hp.n_swa > 0 {
-        hp.swa_type = SWA_STANDARD;
+        hp.swa_type = Swa.Standard;
         get_f32(m, "rope.freq_base_swa", hp.rope_freq_base_train_swa, false);
         load_swa_pattern(m, 8);
     } else {
-        hp.swa_type = SWA_NONE;
+        hp.swa_type = Swa.None;
     }
     hp.rope_type = ggml::ROPE_TYPE_NEOX;
 }
@@ -1097,7 +1040,7 @@ fn load_hparams_plamo3(m: Model&) {
 // models/cohere2.cpp: sliding windows; only their layers have rope
 fn load_hparams_cohere2(m: Model&) {
     let hp .= m.hp;
-    hp.swa_type = SWA_STANDARD;
+    hp.swa_type = Swa.Standard;
     load_swa_pattern(m, 4);
     hp.rope_freq_base_train_swa = hp.rope_freq_base_train;
     hp.rope_freq_scale_train_swa = hp.rope_freq_scale_train;
@@ -1131,7 +1074,7 @@ fn load_hparams_limite(m: Model&) {
         gguf::get_arr_f32(m.meta, idc, vals);
         for i in n { hp.final_logit_sigmoid_capping[i] = vals[i]; }
     }
-    hp.swa_type = SWA_STANDARD;
+    hp.swa_type = Swa.Standard;
     get_u32(m, "attention.sliding_window", hp.n_swa);
     load_swa_pattern(m, 4);
     get_u32(m, "mudd.tap_count", hp.n_mudd_taps, false);
@@ -1169,7 +1112,7 @@ fn load_hparams_spark2_5(m: Model&) {
     let hp .= m.hp;
     get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
     get_u32(m, "attention.sliding_window", hp.n_swa);
-    hp.swa_type = SWA_STANDARD;
+    hp.swa_type = Swa.Standard;
     let k = akey(m, "attention.sliding_window_pattern");
     let id = gguf::find_key(m.meta, k);
     guard id >= 0 && gguf::get_kv_type(m.meta, id) == gguf::ARRAY else { abort(str("key not found in model: ", k)); }
@@ -1213,7 +1156,7 @@ fn load_hparams_glm4(m: Model&) {
 // models/gemma2.cpp
 fn load_hparams_gemma2(m: Model&) {
     let hp .= m.hp;
-    hp.swa_type = SWA_STANDARD;
+    hp.swa_type = Swa.Standard;
     hp.n_swa = 4096;      // gemma 2's default
     load_swa_pattern(m, 2);
     hp.attn_soft_cap = true;
@@ -1235,11 +1178,11 @@ fn load_hparams_gemma2(m: Model&) {
 fn load_hparams_gemma3(m: Model&) {
     let found_swa = get_u32(m, "attention.sliding_window", m.hp.n_swa, false);
     if found_swa && m.hp.n_swa > 0 {
-        m.hp.swa_type = SWA_STANDARD;
+        m.hp.swa_type = Swa.Standard;
         load_swa_pattern(m, 6);
         get_f32(m, "rope.freq_base_swa", m.hp.rope_freq_base_train_swa, false);
     } else {
-        m.hp.swa_type = SWA_NONE;
+        m.hp.swa_type = Swa.None;
     }
     m.hp.f_final_logit_softcapping = 0.0;
     get_f32(m, "final_logit_softcapping", m.hp.f_final_logit_softcapping, false);
@@ -1280,12 +1223,12 @@ fn load_rope_sections(m: Model&) {
 // qwen2vl does not read the norm's epsilon (it stays 0, as in llama.cpp).
 fn load_hparams_qwenvl(m: Model&) {
     let hp .= m.hp;
-    if hp.arch == ARCH_QWEN3VL {
+    if hp.arch == Arch.Qwen3vl {
         get_u32(m, "n_deepstack_layers", hp.n_deepstack_layers, false);
         get_f32(m, "attention.layer_norm_rms_epsilon", hp.f_norm_rms_eps);
     }
     load_rope_sections(m);
-    hp.rope_type = if hp.arch == ARCH_QWEN2VL { ggml::ROPE_TYPE_MROPE } else { ggml::ROPE_TYPE_IMROPE };
+    hp.rope_type = if hp.arch == Arch.Qwen2vl { ggml::ROPE_TYPE_MROPE } else { ggml::ROPE_TYPE_IMROPE };
 }
 
 // models/qwen35.cpp: every full_attention_interval-th layer attends, the
@@ -1316,7 +1259,7 @@ fn load_hparams_lfm2(m: Model&) {
     var n_decision: u32 = 0;
     if get_u32(m, "decision.block_count", n_decision, false) && n_decision > 0 { abort("lfm2 decision heads: not ported yet"); }
     if get_u32(m, "attention.sliding_window", m.hp.n_swa, false) && m.hp.n_swa > 0 {
-        m.hp.swa_type = SWA_STANDARD;
+        m.hp.swa_type = Swa.Standard;
         for il in m.hp.n_layer as i64 { m.hp.is_swa[il] = !m.hp.is_recr[il]; }
     }
     m.hp.rope_type = ggml::ROPE_TYPE_NEOX;
@@ -1332,7 +1275,7 @@ fn load_hparams_lfm3(m: Model&) {
     var any = false;
     for s in m.hp.is_swa { if s { any = true; } }
     guard any else { abort("LFM3 requires sliding window attention layers"); }
-    m.hp.swa_type = SWA_STANDARD;
+    m.hp.swa_type = Swa.Standard;
     get_u32(m, "attention.sliding_window", m.hp.n_swa);
     get_f32(m, "rope.freq_base_swa", m.hp.rope_freq_base_train_swa);
     var causal = true;
@@ -1396,7 +1339,7 @@ fn load_tensors_llama(m: Model&) {
         var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
         load_qkv(m, il, ly);
         ly.wo = layer_tensor(m, il, "attn_output");
-        if m.hp.arch != ARCH_ERNIE4_5 { ly.bo = layer_bias(m, il, "attn_output"); }   // ernie4_5's graph does not add it
+        if m.hp.arch != Arch.Ernie4_5 { ly.bo = layer_bias(m, il, "attn_output"); }   // ernie4_5's graph does not add it
         ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
         ly.rope_freqs = rope_freqs;
         if tensor(m, str("blk.", il, ".ffn_gate_inp.weight"), false).p != 0 { abort("llama with experts (MoE): not ported yet"); }
@@ -1416,14 +1359,14 @@ fn load_tensors_qwen(m: Model&) {
     m.tok_embd = tensor(m, "token_embd.weight");
     m.output_norm = tensor(m, "output_norm.weight");
     m.output = tensor(m, "output.weight", false);
-    if m.hp.arch == ARCH_QWEN2 || m.hp.arch == ARCH_QWEN2VL { m.output_b = tensor(m, "output.bias", false); }
-    if m.hp.arch == ARCH_QWEN3VL && tensor(m, "cls_out.weight", false).p != 0 { abort("qwen3vl classifier: not ported yet"); }
+    if m.hp.arch == Arch.Qwen2 || m.hp.arch == Arch.Qwen2vl { m.output_b = tensor(m, "output.bias", false); }
+    if m.hp.arch == Arch.Qwen3vl && tensor(m, "cls_out.weight", false).p != 0 { abort("qwen3vl classifier: not ported yet"); }
     if m.output.p == 0 { m.output = m.tok_embd; }
     for il in m.hp.n_layer as i64 {
         var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
         load_qkv(m, il, ly);
         ly.wo = layer_tensor(m, il, "attn_output");
-        if m.hp.arch == ARCH_QWEN3 || m.hp.arch == ARCH_QWEN3VL {
+        if m.hp.arch == Arch.Qwen3 || m.hp.arch == Arch.Qwen3vl {
             ly.attn_k_norm = layer_tensor(m, il, "attn_k_norm");
             ly.attn_q_norm = layer_tensor(m, il, "attn_q_norm");
         }
@@ -1542,7 +1485,7 @@ fn load_tensors_smollm3_granite(m: Model&) {
     m.output_norm = tensor(m, "output_norm.weight");
     m.output = tensor(m, "output.weight", false);
     if m.output.p == 0 { m.output = m.tok_embd; }
-    let granite = m.hp.arch == ARCH_GRANITE || m.hp.arch == ARCH_GRANITE_MOE || m.hp.arch == ARCH_MINICPM;
+    let granite = m.hp.arch == Arch.Granite || m.hp.arch == Arch.GraniteMoe || m.hp.arch == Arch.Minicpm;
     var rope_freqs = ggml::NONE;
     var rope_long = ggml::NONE;
     var rope_short = ggml::NONE;
@@ -1613,7 +1556,7 @@ fn load_tensors_arcee(m: Model&) {
 fn load_tensors_post_norm(m: Model&) {
     m.tok_embd = tensor(m, "token_embd.weight");
     m.output_norm = tensor(m, "output_norm.weight");
-    let olmo2 = m.hp.arch == ARCH_OLMO2;
+    let olmo2 = m.hp.arch == Arch.Olmo2;
     m.output = tensor(m, "output.weight", olmo2);
     if m.output.p == 0 { m.output = m.tok_embd; }
     let rope_freqs = if olmo2 { ggml::NONE } else { tensor(m, "rope_freqs.weight", false) };
@@ -1658,38 +1601,38 @@ fn load_tensors_hunyuan_dense(m: Model&) {
 fn load_tensors_classic(m: Model&) {
     let arch = m.hp.arch;
     m.tok_embd = tensor(m, "token_embd.weight");
-    if arch == ARCH_GPT2 || arch == ARCH_STARCODER || arch == ARCH_MPT { m.pos_embd = tensor(m, "position_embd.weight", arch != ARCH_MPT); }
-    if arch == ARCH_BLOOM {
+    if arch == Arch.Gpt2 || arch == Arch.Starcoder || arch == Arch.Mpt { m.pos_embd = tensor(m, "position_embd.weight", arch != Arch.Mpt); }
+    if arch == Arch.Bloom {
         m.tok_norm = tensor(m, "token_embd_norm.weight");
         m.tok_norm_b = tensor(m, "token_embd_norm.bias");
     }
     m.output_norm = tensor(m, "output_norm.weight");
-    m.output_norm_b = tensor(m, "output_norm.bias", arch != ARCH_MPT);
-    m.output = tensor(m, "output.weight", arch == ARCH_GPTNEOX || arch == ARCH_JAIS || arch == ARCH_NEMOTRON);
+    m.output_norm_b = tensor(m, "output_norm.bias", arch != Arch.Mpt);
+    m.output = tensor(m, "output.weight", arch == Arch.Gptneox || arch == Arch.Jais || arch == Arch.Nemotron);
     if m.output.p == 0 { m.output = m.tok_embd; }
     for il in m.hp.n_layer as i64 {
         var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
-        let opt = arch == ARCH_MPT || arch == ARCH_NEMOTRON;     // their biases may be missing
-        ly.attn_norm_b = layer_tensor(m, il, "attn_norm", arch != ARCH_MPT, "bias");
-        if arch == ARCH_STARCODER2 || arch == ARCH_NEMOTRON {
+        let opt = arch == Arch.Mpt || arch == Arch.Nemotron;     // their biases may be missing
+        ly.attn_norm_b = layer_tensor(m, il, "attn_norm", arch != Arch.Mpt, "bias");
+        if arch == Arch.Starcoder2 || arch == Arch.Nemotron {
             load_qkv(m, il, ly);
         } else {
             ly.wqkv = layer_tensor(m, il, "attn_qkv");
-            ly.bqkv = layer_tensor(m, il, "attn_qkv", arch != ARCH_MPT, "bias");
+            ly.bqkv = layer_tensor(m, il, "attn_qkv", arch != Arch.Mpt, "bias");
         }
         ly.wo = layer_tensor(m, il, "attn_output");
         ly.bo = layer_tensor(m, il, "attn_output", !opt, "bias");
         ly.ffn_norm = layer_tensor(m, il, "ffn_norm");
-        ly.ffn_norm_b = layer_tensor(m, il, "ffn_norm", arch != ARCH_MPT, "bias");
+        ly.ffn_norm_b = layer_tensor(m, il, "ffn_norm", arch != Arch.Mpt, "bias");
         ly.ffn_down = layer_tensor(m, il, "ffn_down");
         ly.ffn_down_b = layer_tensor(m, il, "ffn_down", !opt, "bias");
         ly.ffn_up = layer_tensor(m, il, "ffn_up");
         ly.ffn_up_b = layer_tensor(m, il, "ffn_up", !opt, "bias");
-        if arch == ARCH_JAIS {
+        if arch == Arch.Jais {
             ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
             ly.ffn_gate_b = layer_tensor(m, il, "ffn_gate", true, "bias");
         }
-        if arch == ARCH_MPT {
+        if arch == Arch.Mpt {
             ly.attn_q_norm = layer_tensor(m, il, "attn_q_norm", false);
             ly.attn_q_norm_b = layer_bias(m, il, "attn_q_norm");
             ly.attn_k_norm = layer_tensor(m, il, "attn_k_norm", false);
@@ -1868,7 +1811,7 @@ fn load_mamba_layer(m: Model&, il: i64, ly: Layer&, mamba2: bool) {
     ly.ssm_d = tensor(m, str("blk.", il, ".ssm_d"));
     ly.ssm_out = layer_tensor(m, il, "ssm_out");
     if mamba2 {
-        ly.ssm_norm = layer_tensor(m, il, "ssm_norm", m.hp.arch == ARCH_MAMBA2);
+        ly.ssm_norm = layer_tensor(m, il, "ssm_norm", m.hp.arch == Arch.Mamba2);
     } else {
         ly.ssm_x = layer_tensor(m, il, "ssm_x");
         ly.ssm_dt = layer_tensor(m, il, "ssm_dt");
@@ -1889,24 +1832,24 @@ fn load_tensors_hybrid(m: Model&) {
     for il in m.hp.n_layer as i64 {
         var ly = Layer { attn_norm: layer_tensor(m, il, "attn_norm"), .. };
         if m.hp.is_recr[il] {
-            load_mamba_layer(m, il, ly, arch != ARCH_JAMBA);
-            if arch != ARCH_JAMBA { ly.ssm_conv1d_b = layer_bias(m, il, "ssm_conv1d"); }   // optional there
+            load_mamba_layer(m, il, ly, arch != Arch.Jamba);
+            if arch != Arch.Jamba { ly.ssm_conv1d_b = layer_bias(m, il, "ssm_conv1d"); }   // optional there
         }
         if has_kv(m.hp, il) {
             load_qkv(m, il, ly);
             ly.wo = layer_tensor(m, il, "attn_output");
-            if arch == ARCH_GRANITE_HYBRID { ly.bo = layer_bias(m, il, "attn_output"); }
+            if arch == Arch.GraniteHybrid { ly.bo = layer_bias(m, il, "attn_output"); }
         }
         // falcon-h1's ffn_norm has no ".weight"
-        ly.ffn_norm = if arch == ARCH_FALCON_H1 { tensor(m, str("blk.", il, ".ffn_norm")) } else { layer_tensor(m, il, "ffn_norm") };
-        if arch != ARCH_JAMBA { ly.rope_freqs = rope_freqs; }
+        ly.ffn_norm = if arch == Arch.FalconH1 { tensor(m, str("blk.", il, ".ffn_norm")) } else { layer_tensor(m, il, "ffn_norm") };
+        if arch != Arch.Jamba { ly.rope_freqs = rope_freqs; }
         ly.ffn_gate_inp = layer_tensor(m, il, "ffn_gate_inp", false);
-        if ly.ffn_gate_inp.p != 0 || (arch == ARCH_GRANITE_HYBRID && m.hp.n_expert > 0) {
+        if ly.ffn_gate_inp.p != 0 || (arch == Arch.GraniteHybrid && m.hp.n_expert > 0) {
             ly.ffn_gate_inp = layer_tensor(m, il, "ffn_gate_inp");
-            ly.ffn_gate_exps = layer_tensor(m, il, "ffn_gate_exps", arch == ARCH_JAMBA);
+            ly.ffn_gate_exps = layer_tensor(m, il, "ffn_gate_exps", arch == Arch.Jamba);
             ly.ffn_down_exps = layer_tensor(m, il, "ffn_down_exps");
             ly.ffn_up_exps = layer_tensor(m, il, "ffn_up_exps");
-            if arch == ARCH_GRANITE_HYBRID && m.hp.n_ff_shexp > 0 {
+            if arch == Arch.GraniteHybrid && m.hp.n_ff_shexp > 0 {
                 ly.ffn_gate_shexp = layer_tensor(m, il, "ffn_gate_shexp");
                 ly.ffn_up_shexp = layer_tensor(m, il, "ffn_up_shexp");
                 ly.ffn_down_shexp = layer_tensor(m, il, "ffn_down_shexp");
@@ -1915,7 +1858,7 @@ fn load_tensors_hybrid(m: Model&) {
             ly.ffn_gate = layer_tensor(m, il, "ffn_gate");
             ly.ffn_down = layer_tensor(m, il, "ffn_down");
             ly.ffn_up = layer_tensor(m, il, "ffn_up");
-            if arch != ARCH_JAMBA {
+            if arch != Arch.Jamba {
                 ly.ffn_gate_b = layer_bias(m, il, "ffn_gate");
                 ly.ffn_down_b = layer_bias(m, il, "ffn_down");
                 ly.ffn_up_b = layer_bias(m, il, "ffn_up");
@@ -2352,7 +2295,7 @@ fn load_tensors_t5(m: Model&) {
 
 // models/rwkv6.cpp, models/rwkv7.cpp
 fn load_tensors_rwkv(m: Model&) {
-    let rwkv7 = m.hp.arch == ARCH_RWKV7;
+    let rwkv7 = m.hp.arch == Arch.Rwkv7;
     m.tok_embd = tensor(m, "token_embd.weight");
     m.tok_norm = tensor(m, "token_embd_norm.weight");
     m.tok_norm_b = tensor(m, "token_embd_norm.bias");
@@ -2414,7 +2357,7 @@ fn load_tensors_rwkv(m: Model&) {
 
 // models/mamba.cpp, models/mamba2.cpp
 fn load_tensors_mamba(m: Model&) {
-    let mamba2 = m.hp.arch == ARCH_MAMBA2;
+    let mamba2 = m.hp.arch == Arch.Mamba2;
     if !mamba2 && 2 * m.hp.n_embd != m.hp.ssm_d_inner { abort("only an expansion factor of 2 is supported for now"); }
     m.tok_embd = tensor(m, "token_embd.weight");
     m.output_norm = tensor(m, "output_norm.weight");
@@ -2574,58 +2517,58 @@ fn load(m: Model&, path: const u8[:]) {
     var arch: u8[>..] = [];
     guard vocab::get_str(m.meta, "general.architecture", arch) else { abort("key not found in model: general.architecture"); }
     m.hp.arch = arch_from_name(arch);
-    guard m.hp.arch != ARCH_UNKNOWN else { abort(str("unknown model architecture: '", arch, "'")); }
+    guard m.hp.arch != Arch.Unknown else { abort(str("unknown model architecture: '", arch, "'")); }
 
     load_hparams(m);
     vocab::load(m.meta);
 
     match m.hp.arch {
-        ARCH_GEMMA3 => load_tensors_gemma3(m),
-        ARCH_LLAMA => load_tensors_llama(m),
-        ARCH_LFM2 => load_tensors_lfm2(m),
-        ARCH_LFM3 => load_tensors_lfm3(m),
-        ARCH_QWEN2, ARCH_QWEN3 => load_tensors_qwen(m),
-        ARCH_QWEN35 => load_tensors_qwen35(m),
-        ARCH_GEMMA2 => load_tensors_gemma2(m),
-        ARCH_PHI2 => load_tensors_phi2(m),
-        ARCH_PHI3 => load_tensors_phi3(m),
-        ARCH_STABLELM => load_tensors_stablelm(m),
-        ARCH_SMOLLM3, ARCH_GRANITE, ARCH_GRANITE_MOE, ARCH_MINICPM => load_tensors_smollm3_granite(m),
-        ARCH_SMALLTHINKER => load_tensors_smallthinker(m),
-        ARCH_GEMMA => load_tensors_gemma(m),
-        ARCH_OLMO => load_tensors_olmo(m),
-        ARCH_QWEN => load_tensors_qwen(m),
-        ARCH_REFACT => load_tensors_refact(m),
-        ARCH_MPT, ARCH_JAIS, ARCH_NEMOTRON => load_tensors_classic(m),
-        ARCH_MAINCODER => load_tensors_hunyuan_dense(m),
-        ARCH_NANBEIGE => load_tensors_nanbeige(m),
-        ARCH_BITNET => load_tensors_bitnet(m),
-        ARCH_CHATGLM => load_tensors_chatglm(m),
-        ARCH_MAMBA, ARCH_MAMBA2 => load_tensors_mamba(m),
-        ARCH_FALCON_H1, ARCH_GRANITE_HYBRID, ARCH_JAMBA => load_tensors_hybrid(m),
-        ARCH_PLAMO2 => load_tensors_plamo2(m),
-        ARCH_RWKV6, ARCH_RWKV7 => load_tensors_rwkv(m),
-        ARCH_MINICPM3 => load_tensors_minicpm3(m),
-        ARCH_QWEN2VL, ARCH_QWEN3VL => load_tensors_qwen(m),
-        ARCH_NEMOTRON_H => load_tensors_nemotron_h(m),
-        ARCH_AFMOE => load_tensors_afmoe(m),
-        ARCH_GEMMA3N => load_tensors_gemma3n(m),
-        ARCH_GEMMA4 => load_tensors_gemma4(m),
-        ARCH_T5 => load_tensors_t5(m),
-        ARCH_PLAMO3 => load_tensors_plamo3(m),
-        ARCH_COHERE2 => load_tensors_cohere2(m),
-        ARCH_PANGU_EMBED => load_tensors_pangu_embed(m),
-        ARCH_LIMITE => load_tensors_limite(m),
-        ARCH_HRM_TEXT => load_tensors_hrm_text(m),
-        ARCH_SPARK2_5 => load_tensors_spark2_5(m),
-        ARCH_K2_HORIZON => load_tensors_k2_horizon(m),
-        ARCH_GLM4 => load_tensors_glm4(m),
-        ARCH_INTERNLM2, ARCH_EXAONE, ARCH_ERNIE4_5, ARCH_MISTRAL3 => load_tensors_llama(m),
-        ARCH_ARCEE => load_tensors_arcee(m),
-        ARCH_OLMO2, ARCH_EXAONE4 => load_tensors_post_norm(m),
-        ARCH_HUNYUAN_DENSE => load_tensors_hunyuan_dense(m),
-        ARCH_GPT2, ARCH_STARCODER, ARCH_GPTNEOX, ARCH_STARCODER2, ARCH_BLOOM => load_tensors_classic(m),
-        ARCH_OPENELM => load_tensors_openelm(m),
+        Gemma3 => load_tensors_gemma3(m),
+        Llama => load_tensors_llama(m),
+        Lfm2 => load_tensors_lfm2(m),
+        Lfm3 => load_tensors_lfm3(m),
+        Qwen2, Qwen3 => load_tensors_qwen(m),
+        Qwen35 => load_tensors_qwen35(m),
+        Gemma2 => load_tensors_gemma2(m),
+        Phi2 => load_tensors_phi2(m),
+        Phi3 => load_tensors_phi3(m),
+        Stablelm => load_tensors_stablelm(m),
+        Smollm3, Granite, GraniteMoe, Minicpm => load_tensors_smollm3_granite(m),
+        Smallthinker => load_tensors_smallthinker(m),
+        Gemma => load_tensors_gemma(m),
+        Olmo => load_tensors_olmo(m),
+        Qwen => load_tensors_qwen(m),
+        Refact => load_tensors_refact(m),
+        Mpt, Jais, Nemotron => load_tensors_classic(m),
+        Maincoder => load_tensors_hunyuan_dense(m),
+        Nanbeige => load_tensors_nanbeige(m),
+        Bitnet => load_tensors_bitnet(m),
+        Chatglm => load_tensors_chatglm(m),
+        Mamba, Mamba2 => load_tensors_mamba(m),
+        FalconH1, GraniteHybrid, Jamba => load_tensors_hybrid(m),
+        Plamo2 => load_tensors_plamo2(m),
+        Rwkv6, Rwkv7 => load_tensors_rwkv(m),
+        Minicpm3 => load_tensors_minicpm3(m),
+        Qwen2vl, Qwen3vl => load_tensors_qwen(m),
+        NemotronH => load_tensors_nemotron_h(m),
+        Afmoe => load_tensors_afmoe(m),
+        Gemma3n => load_tensors_gemma3n(m),
+        Gemma4 => load_tensors_gemma4(m),
+        T5 => load_tensors_t5(m),
+        Plamo3 => load_tensors_plamo3(m),
+        Cohere2 => load_tensors_cohere2(m),
+        PanguEmbed => load_tensors_pangu_embed(m),
+        Limite => load_tensors_limite(m),
+        HrmText => load_tensors_hrm_text(m),
+        Spark2_5 => load_tensors_spark2_5(m),
+        K2Horizon => load_tensors_k2_horizon(m),
+        Glm4 => load_tensors_glm4(m),
+        Internlm2, Exaone, Ernie4_5, Mistral3 => load_tensors_llama(m),
+        Arcee => load_tensors_arcee(m),
+        Olmo2, Exaone4 => load_tensors_post_norm(m),
+        HunyuanDense => load_tensors_hunyuan_dense(m),
+        Gpt2, Starcoder, Gptneox, Starcoder2, Bloom => load_tensors_classic(m),
+        Openelm => load_tensors_openelm(m),
         _ => abort("unknown architecture"),
     }
 

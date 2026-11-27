@@ -152,7 +152,7 @@ fn main() {
         let n_batch = 2048;
         for k, ci in mtmd::chunks {
             let last = ci == mtmd::chunks.len - 1;
-            if k.kind == mtmd::CHUNK_TEXT {
+            if k.kind == mtmd::ChunkKind.Text {
                 // mtmd_helper_eval_chunk_single: n_batch tokens at a time
                 let toks = mtmd::chunk_text(k);
                 var s = 0;

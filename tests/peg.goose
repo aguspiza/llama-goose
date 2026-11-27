@@ -395,21 +395,21 @@ fn run(root: i64, text: const u8[:], flags: i64) -> peg::Res {
     return r;
 }
 
-fn chars_case(name: const u8[:], classes: const u8[:], text: const u8[:], want: i32) {
+fn chars_case(name: const u8[:], classes: const u8[:], text: const u8[:], want: peg::ResultKind) {
     fresh();
     let r = run(peg::chars(classes, 1, -1), text, 0);
     check(name, r.kind == want);
 }
 
 fn basic_tests() {
-    chars_case("escape_sequence_newline", "[\\n\\t\\\\]", "\n", peg::SUCCESS);
-    chars_case("escape_sequence_tab", "[\\n\\t\\\\]", "\t", peg::SUCCESS);
-    chars_case("escape_sequence_backslash", "[\\n\\t\\\\]", "\\", peg::SUCCESS);
-    chars_case("escape_sequence_space_fail", "[\\n\\t\\\\]", " ", peg::FAIL);
-    chars_case("escaped_dash_a", "[a\\-z]", "a", peg::SUCCESS);
-    chars_case("escaped_dash_literal", "[a\\-z]", "-", peg::SUCCESS);
-    chars_case("escaped_dash_z", "[a\\-z]", "z", peg::SUCCESS);
-    chars_case("escaped_dash_b_fail", "[a\\-z]", "b", peg::FAIL);
+    chars_case("escape_sequence_newline", "[\\n\\t\\\\]", "\n", peg::ResultKind.Success);
+    chars_case("escape_sequence_tab", "[\\n\\t\\\\]", "\t", peg::ResultKind.Success);
+    chars_case("escape_sequence_backslash", "[\\n\\t\\\\]", "\\", peg::ResultKind.Success);
+    chars_case("escape_sequence_space_fail", "[\\n\\t\\\\]", " ", peg::ResultKind.Fail);
+    chars_case("escaped_dash_a", "[a\\-z]", "a", peg::ResultKind.Success);
+    chars_case("escaped_dash_literal", "[a\\-z]", "-", peg::ResultKind.Success);
+    chars_case("escaped_dash_z", "[a\\-z]", "z", peg::ResultKind.Success);
+    chars_case("escaped_dash_b_fail", "[a\\-z]", "b", peg::ResultKind.Fail);
 
     fn hello_world() -> i64 {
         let a = peg::literal("hello");
@@ -418,30 +418,30 @@ fn basic_tests() {
     }
     fresh();
     var r = run(hello_world(), "hello world", 0);
-    check("optional_present", r.kind == peg::SUCCESS && r.end == 11);
+    check("optional_present", r.kind == peg::ResultKind.Success && r.end == 11);
     fresh();
     r = run(hello_world(), "hello", 0);
-    check("optional_absent", r.kind == peg::SUCCESS && r.end == 5);
+    check("optional_absent", r.kind == peg::ResultKind.Success && r.end == 5);
     fresh();
     r = run(hello_world(), "hello ", peg::FLAG_LENIENT);
-    check("partial_match_need_more", r.kind == peg::NEED_MORE_INPUT);
+    check("partial_match_need_more", r.kind == peg::ResultKind.NeedMoreInput);
 
     // JSON
     fresh();
     r = run(peg::json(), "{\"name\": \"test\", \"value\": 42, \"flag\": true}", 0);
-    check("json object", r.kind == peg::SUCCESS && r.end == 43);
+    check("json object", r.kind == peg::ResultKind.Success && r.end == 43);
     fresh();
     r = run(peg::json(), "[1, 2.5e3, \"x\\u0041\", null, [false]]", 0);
-    check("json array", r.kind == peg::SUCCESS && r.end == 36);
+    check("json array", r.kind == peg::ResultKind.Success && r.end == 36);
     fresh();
     r = run(peg::json(), "{\"name\": \"te", peg::FLAG_LENIENT);
-    check("json partial", r.kind == peg::NEED_MORE_INPUT);
+    check("json partial", r.kind == peg::ResultKind.NeedMoreInput);
     fresh();
     r = run(peg::json(), "{\"name\" \"x\"}", 0);
-    check("json invalid", r.kind == peg::FAIL);
+    check("json invalid", r.kind == peg::ResultKind.Fail);
     fresh();
     r = run(peg::json(), "3", peg::FLAG_LENIENT);
-    check("json number not committed at end", r.kind == peg::NEED_MORE_INPUT);
+    check("json number not committed at end", r.kind == peg::ResultKind.NeedMoreInput);
 
     // until and tags
     fresh();
@@ -452,7 +452,7 @@ fn basic_tests() {
         let rest = peg::tag("content", peg::rest());
         let p = peg::seq([open, body, close, rest]);
         r = run(p, "<think>hmm</think>answer", 0);
-        var ok = r.kind == peg::SUCCESS && peg::result_nodes.len == 2;
+        var ok = r.kind == peg::ResultKind.Success && peg::result_nodes.len == 2;
         if ok {
             ok = peg::node_tag(peg::result_nodes[0]) == "reasoning" && peg::node_text(peg::result_nodes[0]) == "hmm"
                 && peg::node_tag(peg::result_nodes[1]) == "content" && peg::node_text(peg::result_nodes[1]) == "answer";
@@ -463,7 +463,7 @@ fn basic_tests() {
         let body2 = peg::tag("reasoning", peg::until("</think>"));
         let p2 = peg::seq([open2, body2]);
         r = run(p2, "<think>hmm</thi", peg::FLAG_LENIENT);
-        ok = r.kind == peg::SUCCESS && peg::result_nodes.len == 1 && peg::node_text(peg::result_nodes[0]) == "hmm";
+        ok = r.kind == peg::ResultKind.Success && peg::result_nodes.len == 1 && peg::node_text(peg::result_nodes[0]) == "hmm";
         check("until stops before a partial delimiter", ok);
     }
     // invalid UTF-8 in until
@@ -473,12 +473,12 @@ fn basic_tests() {
         r = run(p, "a\xFFb|", 0);
         var san: u8[>..] = [];
         if peg::result_nodes.len == 1 { peg::sanitized_text(peg::result_nodes[0], san); }
-        check("invalid utf-8 sanitized", r.kind == peg::SUCCESS && r.end == 3 && san == "a\xEF\xBF\xBDb");
+        check("invalid utf-8 sanitized", r.kind == peg::ResultKind.Success && r.end == 3 && san == "a\xEF\xBF\xBDb");
     }
     // python dicts
     fresh();
     r = run(peg::python_value(), "{'a': True, \"b\": [1, None]}", 0);
-    check("python dict", r.kind == peg::SUCCESS && r.end == 27);
+    check("python dict", r.kind == peg::ResultKind.Success && r.end == 27);
 }
 
 fn main() {

@@ -30,7 +30,7 @@ var out: u8[>..] = [];
 // Sets the members of the JSON object json as variables (global_from_json).
 fn set_json(c: jinja::Ctx, json: const u8[:], mark_input: bool) {
     let v = jinja::from_json(json, mark_input);
-    if jinja::kind(v) != jinja::K_OBJECT { jinja::fail_plain("global_from_json: input JSON value must be an object"); }
+    if jinja::kind(v) != jinja::ValKind.Object { jinja::fail_plain("global_from_json: input JSON value must be an object"); }
     for k in jinja::obj_len(v) { jinja::obj_set(c.env, jinja::obj_key(v, k), jinja::obj_value(v, k)); }
 }
 

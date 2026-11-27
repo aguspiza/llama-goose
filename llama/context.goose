@@ -69,7 +69,7 @@ fn make_cache(c: Context&, m: model::Model&, n_ctx: i64) {
     // llama_kv_cache_iswa: the sliding-window layers keep their own cache, of the
     // cells their windows need, plus a ubatch's, padded to 256
     c.n_swa_cells = 0;
-    if m.hp.swa_type != model::SWA_NONE && m.hp.arch != model::ARCH_T5 {
+    if m.hp.swa_type != model::Swa.None && m.hp.arch != model::Arch.T5 {
         let n_seq = if c.unified { c.n_seq_max } else { 1 };
         c.n_swa_cells = pad_to(min(c.n_ctx_seq, m.hp.n_swa * n_seq + c.n_ubatch), 256);
     }
@@ -146,10 +146,10 @@ fn projected_bytes(like: Context&, m: model::Model&, n_ctx: i64) -> i64 {
     let dummy = ggml::dummy_alloc(t.kv_ctx, kv_bytes);
     t.galloc = ggml::gallocr_new(m.backend);
     let n_seqs = t.n_seq_max;
-    let use_rows = t.unified && m.hp.arch != model::ARCH_T5;
+    let use_rows = t.unified && m.hp.arch != model::Arch.T5;
     var compute = 0;
     for tg in 2 {
-        guard m.hp.arch != model::ARCH_T5 else { break; }
+        guard m.hp.arch != model::Arch.T5 else { break; }
         let n_tokens = pad_to(if tg == 0 { min(t.n_ctx, t.n_ubatch) } else { n_seqs }, n_seqs);
         let n_outputs = if t.n_outputs_max > 0 { min(n_tokens, t.n_outputs_max) } else { n_tokens };
         // a slice for each sequence: of the rows, or a stream each
@@ -362,15 +362,13 @@ fn build_qkv_2d(b: Build&, m: model::Model&, ly: model::Layer, cur: ggml::Tensor
            add_bias(b, ggml::mul_mat(ctx, ly.wv, cur), ly.bv);
 }
 
-let FFN_SILU = 0;
-let FFN_GELU = 1;
-let FFN_RELU = 2;
+enum Ffn { Silu, Gelu, Relu }
 
 // A mixture of experts: the router picks n_expert_used experts per token and
 // weighs their outputs (build_moe_ffn). probs_in: the router's logits, when
 // they come from elsewhere (smallthinker).
-fn build_moe_ffn(b: Build&, m: model::Model&, ly: model::Layer, cur: ggml::Tensor, op: i32, norm_w: bool,
-                 w_scale: f32, gating: i64, probs_in: ggml::Tensor = ggml::NONE) -> ggml::Tensor {
+fn build_moe_ffn(b: Build&, m: model::Model&, ly: model::Layer, cur: ggml::Tensor, op: Ffn, norm_w: bool,
+                 w_scale: f32, gating: model::Gating, probs_in: ggml::Tensor = ggml::NONE) -> ggml::Tensor {
     let hp .= m.hp;
     let ctx = b.ctx;
     let n_embd = ggml::ne(cur, 0);
@@ -380,9 +378,9 @@ fn build_moe_ffn(b: Build&, m: model::Model&, ly: model::Layer, cur: ggml::Tenso
 
     let logits = if probs_in.p != 0 { probs_in } else { ggml::mul_mat(ctx, ly.ffn_gate_inp, cur) };   // [n_expert, n_tokens]
     var probs = match gating {
-        model::GATING_SOFTMAX => ggml::soft_max(ctx, logits),
-        model::GATING_SIGMOID => ggml::sigmoid(ctx, logits),
-        model::GATING_SOFTMAX_WEIGHT => logits,
+        Softmax => ggml::soft_max(ctx, logits),
+        Sigmoid => ggml::sigmoid(ctx, logits),
+        SoftmaxWeight => logits,
         _ => { abort(str("expert gating function ", gating, ": not ported yet")); },
     };
     // a bias of the choice only: the weights come from the unbiased probabilities
@@ -390,7 +388,7 @@ fn build_moe_ffn(b: Build&, m: model::Model&, ly: model::Layer, cur: ggml::Tenso
     let selected = ggml::argsort_top_k(ctx, selection_probs, n_expert_used as i32);     // [n_expert_used, n_tokens]
     probs = ggml::reshape_3d(ctx, probs, 1, n_expert, n_tokens);
     var weights = ggml::get_rows(ctx, probs, selected);                         // [1, n_expert_used, n_tokens]
-    if gating == model::GATING_SOFTMAX_WEIGHT {
+    if gating == model::Gating.SoftmaxWeight {
         weights = ggml::reshape_2d(ctx, weights, n_expert_used, n_tokens);
         weights = ggml::soft_max(ctx, weights);
         weights = ggml::reshape_3d(ctx, weights, 1, n_expert_used, n_tokens);
@@ -410,10 +408,9 @@ fn build_moe_ffn(b: Build&, m: model::Model&, ly: model::Layer, cur: ggml::Tenso
     let has_gate = ly.ffn_gate_exps.p != 0;
     var h = if has_gate { ggml::mul_mat_id(ctx, ly.ffn_gate_exps, x, selected) } else { up };
     h = match op {
-        FFN_SILU => if has_gate { ggml::swiglu_split(ctx, h, up) } else { ggml::silu(ctx, h) },
-        FFN_GELU => if has_gate { ggml::geglu_split(ctx, h, up) } else { ggml::gelu(ctx, h) },
-        FFN_RELU => if has_gate { ggml::reglu_split(ctx, h, up) } else { ggml::relu(ctx, h) },
-        _ => { abort("build_moe_ffn: unknown activation"); },
+        Silu => if has_gate { ggml::swiglu_split(ctx, h, up) } else { ggml::silu(ctx, h) },
+        Gelu => if has_gate { ggml::geglu_split(ctx, h, up) } else { ggml::gelu(ctx, h) },
+        Relu => if has_gate { ggml::reglu_split(ctx, h, up) } else { ggml::relu(ctx, h) },
     };
     var experts = ggml::mul_mat_id(ctx, ly.ffn_down_exps, h, selected);       // [n_embd, n_expert_used, n_tokens]
     experts = ggml::mul(ctx, experts, weights);
@@ -763,7 +760,7 @@ fn inp_embd(b: Build&, m: model::Model&, tok_scale: f32 = 1.0) -> ggml::Tensor {
     let n_embd = hp.n_embd as i64;
     let n_embd_inp = n_embd * (1 + hp.n_deepstack_layers as i64);
     let n_tokens = b.n_tokens;
-    let has_mixed = hp.arch != model::ARCH_LIMITE;      // llm_arch_supports_mixed_batch
+    let has_mixed = hp.arch != model::Arch.Limite;      // llm_arch_supports_mixed_batch
     b.inp.embd = ggml::new_tensor_2d(ctx, ggml::TYPE_F32, n_embd_inp, n_tokens);
     ggml::set_input(b.inp.embd);
     var mixed_tokens = ggml::NONE;
@@ -978,7 +975,7 @@ fn build_smollm3_granite(b: Build&, m: model::Model&, c: Context&) -> ggml::Tens
     let n_embd_head = hp.n_embd_head_v as i64;
     assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
     let n_layer = hp.n_layer as i64;
-    let granite = hp.arch == model::ARCH_GRANITE || hp.arch == model::ARCH_GRANITE_MOE || hp.arch == model::ARCH_MINICPM;
+    let granite = hp.arch == model::Arch.Granite || hp.arch == model::Arch.GraniteMoe || hp.arch == model::Arch.Minicpm;
     let kq_scale: f32 = if hp.f_attention_scale == 0.0 { 1.0 / sqrt(n_embd_head as f32) } else { hp.f_attention_scale };
 
     var inpL = inp_embd(b, m);
@@ -1005,7 +1002,7 @@ fn build_smollm3_granite(b: Build&, m: model::Model&, c: Context&) -> ggml::Tens
         cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
         if ly.ffn_gate_inp.p != 0 {
             // granitemoe, and its shared expert
-            let moe_out = build_moe_ffn(b, m, ly, cur, FFN_SILU, true, hp.expert_weights_scale, model::GATING_SOFTMAX);
+            let moe_out = build_moe_ffn(b, m, ly, cur, Ffn.Silu, true, hp.expert_weights_scale, model::Gating.Softmax);
             cur = if hp.n_ff_shexp > 0 {
                 ggml::add(ctx, moe_out, build_ffn_swiglu(b, model::Layer { ffn_up: ly.ffn_up_shexp, ffn_gate: ly.ffn_gate_shexp,
                                                                            ffn_down: ly.ffn_down_shexp, .. }, cur))
@@ -1030,7 +1027,7 @@ fn build_classic(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let has_rope = hp.rope_type >= 0;
     // jais scales by 1/head, not 1/sqrt(head)
     let head: f32 = n_embd_head;
-    let kq_scale: f32 = if hp.arch == model::ARCH_JAIS { 1.0 / head } else { 1.0 / sqrt(head) };
+    let kq_scale: f32 = if hp.arch == model::Arch.Jais { 1.0 / head } else { 1.0 / sqrt(head) };
 
     var inpL = inp_embd(b, m);
     if m.pos_embd.p != 0 { inpL = ggml::add(ctx, inpL, ggml::get_rows(ctx, m.pos_embd, b.inp.pos)); }
@@ -1069,8 +1066,8 @@ fn build_classic(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         } else {
             let ffn_inp = ggml::add(ctx, cur, inpL);
             cur = build_norm_ln(b, m, ffn_inp, ly.ffn_norm, ly.ffn_norm_b);
-            cur = if hp.arch == model::ARCH_JAIS { build_ffn_swiglu(b, ly, cur) }
-                  else if hp.arch == model::ARCH_NEMOTRON { build_ffn_relu_sqr(b, ly, cur) }
+            cur = if hp.arch == model::Arch.Jais { build_ffn_swiglu(b, ly, cur) }
+                  else if hp.arch == model::Arch.Nemotron { build_ffn_relu_sqr(b, ly, cur) }
                   else { build_ffn_gelu(b, ly, cur) };
             inpL = ggml::add(ctx, cur, ffn_inp);
         }
@@ -1198,7 +1195,7 @@ fn build_olmo_refact(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let ctx = b.ctx;
     let n_embd_head = hp.n_embd_head_v as i64;
     let n_layer = hp.n_layer as i64;
-    let olmo = hp.arch == model::ARCH_OLMO;
+    let olmo = hp.arch == model::Arch.Olmo;
     fn norm(x: ggml::Tensor, w: ggml::Tensor) -> ggml::Tensor { if olmo { build_norm_ln(b, m, x, ggml::NONE, ggml::NONE) } else { build_norm_rms(b, m, x, w) } }
 
     var inpL = inp_embd(b, m);
@@ -1286,7 +1283,7 @@ fn build_smallthinker(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor 
         }
         let ffn_inp = ggml::add(ctx, cur, inpSA);
         cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
-        cur = build_moe_ffn(b, m, ly, cur, FFN_RELU, true, hp.expert_weights_scale, hp.expert_gating_func, probs);
+        cur = build_moe_ffn(b, m, ly, cur, Ffn.Relu, true, hp.expert_weights_scale, hp.expert_gating_func, probs);
         inpL = ggml::add(ctx, cur, ffn_inp);
     }
     let cur = build_norm_rms(b, m, inpL, m.output_norm);
@@ -1334,7 +1331,7 @@ fn build_post_norm(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_embd_head = hp.n_embd_head_v as i64;
     assert(n_embd_head == hp.n_embd_head_k && n_embd_head == hp.n_rot);
     let n_layer = hp.n_layer as i64;
-    let olmo2 = hp.arch == model::ARCH_OLMO2;
+    let olmo2 = hp.arch == model::Arch.Olmo2;
 
     var inpL = inp_embd(b, m);
     for il in n_layer {
@@ -1364,7 +1361,7 @@ fn build_post_norm(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
             q, k, v = build_qkv(b, m, ly, inpL, il);
             q = build_norm_rms(b, m, q, ly.attn_q_norm);
             k = build_norm_rms(b, m, k, ly.attn_k_norm);
-            if hp.is_swa[il] || hp.swa_type == model::SWA_NONE {
+            if hp.is_swa[il] || hp.swa_type == model::Swa.None {
                 let factors = rope_factors(m, c, ly);
                 let freq_base = if hp.is_swa[il] { hp.rope_freq_base_train_swa } else { hp.rope_freq_base_train };
                 let freq_scale = if hp.is_swa[il] { hp.rope_freq_scale_train_swa } else { hp.rope_freq_scale_train };
@@ -1692,7 +1689,7 @@ fn build_hybrid(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         let ly = m.layers[il];
         var inpSA = inpL;
         var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
-        if arch == model::ARCH_FALCON_H1 {
+        if arch == model::Arch.FalconH1 {
             // attention and mamba2, both on the normed input, added
             var q, k, v = build_qkv(b, m, ly, cur, il);
             q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train);
@@ -1712,10 +1709,10 @@ fn build_hybrid(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
             continue;
         }
         if hp.is_recr[il] {
-            cur = if arch == model::ARCH_JAMBA { build_mamba_layer(b, m, c, ly, cur, il) } else { build_mamba2_layer(b, m, c, ly, cur, il) };
+            cur = if arch == model::Arch.Jamba { build_mamba_layer(b, m, c, ly, cur, il) } else { build_mamba2_layer(b, m, c, ly, cur, il) };
         } else {
             var q, k, v = build_qkv(b, m, ly, cur, il);
-            if arch == model::ARCH_GRANITE_HYBRID && hp.rope_finetuned {
+            if arch == model::Arch.GraniteHybrid && hp.rope_finetuned {
                 let factors = rope_factors(m, c, ly);
                 q = rope(b, m, q, hp.rope_freq_base_train, hp.rope_freq_scale_train, factors);
                 k = rope(b, m, k, hp.rope_freq_base_train, hp.rope_freq_scale_train, factors);
@@ -1730,8 +1727,8 @@ fn build_hybrid(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         let ffn_inp = ggml::add(ctx, cur, inpSA);
         cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
         if ly.ffn_gate_inp.p != 0 {
-            let jamba = arch == model::ARCH_JAMBA;
-            let moe_out = build_moe_ffn(b, m, ly, cur, FFN_SILU, !jamba, hp.expert_weights_scale, model::GATING_SOFTMAX);
+            let jamba = arch == model::Arch.Jamba;
+            let moe_out = build_moe_ffn(b, m, ly, cur, Ffn.Silu, !jamba, hp.expert_weights_scale, model::Gating.Softmax);
             cur = if !jamba && hp.n_ff_shexp > 0 {
                 ggml::add(ctx, moe_out, build_ffn_swiglu(b, model::Layer { ffn_up: ly.ffn_up_shexp, ffn_gate: ly.ffn_gate_shexp,
                                                                            ffn_down: ly.ffn_down_shexp, .. }, cur))
@@ -1975,7 +1972,7 @@ fn build_rwkv(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let n_layer = hp.n_layer as i64;
     let n_embd = hp.n_embd as i64;
     let n_tokens = b.n_tokens;
-    let rwkv7 = hp.arch == model::ARCH_RWKV7;
+    let rwkv7 = hp.arch == model::Arch.Rwkv7;
     var v_first = ggml::NONE;
 
     var inpL = inp_embd(b, m);
@@ -2182,7 +2179,7 @@ fn build_plamo3(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     for il in n_layer {
         let ly = m.layers[il];
         var residual = inpL;
-        let swa = hp.swa_type != model::SWA_NONE && hp.is_swa[il];
+        let swa = hp.swa_type != model::Swa.None && hp.is_swa[il];
         let freq_base = if swa { hp.rope_freq_base_train_swa } else { hp.rope_freq_base_train };
         let freq_scale = if swa { hp.rope_freq_scale_train_swa } else { hp.rope_freq_scale_train };
         var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
@@ -2427,7 +2424,7 @@ fn build_spark2_5(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     let ctx = b.ctx;
     let n_layer = hp.n_layer as i64;
     let n_embd_head = hp.n_embd_head_v as i64;
-    assert(n_embd_head == hp.n_embd_head_k && hp.swa_type == model::SWA_STANDARD);
+    assert(n_embd_head == hp.n_embd_head_k && hp.swa_type == model::Swa.Standard);
     let kq_scale = 1.0 / sqrt(n_embd_head as f32);
 
     var inpL = inp_embd(b, m);
@@ -2588,7 +2585,7 @@ fn build_afmoe(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
         let ffn_inp = ggml::add(ctx, cur, inpSA);
         cur = build_norm_rms(b, m, ffn_inp, ly.ffn_norm);
         if il >= hp.n_layer_dense_lead {
-            let moe_out = build_moe_ffn(b, m, ly, cur, FFN_SILU, hp.expert_weights_norm, hp.expert_weights_scale, hp.expert_gating_func);
+            let moe_out = build_moe_ffn(b, m, ly, cur, Ffn.Silu, hp.expert_weights_norm, hp.expert_weights_scale, hp.expert_gating_func);
             cur = if hp.n_expert_shared > 0 {
                 ggml::add(ctx, moe_out, build_ffn_swiglu(b, model::Layer { ffn_up: ly.ffn_up_shexp, ffn_gate: ly.ffn_gate_shexp,
                                                                            ffn_down: ly.ffn_down_shexp, .. }, cur))
@@ -2795,7 +2792,7 @@ fn build_gemma3n(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
 // models/gemma4.cpp (without experts)
 // gemma4: whether the graph prunes the rows before the layers that share a cache.
 fn prune_shared(hp: model::HParams&) -> bool {
-    return hp.arch == model::ARCH_GEMMA4 && hp.n_layer_kv_from_start > 0 && hp.n_layer_kv_from_start < hp.n_layer as i64;
+    return hp.arch == model::Arch.Gemma4 && hp.n_layer_kv_from_start > 0 && hp.n_layer_kv_from_start < hp.n_layer as i64;
 }
 var kept_slice_outputs = 0;     // the shape's n_slice_outputs, for build_gemma4
 
@@ -2985,7 +2982,7 @@ fn build_mamba(b: Build&, m: model::Model&, c: Context&) -> ggml::Tensor {
     for il in n_layer {
         let ly = m.layers[il];
         var cur = build_norm_rms(b, m, inpL, ly.attn_norm);
-        cur = if hp.arch == model::ARCH_MAMBA2 { build_mamba2_layer(b, m, c, ly, cur, il) } else { build_mamba_layer(b, m, c, ly, cur, il) };
+        cur = if hp.arch == model::Arch.Mamba2 { build_mamba2_layer(b, m, c, ly, cur, il) } else { build_mamba_layer(b, m, c, ly, cur, il) };
         if il == n_layer - 1 {
             cur = ggml::get_rows(ctx, cur, b.inp.out_ids);
             inpL = ggml::get_rows(ctx, inpL, b.inp.out_ids);
@@ -3496,12 +3493,12 @@ fn seq_div(c: Context&, s: i64, p0: i64, p1: i64, d: i64) {
 // of each architecture).
 fn has_rope(hp: model::HParams&, il: i64) -> bool {
     let a = hp.arch;
-    if a == model::ARCH_SMOLLM3 { return (il + 1) % hp.n_no_rope_layer_step != 0; }
-    if a == model::ARCH_AFMOE { return hp.n_no_rope_layer_step > 0 && (il + 1) % hp.n_no_rope_layer_step != 0; }
-    if a == model::ARCH_SMALLTHINKER { return hp.n_no_rope_layer_step == hp.n_layer || il % hp.n_no_rope_layer_step != 0; }
-    if a == model::ARCH_COHERE2 { return hp.is_swa[il]; }
-    if a == model::ARCH_EXAONE4 { return hp.n_layer != 64 || hp.is_swa[il]; }
-    if a == model::ARCH_GRANITE || a == model::ARCH_GRANITE_HYBRID { return hp.rope_finetuned; }
+    if a == model::Arch.Smollm3 { return (il + 1) % hp.n_no_rope_layer_step != 0; }
+    if a == model::Arch.Afmoe { return hp.n_no_rope_layer_step > 0 && (il + 1) % hp.n_no_rope_layer_step != 0; }
+    if a == model::Arch.Smallthinker { return hp.n_no_rope_layer_step == hp.n_layer || il % hp.n_no_rope_layer_step != 0; }
+    if a == model::Arch.Cohere2 { return hp.is_swa[il]; }
+    if a == model::Arch.Exaone4 { return hp.n_layer != 64 || hp.is_swa[il]; }
+    if a == model::Arch.Granite || a == model::Arch.GraniteHybrid { return hp.rope_finetuned; }
     return true;
 }
 
@@ -3526,16 +3523,16 @@ fn rope_params(m: model::Model&, c: Context&, il: i64) -> RopeParams {
         k_norm: ggml::NONE,
     };
     let a = hp.arch;
-    if a == model::ARCH_COHERE2 || a == model::ARCH_EXAONE4 || a == model::ARCH_LFM2 || a == model::ARCH_LIMITE {
+    if a == model::Arch.Cohere2 || a == model::Arch.Exaone4 || a == model::Arch.Lfm2 || a == model::Arch.Limite {
         // the sliding-window layers with the global base and scale
         rp.freq_base = hp.rope_freq_base_train;
         rp.freq_scale = hp.rope_freq_scale_train;
-    } else if a == model::ARCH_OLMO2 {
+    } else if a == model::Arch.Olmo2 {
         rp.freq_base = hp.rope_freq_base_train;
         if swa { rp.freq_scale = 1.0; rp.ext_factor = 0.0; rp.attn_factor = 1.0; }   // without YaRN
-    } else if a == model::ARCH_FALCON_H1 || a == model::ARCH_PANGU_EMBED {
+    } else if a == model::Arch.FalconH1 || a == model::Arch.PanguEmbed {
         rp.factors = ggml::NONE;
-    } else if a == model::ARCH_HUNYUAN_DENSE || a == model::ARCH_MAINCODER {
+    } else if a == model::Arch.HunyuanDense || a == model::Arch.Maincoder {
         rp.k_norm = ly.attn_k_norm;
     }
     return rp;
@@ -3843,7 +3840,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
 fn decode_seqs(c: Context&, m: model::Model&, tokens: const i32[:], pos: const i64[:], seqs: const u64[:],
                logits: f32[>..]&, outputs: const i32[:] = [], n_ubatch: i64 = 512) {
     guard tokens.len > 0 else { abort("decode: no tokens"); }
-    if any_recurrent(m) || m.hp.arch == model::ARCH_T5 {
+    if any_recurrent(m) || m.hp.arch == model::Arch.T5 {
         for s in seqs { guard s == 1 else { abort("decode: this model's cache holds one sequence"); } }
     }
     if n_stream > 1 {
@@ -4036,7 +4033,7 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool, measure:
         tracing: tracing,
         traced: [],
     };
-    let has_swa = m.hp.swa_type != model::SWA_NONE;
+    let has_swa = m.hp.swa_type != model::Swa.None;
     if sh.n_rows > 0 {      // unified
         b.inp.rows = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, sh.n_rows, sh.n_slices);
         b.inp.mask = ggml::new_tensor_4d(gctx, ggml::TYPE_F16, sh.n_rows, n_tokens / sh.n_slices, 1, sh.n_slices);
@@ -4069,7 +4066,7 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool, measure:
     ggml::set_input(b.inp.mask);
     if has_swa { ggml::set_input(b.inp.mask_swa); }
     ggml::set_input(b.inp.s_copy);
-    if m.hp.arch == model::ARCH_T5 {
+    if m.hp.arch == model::Arch.T5 {
         guard c.n_enc > 0 else { abort("llama_encode must be called first"); }
         b.inp.pos_bucket = ggml::new_tensor_2d(gctx, ggml::TYPE_I32, b.n_kv, n_tokens);
         b.inp.cross_embd = ggml::new_tensor_2d(gctx, ggml::TYPE_F32, m.hp.n_embd, c.n_enc);
@@ -4084,51 +4081,51 @@ fn build_graph(c: Context&, m: model::Model&, sh: Shape, tracing: bool, measure:
     }
 
     let out = match m.hp.arch {
-        model::ARCH_GEMMA3 => build_gemma3(b, m, c),
-        model::ARCH_LLAMA => build_llama(b, m, c),
-        model::ARCH_LFM2 => build_lfm2(b, m, c),
-        model::ARCH_LFM3 => build_lfm3(b, m, c),
-        model::ARCH_QWEN2, model::ARCH_QWEN3 => build_qwen(b, m, c),
-        model::ARCH_QWEN35 => build_qwen35(b, m, c),
-        model::ARCH_GEMMA2 => build_gemma2(b, m, c),
-        model::ARCH_PHI2 => build_phi2(b, m, c),
-        model::ARCH_PHI3 => build_phi3(b, m, c),
-        model::ARCH_STABLELM => build_stablelm(b, m, c),
-        model::ARCH_SMOLLM3, model::ARCH_GRANITE, model::ARCH_GRANITE_MOE, model::ARCH_MINICPM => build_smollm3_granite(b, m, c),
-        model::ARCH_SMALLTHINKER => build_smallthinker(b, m, c),
-        model::ARCH_GEMMA => build_gemma(b, m, c),
-        model::ARCH_OLMO, model::ARCH_REFACT => build_olmo_refact(b, m, c),
-        model::ARCH_QWEN => build_qwen(b, m, c),
-        model::ARCH_MPT, model::ARCH_JAIS, model::ARCH_NEMOTRON => build_classic(b, m, c),
-        model::ARCH_MAINCODER => build_hunyuan_dense(b, m, c),
-        model::ARCH_NANBEIGE => build_llama(b, m, c),
-        model::ARCH_BITNET => build_bitnet(b, m, c),
-        model::ARCH_CHATGLM => build_chatglm(b, m, c),
-        model::ARCH_MAMBA, model::ARCH_MAMBA2 => build_mamba(b, m, c),
-        model::ARCH_FALCON_H1, model::ARCH_GRANITE_HYBRID, model::ARCH_JAMBA => build_hybrid(b, m, c),
-        model::ARCH_PLAMO2 => build_plamo2(b, m, c),
-        model::ARCH_RWKV6, model::ARCH_RWKV7 => build_rwkv(b, m, c),
-        model::ARCH_MINICPM3 => build_minicpm3(b, m, c),
-        model::ARCH_QWEN2VL, model::ARCH_QWEN3VL => build_qwen(b, m, c),
-        model::ARCH_NEMOTRON_H => build_nemotron_h(b, m, c),
-        model::ARCH_AFMOE => build_afmoe(b, m, c),
-        model::ARCH_GEMMA3N => build_gemma3n(b, m, c),
-        model::ARCH_GEMMA4 => build_gemma4(b, m, c),
-        model::ARCH_T5 => build_t5_dec(b, m, c),
-        model::ARCH_PLAMO3 => build_plamo3(b, m, c),
-        model::ARCH_COHERE2 => build_cohere2(b, m, c),
-        model::ARCH_PANGU_EMBED => build_pangu_embed(b, m, c),
-        model::ARCH_LIMITE => build_limite(b, m, c),
-        model::ARCH_HRM_TEXT => build_hrm_text(b, m, c),
-        model::ARCH_SPARK2_5 => build_spark2_5(b, m, c),
-        model::ARCH_K2_HORIZON => build_k2_horizon(b, m, c),
-        model::ARCH_GLM4 => build_glm4(b, m, c),
-        model::ARCH_INTERNLM2, model::ARCH_EXAONE, model::ARCH_ERNIE4_5, model::ARCH_MISTRAL3 => build_llama(b, m, c),
-        model::ARCH_ARCEE => build_arcee(b, m, c),
-        model::ARCH_OLMO2, model::ARCH_EXAONE4 => build_post_norm(b, m, c),
-        model::ARCH_HUNYUAN_DENSE => build_hunyuan_dense(b, m, c),
-        model::ARCH_GPT2, model::ARCH_STARCODER, model::ARCH_GPTNEOX, model::ARCH_STARCODER2, model::ARCH_BLOOM => build_classic(b, m, c),
-        model::ARCH_OPENELM => build_openelm(b, m, c),
+        Gemma3 => build_gemma3(b, m, c),
+        Llama => build_llama(b, m, c),
+        Lfm2 => build_lfm2(b, m, c),
+        Lfm3 => build_lfm3(b, m, c),
+        Qwen2, Qwen3 => build_qwen(b, m, c),
+        Qwen35 => build_qwen35(b, m, c),
+        Gemma2 => build_gemma2(b, m, c),
+        Phi2 => build_phi2(b, m, c),
+        Phi3 => build_phi3(b, m, c),
+        Stablelm => build_stablelm(b, m, c),
+        Smollm3, Granite, GraniteMoe, Minicpm => build_smollm3_granite(b, m, c),
+        Smallthinker => build_smallthinker(b, m, c),
+        Gemma => build_gemma(b, m, c),
+        Olmo, Refact => build_olmo_refact(b, m, c),
+        Qwen => build_qwen(b, m, c),
+        Mpt, Jais, Nemotron => build_classic(b, m, c),
+        Maincoder => build_hunyuan_dense(b, m, c),
+        Nanbeige => build_llama(b, m, c),
+        Bitnet => build_bitnet(b, m, c),
+        Chatglm => build_chatglm(b, m, c),
+        Mamba, Mamba2 => build_mamba(b, m, c),
+        FalconH1, GraniteHybrid, Jamba => build_hybrid(b, m, c),
+        Plamo2 => build_plamo2(b, m, c),
+        Rwkv6, Rwkv7 => build_rwkv(b, m, c),
+        Minicpm3 => build_minicpm3(b, m, c),
+        Qwen2vl, Qwen3vl => build_qwen(b, m, c),
+        NemotronH => build_nemotron_h(b, m, c),
+        Afmoe => build_afmoe(b, m, c),
+        Gemma3n => build_gemma3n(b, m, c),
+        Gemma4 => build_gemma4(b, m, c),
+        T5 => build_t5_dec(b, m, c),
+        Plamo3 => build_plamo3(b, m, c),
+        Cohere2 => build_cohere2(b, m, c),
+        PanguEmbed => build_pangu_embed(b, m, c),
+        Limite => build_limite(b, m, c),
+        HrmText => build_hrm_text(b, m, c),
+        Spark2_5 => build_spark2_5(b, m, c),
+        K2Horizon => build_k2_horizon(b, m, c),
+        Glm4 => build_glm4(b, m, c),
+        Internlm2, Exaone, Ernie4_5, Mistral3 => build_llama(b, m, c),
+        Arcee => build_arcee(b, m, c),
+        Olmo2, Exaone4 => build_post_norm(b, m, c),
+        HunyuanDense => build_hunyuan_dense(b, m, c),
+        Gpt2, Starcoder, Gptneox, Starcoder2, Bloom => build_classic(b, m, c),
+        Openelm => build_openelm(b, m, c),
         _ => { abort("decode: unknown architecture"); },
     };
     ggml::set_output(out);
@@ -4192,9 +4189,9 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         var flag: u8[>..] = [];
         tracing = env("LLAMA_GOOSE_TRACE", flag) && flag == "1";
     }
-    let has_swa = m.hp.swa_type != model::SWA_NONE;
+    let has_swa = m.hp.swa_type != model::Swa.None;
     // unified: each slice of tokens attends to the rows of its sequences' cells
-    let use_rows = c.unified && m.hp.arch != model::ARCH_T5;
+    let use_rows = c.unified && m.hp.arch != model::Arch.T5;
     let n_slices = if use_rows { n_slices_of(seqs) } else { n_ub_streams };
     var rows: i32[>..] = [];
     var rows_swa: i32[>..] = [];

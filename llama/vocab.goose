@@ -16,15 +16,12 @@ namespace vocab;
 let TOKEN_NULL = -1;
 
 // enum llama_vocab_type
-let TYPE_NONE = 0;
-let TYPE_SPM = 1;
-let TYPE_BPE = 2;
-let TYPE_WPM = 3;
-let TYPE_UGM = 4;
-let TYPE_RWKV = 5;
-let TYPE_PLAMO2 = 6;
-let TYPE_TEST = 7;
-let TYPE_PLAMO3 = 8;
+enum Type { None, Spm, Bpe, Wpm, Ugm, Rwkv, Plamo2, Test, Plamo3 }
+
+// The type's number in llama.cpp, as its server reports it.
+fn type_number(t: Type) -> i64 {
+    match t { None => 0, Spm => 1, Bpe => 2, Wpm => 3, Ugm => 4, Rwkv => 5, Plamo2 => 6, Test => 7, Plamo3 => 8 }
+}
 
 // enum llama_token_type, as the GGUF stores it
 let TOKTYPE_UNDEFINED = 0;
@@ -49,14 +46,12 @@ let ATTR_RSTRIP = 256;
 let ATTR_SINGLE_WORD = 512;
 
 // enum llama_metaspace_prepend_scheme
-let METASPACE_NEVER = 0;
-let METASPACE_FIRST = 1;
-let METASPACE_ALWAYS = 2;
+enum Metaspace { Never, First, Always }
 
 var tokenizer_model: u8[>..];
 var tokenizer_pre: u8[>..];
-var vtype = TYPE_SPM;
-var pre_type = PRE_DEFAULT;
+var vtype = Type.Spm;
+var pre_type = Pre.Default;
 var n_token_types: u32 = 0;
 var max_token_len = 0;
 
@@ -90,7 +85,7 @@ var treat_whitespace_as_suffix = false;
 var normalizer_nfc = false;
 var normalizer_lowercase = true;
 var normalizer_strip_accents = true;
-var metaspace_prepend_scheme = METASPACE_NEVER;
+var metaspace_prepend_scheme = Metaspace.Never;
 
 // The tokens: token i's text is text_buf[text_end[i - 1]..text_end[i]].
 var text_buf: u8[>..];
@@ -159,16 +154,15 @@ fn eog_erase(id: i32) {
 
 fn type_name() -> const u8[:] {
     match vtype {
-        TYPE_NONE => "no vocab",
-        TYPE_SPM => "SPM",
-        TYPE_BPE => "BPE",
-        TYPE_WPM => "WPM",
-        TYPE_UGM => "UGM",
-        TYPE_RWKV => "RWKV",
-        TYPE_PLAMO2 => "PLaMo2",
-        TYPE_PLAMO3 => "PLaMo3",
-        TYPE_TEST => "TEST",
-        _ => "unknown",
+        None => "no vocab",
+        Spm => "SPM",
+        Bpe => "BPE",
+        Wpm => "WPM",
+        Ugm => "UGM",
+        Rwkv => "RWKV",
+        Plamo2 => "PLaMo2",
+        Plamo3 => "PLaMo3",
+        Test => "TEST",
     }
 }
 
@@ -190,8 +184,8 @@ fn byte_token_text(out: u8[..6]&, ch: u8) {
 }
 
 fn token_to_byte(id: i64) -> u8 {
-    assert(vtype != TYPE_NONE && is_byte(id));
-    guard vtype == TYPE_SPM || vtype == TYPE_UGM || vtype == TYPE_BPE else { abort("fatal error"); }
+    assert(vtype != Type.None && is_byte(id));
+    guard vtype == Type.Spm || vtype == Type.Ugm || vtype == Type.Bpe else { abort("fatal error"); }
     // strtol of the two characters after "<0x"
     let t = token_text(id);
     var v = 0;
@@ -204,9 +198,9 @@ fn token_to_byte(id: i64) -> u8 {
 }
 
 fn byte_to_token(ch: u8) -> i32 {
-    assert(vtype != TYPE_NONE);
+    assert(vtype != Type.None);
     match vtype {
-        TYPE_SPM, TYPE_UGM => {
+        Spm, Ugm => {
             var buf: u8[..6] = [];
             byte_token_text(buf, ch);
             let id = text_to_token(buf);
@@ -215,21 +209,21 @@ fn byte_to_token(ch: u8) -> i32 {
             if id2 == TOKEN_NULL { abort("byte_to_token: no token for the byte"); }
             return id2;
         },
-        TYPE_WPM, TYPE_BPE => {
+        Wpm, Bpe => {
             var buf: u8[>..] = [];
             unicode::byte_to_utf8(buf, ch);
             let id = text_to_token(buf);
             if id == TOKEN_NULL { abort("byte_to_token: no token for the byte"); }
             return id;
         },
-        TYPE_PLAMO2, TYPE_PLAMO3 => {
+        Plamo2, Plamo3 => {
             var buf: u8[..6] = [];
             byte_token_text(buf, ch);
             let id = text_to_token(buf);
             if id == TOKEN_NULL { abort("byte_to_token: no token for the byte"); }
             return id;
         },
-        TYPE_TEST => { return TOKEN_NULL; },
+        Test => { return TOKEN_NULL; },
         _ => { abort("fatal error"); },
     }
 }
@@ -329,7 +323,7 @@ fn load(ctx: gguf::Ctx) {
     get_u32(ctx, "tokenizer.ggml.token_type_count", n_token_types);
 
     if tokenizer_model == "no_vocab" || tokenizer_model == "none" {
-        vtype = TYPE_NONE;
+        vtype = Type.None;
         special_bos_id = TOKEN_NULL;
         special_eos_id = TOKEN_NULL;
         special_unk_id = TOKEN_NULL;
@@ -349,16 +343,16 @@ fn load(ctx: gguf::Ctx) {
     }
 
     if tokenizer_model == "llama" {
-        vtype = TYPE_SPM;
+        vtype = Type.Spm;
         special_bos_id = 1; special_eos_id = 2; special_unk_id = 0;
         special_sep_id = TOKEN_NULL; special_pad_id = TOKEN_NULL; special_mask_id = TOKEN_NULL;
     } else if tokenizer_model == "bert" {
-        vtype = TYPE_WPM;
+        vtype = Type.Wpm;
         special_bos_id = 101; special_eos_id = TOKEN_NULL; special_unk_id = 100;
         special_sep_id = 102; special_pad_id = 0; special_mask_id = 103;
         add_sep = true;
     } else if tokenizer_model == "gpt2" || tokenizer_model == "hybriddna" || tokenizer_model == "whitespace" {
-        vtype = TYPE_BPE;
+        vtype = Type.Bpe;
         let merges_id = gguf::find_key(ctx, "tokenizer.ggml.merges");
         if merges_id == -1 {
             // Kimi-K2 uses custom tokenization without BPE merges
@@ -371,7 +365,7 @@ fn load(ctx: gguf::Ctx) {
         special_bos_id = 11; special_eos_id = 11; special_unk_id = TOKEN_NULL;
         special_sep_id = TOKEN_NULL; special_pad_id = TOKEN_NULL; special_mask_id = TOKEN_NULL;
     } else if tokenizer_model == "t5" {
-        vtype = TYPE_UGM;
+        vtype = Type.Ugm;
         special_bos_id = TOKEN_NULL; special_eos_id = 1; special_unk_id = 2;
         special_sep_id = TOKEN_NULL; special_pad_id = 0; special_mask_id = TOKEN_NULL;
         let id = gguf::find_key(ctx, "tokenizer.ggml.precompiled_charsmap");
@@ -388,19 +382,19 @@ fn load(ctx: gguf::Ctx) {
             guard blob_size + 4 < precompiled_charsmap.len else { abort("Index out of array bounds in precompiled charsmap!"); }
         }
     } else if tokenizer_model == "rwkv" {
-        vtype = TYPE_RWKV;
+        vtype = Type.Rwkv;
         special_bos_id = TOKEN_NULL; special_eos_id = TOKEN_NULL; special_unk_id = TOKEN_NULL;
         special_sep_id = TOKEN_NULL; special_pad_id = TOKEN_NULL;
     } else if tokenizer_model == "test" {
-        vtype = TYPE_TEST;
+        vtype = Type.Test;
         special_bos_id = TOKEN_NULL; special_eos_id = TOKEN_NULL; special_unk_id = TOKEN_NULL;
         special_sep_id = TOKEN_NULL; special_pad_id = TOKEN_NULL; special_mask_id = TOKEN_NULL;
     } else if tokenizer_model == "plamo2" || tokenizer_model == "plamo3" {
-        vtype = if tokenizer_model == "plamo2" { TYPE_PLAMO2 } else { TYPE_PLAMO3 };
+        vtype = if tokenizer_model == "plamo2" { Type.Plamo2 } else { Type.Plamo3 };
         special_bos_id = 1; special_eos_id = 2; special_unk_id = 0;
         special_sep_id = TOKEN_NULL; special_pad_id = 3; special_mask_id = TOKEN_NULL;
     } else if tokenizer_model == "gemma4" {
-        vtype = TYPE_BPE;
+        vtype = Type.Bpe;
         let merges_id = gguf::find_key(ctx, "tokenizer.ggml.merges");
         if merges_id == -1 { abort("cannot find tokenizer merges in model file"); }
         array_key(ctx, "tokenizer.ggml.merges", gguf::STRING);
@@ -414,31 +408,31 @@ fn load(ctx: gguf::Ctx) {
     }
 
     // for now, only BPE models have pre-tokenizers
-    if vtype == TYPE_BPE {
+    if vtype == Type.Bpe {
         add_space_prefix = false;
         escape_whitespaces = false;
         clean_spaces = true;
         if tokenizer_pre.len == 0 {
             log(str("load: missing pre-tokenizer type, using: 'default'"));
             log(str("load: GENERATION QUALITY WILL BE DEGRADED! CONSIDER REGENERATING THE MODEL"));
-            pre_type = PRE_DEFAULT;
+            pre_type = Pre.Default;
         } else if !apply_pre_name(tokenizer_pre) {
             abort(str("unknown pre-tokenizer type: '", tokenizer_pre, "'"));
         }
-    } else if vtype == TYPE_SPM {
-        pre_type = PRE_DEFAULT;
+    } else if vtype == Type.Spm {
+        pre_type = Pre.Default;
         add_space_prefix = true; clean_spaces = false; add_bos = true; add_eos = false;
-    } else if vtype == TYPE_WPM {
-        pre_type = PRE_DEFAULT;
+    } else if vtype == Type.Wpm {
+        pre_type = Pre.Default;
         add_space_prefix = false; clean_spaces = true; add_bos = true; add_eos = false; add_sep = true;
-    } else if vtype == TYPE_UGM {
-        pre_type = PRE_DEFAULT;
+    } else if vtype == Type.Ugm {
+        pre_type = Pre.Default;
         add_bos = false; add_eos = true;
-    } else if vtype == TYPE_RWKV {
-        pre_type = PRE_DEFAULT;
+    } else if vtype == Type.Rwkv {
+        pre_type = Pre.Default;
         add_space_prefix = false; clean_spaces = false; add_bos = false; add_eos = false;
     } else {
-        pre_type = PRE_DEFAULT;
+        pre_type = Pre.Default;
     }
 
     get_bool(ctx, "tokenizer.ggml.add_space_prefix", add_space_prefix);
@@ -449,7 +443,7 @@ fn load(ctx: gguf::Ctx) {
     init_tokenizer();
 
     // the newline token: LLaMA "<0x0A>" == 10 == '\n', Falcon 193 == '\n'
-    if vtype == TYPE_SPM {
+    if vtype == Type.Spm {
         var buf: u8[..6] = [];
         byte_token_text(buf, '\n');
         let id = text_to_token(buf);
@@ -460,14 +454,14 @@ fn load(ctx: gguf::Ctx) {
             log(str("load: SPM vocabulary, but newline token not found! Using special_pad_id instead."));
             linefeed_id = special_pad_id;
         }
-    } else if vtype == TYPE_WPM {
+    } else if vtype == Type.Wpm {
         linefeed_id = special_pad_id;
-    } else if vtype == TYPE_RWKV {
+    } else if vtype == Type.Rwkv {
         var ids: i32[>..] = [];
         tokenize("\n", false, false, ids);
         guard ids.len > 0 else { abort("GGML_ASSERT(!ids.empty() && \"model vocab missing newline token\") failed"); }
         linefeed_id = ids[0];
-    } else if vtype == TYPE_BPE || vtype == TYPE_PLAMO2 || vtype == TYPE_PLAMO3 || vtype == TYPE_UGM {
+    } else if vtype == Type.Bpe || vtype == Type.Plamo2 || vtype == Type.Plamo3 || vtype == Type.Ugm {
         // (llama.cpp tokenizes "\n" for the other types too, which are not ported yet)
         var ids: i32[>..] = [];
         tokenize("\n", false, false, ids);
@@ -555,11 +549,11 @@ fn load_tokens(ctx: gguf::Ctx) {
 
 fn init_tokenizer() {
     match vtype {
-        TYPE_SPM, TYPE_WPM, TYPE_TEST => {},
-        TYPE_UGM => ugm_build(),
-        TYPE_RWKV => rwkv_build(),
-        TYPE_PLAMO2, TYPE_PLAMO3 => plamo_build(),
-        TYPE_BPE => {
+        Spm, Wpm, Test => {},
+        Ugm => ugm_build(),
+        Rwkv => rwkv_build(),
+        Plamo2, Plamo3 => plamo_build(),
+        Bpe => {
             let regexes, byte_encode = pre_regexes(pre_type);
             bpe_regexes = regexes;
             bpe_byte_encode = byte_encode;
@@ -622,7 +616,7 @@ fn load_special_tokens(ctx: gguf::Ctx) {
     if get_bool(ctx, "tokenizer.ggml.add_sep_token", flag) { add_sep = flag; }
     if get_bool(ctx, "tokenizer.ggml.dna_auto_tags", flag) { dna_auto_tags = flag; }
     // workaround for Gemma 4, ref: https://github.com/ggml-org/llama.cpp/pull/21500
-    if pre_type == PRE_GEMMA4 && !add_bos {
+    if pre_type == Pre.Gemma4 && !add_bos {
         add_bos = true;
         log(str("load: override 'tokenizer.ggml.add_bos_token' to 'true' for Gemma4"));
     }
@@ -635,11 +629,11 @@ fn load_special_tokens(ctx: gguf::Ctx) {
     {
         var scheme: u8[>..] = [];
         if get_str(ctx, "tokenizer.ggml.metaspace.prepend_scheme", scheme) {
-            if scheme == "never" { metaspace_prepend_scheme = METASPACE_NEVER; }
-            else if scheme == "first" { metaspace_prepend_scheme = METASPACE_FIRST; }
-            else if scheme == "always" { metaspace_prepend_scheme = METASPACE_ALWAYS; }
+            if scheme == "never" { metaspace_prepend_scheme = Metaspace.Never; }
+            else if scheme == "first" { metaspace_prepend_scheme = Metaspace.First; }
+            else if scheme == "always" { metaspace_prepend_scheme = Metaspace.Always; }
             else { abort(str("unknown metaspace prepend_scheme: '", scheme, "'")); }
-            if vtype == TYPE_BPE && metaspace_prepend_scheme == METASPACE_ALWAYS {
+            if vtype == Type.Bpe && metaspace_prepend_scheme == Metaspace.Always {
                 abort("metaspace prepend_scheme 'always' is not supported for BPE vocab");
             }
         }
@@ -706,7 +700,7 @@ fn load_special_tokens(ctx: gguf::Ctx) {
                      "<|tool_response>", "<｜end▁of▁sentence｜>", "[e~[", "<|ifm|im_end|>"];
     for id in n_tokens() {
         let t = token_text(id);
-        if is_one_of(t, eog_names) || (pre_type == PRE_FLINT && (t == "<|user|>" || t == "<|observation|>")) {
+        if is_one_of(t, eog_names) || (pre_type == Pre.Flint && (t == "<|user|>" || t == "<|observation|>")) {
             eog_insert(id as i32);
             mark_control(id, t);
         }
@@ -722,7 +716,7 @@ fn load_special_tokens(ctx: gguf::Ctx) {
         }
     }
 
-    if pre_type == PRE_SOPRANO { eog_insert(special_eos_id); }
+    if pre_type == Pre.Soprano { eog_insert(special_eos_id); }
 
     // sanity checks
     if special_eos_id != TOKEN_NULL && !is_eog(special_eos_id) {
@@ -966,7 +960,7 @@ fn bpe_word(text: const u8[:], word_start: i64, word_end: i64, symbols: Symbol[>
     if ignore_merges && text_to_token(word) != TOKEN_NULL {
         symbols.push(Symbol { prev: -1, next: -1, start: word_start, n: word.len });
         offset = word.len;
-    } else if (pre_type == PRE_GEMMA4 || pre_type == PRE_MMBERT) && all_newlines(word) {
+    } else if (pre_type == Pre.Gemma4 || pre_type == Pre.Mmbert) && all_newlines(word) {
         // fix for gemma 4, ref: https://github.com/ggml-org/llama.cpp/pull/21343
         if text_to_token(word) != TOKEN_NULL {
             symbols.push(Symbol { prev: -1, next: -1, start: word_start, n: word.len });
@@ -1016,14 +1010,14 @@ fn bpe_word(text: const u8[:], word_start: i64, word_end: i64, symbols: Symbol[>
 fn bpe_tokenize(raw: const u8[:], out: i32[>..]&) {
     // the text the regexes split
     var text: u8[>..] = [];
-    if pre_type == PRE_NEMOTRON_3_5_EMBD {
+    if pre_type == Pre.Nemotron3_5Embd {
         let zwnj = "\xe2\x80\x8c";
         format_replaced(text, raw, str("[", zwnj), "[");
         var t2: u8[>..] = [];
         format_replaced(t2, text, str("<", zwnj), "<");
         text.clear();
         text.append(t2);
-    } else if pre_type == PRE_SOPRANO {
+    } else if pre_type == Pre.Soprano {
         var space = false;
         for cpt in unicode::cpts_from_utf8(raw) {
             if unicode::is(unicode::flags(cpt), unicode::WHITESPACE) {
@@ -1043,7 +1037,7 @@ fn bpe_tokenize(raw: const u8[:], out: i32[>..]&) {
     var ends: i64[>..] = [];
     unicode::regex_split(text, bpe_regexes, bpe_byte_encode, words, ends);
 
-    if pre_type == PRE_MMBERT {
+    if pre_type == Pre.Mmbert {
         // Metaspace: a text starts with an escaped space, and each escaped space starts a new word
         let space = "\xe2\x96\x81";
         var w2: u8[>..] = [];
@@ -1089,7 +1083,7 @@ fn bpe_tokenize(raw: const u8[:], out: i32[>..]&) {
         if s.n == 0 { continue; }
         let piece = words[s.start..s.start + s.n];
         let token = text_to_token(piece);
-        if token == TOKEN_NULL && pre_type == PRE_SOPRANO {
+        if token == TOKEN_NULL && pre_type == Pre.Soprano {
             out.push(special_unk_id);
         } else if token == TOKEN_NULL {
             for c in piece {
@@ -1173,7 +1167,7 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
     let first_out = out.len;
 
     match vtype {
-        TYPE_SPM => {
+        Spm => {
             // TODO (upstream): honor metaspace_prepend_scheme (add_space_prefix behaves like "always")
             var is_prev_special = true;     // prefix with space if first token
             if add_special && add_bos {
@@ -1202,7 +1196,7 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
                 out.push(special_eos_id);
             }
         },
-        TYPE_BPE => {
+        Bpe => {
             if tokenizer_model == "hybriddna" || tokenizer_model == "whitespace" {
                 abort(str(tokenizer_model, " tokenizer: not ported yet"));
             }
@@ -1217,7 +1211,7 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
                     let piece = raw_text[f.offset..f.offset + f.length];
                     let escaped = "\xe2\x96\x81";
                     // metaspace prepend_scheme "first": U+2581 only at the start of the input
-                    let prepend = metaspace_prepend_scheme == METASPACE_FIRST && k == 0;
+                    let prepend = metaspace_prepend_scheme == Metaspace.First && k == 0;
                     if escape_whitespaces {
                         format_replaced(text, piece, " ", escaped);
                     } else {
@@ -1249,7 +1243,7 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
                 }
             }
         },
-        TYPE_UGM => {
+        Ugm => {
             if add_special && add_bos {
                 assert(special_bos_id != TOKEN_NULL);
                 out.push(special_bos_id);
@@ -1266,13 +1260,13 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
                 out.push(special_eos_id);
             }
         },
-        TYPE_RWKV => {
+        Rwkv => {
             for f in frags {
                 if f.token == -1 { rwkv_tokenize(raw_text[f.offset..f.offset + f.length], out); }
                 else { out.push(f.token); }
             }
         },
-        TYPE_PLAMO2, TYPE_PLAMO3 => {
+        Plamo2, Plamo3 => {
             if add_special && add_bos {
                 assert(special_bos_id != TOKEN_NULL);
                 out.push(special_bos_id);
@@ -1289,7 +1283,7 @@ fn tokenize(raw_text: const u8[:], add_special: bool, parse_special: bool, out: 
                 out.push(special_eos_id);
             }
         },
-        TYPE_NONE => { abort("fatal error"); },
+        None => { abort("fatal error"); },
         _ => { abort(str(type_name(), " tokenizer: not ported yet")); },
     }
 }
@@ -1338,15 +1332,15 @@ fn token_to_piece(token: i32, out: u8[>..]&, lstrip: i64, special: bool, use_cac
     guard 0 <= token && token < n_tokens() else { return 0; }
     let t = token_text(token);
     match vtype {
-        TYPE_WPM, TYPE_SPM, TYPE_UGM => {
+        Wpm, Spm, Ugm => {
             if attr & (attr_special | ATTR_USER_DEFINED) != 0 { out.append(t); return finish(); }
             if attr & ATTR_NORMAL != 0 { format_replaced(out, t, "\xe2\x96\x81", " "); return finish(); }
             if attr & ATTR_BYTE != 0 { out.push(token_to_byte(token)); return finish(); }
         },
-        TYPE_BPE => {
+        Bpe => {
             if attr & (attr_special | ATTR_USER_DEFINED) != 0 { out.append(t); return finish(); }
             if attr & ATTR_NORMAL != 0 {
-                if pre_type == PRE_SOPRANO { out.append(t); return finish(); }
+                if pre_type == Pre.Soprano { out.append(t); return finish(); }
                 if escape_whitespaces {
                     // SPM-style BPE: tokens contain ▁ for spaces
                     format_replaced(out, t, "\xe2\x96\x81", " ");
@@ -1357,11 +1351,11 @@ fn token_to_piece(token: i32, out: u8[>..]&, lstrip: i64, special: bool, use_cac
             }
             if attr & ATTR_BYTE != 0 { out.push(token_to_byte(token)); return finish(); }
         },
-        TYPE_TEST => {
+        Test => {
             format_uint(out, token as u64, 16, 0, ' ');
             return finish();
         },
-        TYPE_PLAMO2, TYPE_PLAMO3 => {
+        Plamo2, Plamo3 => {
             if is_byte(token) && t.len == 6 && starts_with(t, "<0x") && t[5] == '>' &&
                hex_value(t[3]) >= 0 && hex_value(t[4]) >= 0 {
                 out.push((hex_value(t[3]) * 16 + hex_value(t[4])) as! u8);
@@ -1370,7 +1364,7 @@ fn token_to_piece(token: i32, out: u8[>..]&, lstrip: i64, special: bool, use_cac
             out.append(t);
             return finish();
         },
-        TYPE_RWKV => {
+        Rwkv => {
             // no lstrip
             let n0 = out.len;
             rwkv_unescape(t, out);
@@ -1928,7 +1922,7 @@ fn plamo_encode_cpts(cpts: const u32[:], out: i32[>..]&) {
 
 fn plamo_tokenize(text: const u8[:], out: i32[>..]&) {
     var cpts = unicode::cpts_from_utf8(text);
-    if vtype == TYPE_PLAMO3 { plamo3_tokenize(cpts, out); return; }
+    if vtype == Type.Plamo3 { plamo3_tokenize(cpts, out); return; }
     // PLaMo-2: a leading U+FEFF is dropped
     if cpts.len > 0 && cpts[0] == 0xFEFF { plamo_encode_cpts(cpts[1..], out); return; }
     plamo_encode_cpts(cpts, out);
@@ -1987,7 +1981,7 @@ fn plamo3_tokenize(cpts: const u32[:], out: i32[>..]&) {
 // The text of tokens: appends
 // Appends the text of tokens.
 fn detokenize(tokens: const i32[:], remove_special: bool, unparse_special: bool, out: u8[>..]&) {
-    if vtype == TYPE_NONE { return; }
+    if vtype == Type.None { return; }
     var toks = tokens;
     // remove the leading space
     var remove_space = add_space_prefix;
@@ -1999,7 +1993,7 @@ fn detokenize(tokens: const i32[:], remove_special: bool, unparse_special: bool,
         toks = toks[..toks.len - 1];
     }
     // metaspace prepend_scheme "first": remove the leading space of the first rendered piece
-    var remove_first_space = vtype == TYPE_BPE && metaspace_prepend_scheme == METASPACE_FIRST;
+    var remove_first_space = vtype == Type.Bpe && metaspace_prepend_scheme == Metaspace.First;
 
     let start = out.len;
     for t in toks {

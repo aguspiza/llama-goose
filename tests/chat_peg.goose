@@ -36,8 +36,8 @@ struct KVR { key: R, value: R }
 var store: u8[>..] = [];
 fn keep(s: const u8[:]) -> R { let a = store.len; store.append(s); return R { at: a, len: s.len }; }
 
-fn jget(v: i64, k: const u8[:]) -> i64 { if v >= 0 && json_schema::json_kind(v) == json_schema::J_OBJECT { json_schema::get_member(v, k) } else { -1 } }
-fn jstr(v: i64) -> const u8[:] { if v >= 0 && json_schema::json_kind(v) == json_schema::J_STRING { json_schema::json_str(v) } else { "" } }
+fn jget(v: i64, k: const u8[:]) -> i64 { if v >= 0 && json_schema::json_kind(v) == json_schema::JsonKind.Object { json_schema::get_member(v, k) } else { -1 } }
+fn jstr(v: i64) -> const u8[:] { if v >= 0 && json_schema::json_kind(v) == json_schema::JsonKind.String { json_schema::json_str(v) } else { "" } }
 fn jint(v: i64) -> i64 { if v >= 0 { json_schema::jv[v].i } else { 0 } }
 fn jbool(v: i64) -> bool { v >= 0 && json_schema::jv[v].i != 0 }
 
@@ -177,7 +177,7 @@ fn main() {
                             tool_name: keep(jstr(jget(m, "name"))), tool_call_id: keep(jstr(jget(m, "tool_call_id"))),
                             calls_at: calls.len, calls_n: 0, parts_at: parts.len, parts_n: 0 };
             let c = jget(m, "content");
-            if c >= 0 && json_schema::json_kind(c) == json_schema::J_ARRAY {
+            if c >= 0 && json_schema::json_kind(c) == json_schema::JsonKind.Array {
                 for k in json_schema::json_len(c) {
                     let p = json_schema::json_at(c, k);
                     parts.push(PartR { kind: keep(jstr(jget(p, "type"))), text: keep(jstr(jget(p, "text"))), name: keep(jstr(jget(p, "name"))) });
@@ -193,7 +193,7 @@ fn main() {
                     let f = jget(tc, "function");
                     let a = jget(f, "arguments");
                     var args_text: u8[>..] = [];
-                    if json_schema::json_kind(a) == json_schema::J_STRING { args_text.append(jstr(a)); } else { json_schema::json_dump(args_text, a); }
+                    if json_schema::json_kind(a) == json_schema::JsonKind.String { args_text.append(jstr(a)); } else { json_schema::json_dump(args_text, a); }
                     calls.push(CallR { name: keep(jstr(jget(f, "name"))), args: keep(args_text), id: keep(jstr(jget(tc, "id"))) });
                 }
                 mr.calls_n = calls.len - mr.calls_at;
@@ -202,7 +202,7 @@ fn main() {
         }
         var tools: ToolR[>..] = [];
         let tv = jget(iv, "tools");
-        if tv >= 0 && json_schema::json_kind(tv) == json_schema::J_ARRAY {
+        if tv >= 0 && json_schema::json_kind(tv) == json_schema::JsonKind.Array {
             for i in json_schema::json_len(tv) {
                 let f = jget(json_schema::json_at(tv, i), "function");
                 var params: u8[>..] = [];
@@ -229,12 +229,17 @@ fn main() {
         var sp_pieces: const u8[:][>..] = [];
         for i in sp_ids.len { sp_pieces.push(sp_text[sp_at[i]..sp_at[i + 1]]); }
         if sp_ids.len > 0 { peg::set_tokens(sp_pieces, sp_ids); } else { peg::clear_tokens(); }
-        let tool_choice = jint(jget(iv, "tool_choice"));
+        let tool_choice = match jint(jget(iv, "tool_choice")) {
+            0 => chat_render::ToolChoice.Auto, 1 => chat_render::ToolChoice.Required, _ => chat_render::ToolChoice.None };
         let parallel = jbool(jget(iv, "parallel_tool_calls"));
-        let reasoning_format = jint(jget(iv, "reasoning_format"));
+        let reasoning_format = match jint(jget(iv, "reasoning_format")) {
+            0 => chat_render::ReasoningFormat.None, 1 => chat_render::ReasoningFormat.Auto,
+            2 => chat_render::ReasoningFormat.DeepseekLegacy, _ => chat_render::ReasoningFormat.Deepseek };
         let enable_thinking = jbool(jget(iv, "enable_thinking"));
         let add_gen = jbool(jget(iv, "add_generation_prompt"));
-        let cont = jint(jget(iv, "continue_final_message"));
+        let cont = match jint(jget(iv, "continue_final_message")) {
+            0 => chat_render::Continue.None, 1 => chat_render::Continue.Auto,
+            2 => chat_render::Continue.Reasoning, _ => chat_render::Continue.Content };
         // the structures over store, now that it is all there
         fn s(r: R) -> const u8[:] { store[r.at..r.at + r.len] }
         var mcalls: chat_apply::ToolCall[>..] = [];
@@ -289,7 +294,7 @@ fn main() {
             for i in chat_render::trigger_values.len {
                 guard chat_render::trigger_values[i] == 0 else { continue; }
                 if tk > 0 { triggers.push(','); }
-                format(triggers, "[", chat_render::trigger_types[tk], ",");
+                format(triggers, "[", chat_render::trigger_number(chat_render::trigger_types[tk]), ",");
                 json_schema::json_string(triggers, chat_render::trigger_values[tstart..i]);
                 triggers.push(']');
                 tstart = i + 1;
@@ -304,7 +309,9 @@ fn main() {
             strings_json(ends, chat_render::thinking_ends);
             if chat_render::prompt != expected[0] { report("prompt", expected[0], chat_render::prompt); }
             if parts_json != expected[1] { report("prompt parts", expected[1], parts_json); }
-            if str(chat_render::format) != expected[2] { report("format", expected[2], str(chat_render::format)); }
+            // common_chat_format's number
+            let fmt = str(match chat_render::format { ContentOnly => 0, PegSimple => 1, PegNative => 2, PegGemma4 => 3, PegMinimaxM3 => 4 });
+            if fmt != expected[2] { report("format", expected[2], fmt); }
             if chat_render::grammar != expected[3] { report("grammar", expected[3], chat_render::grammar); }
             let lazy = if chat_render::grammar_lazy { "1" } else { "0" };
             if lazy != expected[4] { report("grammar_lazy", expected[4], lazy); }

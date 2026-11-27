@@ -12,12 +12,11 @@ namespace mtmd;
 // mtmd_default_marker
 let MARKER = "<__media__>";
 
-let CHUNK_TEXT = 0;
-let CHUNK_IMAGE = 1;
+enum ChunkKind { Text, Image }
 
 // A piece of the prompt (mtmd_input_chunk): text tokens, chunk_tokens[at..at + n],
 // or an image's pixels, chunk_pixels[at..at + nx * ny * 3], which encode into n tokens.
-struct Chunk { kind: i64, at: i64, n: i64, nx: i64, ny: i64 }
+struct Chunk { kind: ChunkKind, at: i64, n: i64, nx: i64, ny: i64 }
 
 var chunks: Chunk[>..] = [];
 var chunk_tokens: i32[>..] = [];
@@ -59,8 +58,8 @@ fn lookup_token(text: const u8[:]) -> i32 {
 // Tokens appended to the last chunk if it is text, else in a new one (add_text).
 fn add_tokens(toks: const i32[:]) {
     guard toks.len > 0 else { return; }
-    if chunks.len == 0 || chunks[chunks.len - 1].kind != CHUNK_TEXT || chunks[chunks.len - 1].at + chunks[chunks.len - 1].n != chunk_tokens.len {
-        chunks.push(Chunk { kind: CHUNK_TEXT, at: chunk_tokens.len, n: 0, nx: 0, ny: 0 });
+    if chunks.len == 0 || chunks[chunks.len - 1].kind != ChunkKind.Text || chunks[chunks.len - 1].at + chunks[chunks.len - 1].n != chunk_tokens.len {
+        chunks.push(Chunk { kind: ChunkKind.Text, at: chunk_tokens.len, n: 0, nx: 0, ny: 0 });
     }
     chunk_tokens.append(toks);
     chunks[chunks.len - 1].n += toks.len;
@@ -75,7 +74,7 @@ fn add_text(text: const u8[:], parse_special: bool) {
 fn add_token(t: i32) { add_tokens([t]); }
 
 fn add_image(c: Clip&, img: ImageF32&) {
-    chunks.push(Chunk { kind: CHUNK_IMAGE, at: chunk_pixels.len, n: n_output_tokens(c, img.nx, img.ny), nx: img.nx, ny: img.ny });
+    chunks.push(Chunk { kind: ChunkKind.Image, at: chunk_pixels.len, n: n_output_tokens(c, img.nx, img.ny), nx: img.nx, ny: img.ny });
     chunk_pixels.append(img.buf);
 }
 
@@ -84,7 +83,7 @@ fn add_media(c: Clip&, img: ImageU8&) {
     var pp = Preproc { .. };
     preprocess(c, img, pp);
     let n = pp.slice_nx * pp.slice_ny * 3;
-    if c.proj == PROJ_GEMMA3 {
+    if c.proj == Projector.Gemma3 {
         // <start_of_image> ... <end_of_image>
         add_text("<start_of_image>", true);
         var f = ImageF32 { nx: pp.slice_nx, ny: pp.slice_ny, buf: [] };
@@ -140,7 +139,7 @@ fn tokenize(c: Clip&, text: const u8[:], add_special: bool) {
     }
     guard i_img == bitmaps.len else { abort("mtmd: fewer media markers in the text than images"); }
     if add_special && vocab::add_bos {
-        if chunks.len > 0 && chunks[0].kind == CHUNK_TEXT {
+        if chunks.len > 0 && chunks[0].kind == ChunkKind.Text {
             var toks: i32[>..] = [];
             toks.push(vocab::special_bos_id);
             toks.append(chunk_text(chunks[0]));
@@ -151,14 +150,14 @@ fn tokenize(c: Clip&, text: const u8[:], add_special: bool) {
         } else {
             let at = chunk_tokens.len;
             chunk_tokens.push(vocab::special_bos_id);
-            chunks.push(Chunk { kind: CHUNK_TEXT, at: 0, n: 0, nx: 0, ny: 0 });
+            chunks.push(Chunk { kind: ChunkKind.Text, at: 0, n: 0, nx: 0, ny: 0 });
             var j = chunks.len - 1;
             while j > 0 { chunks[j] = chunks[j - 1]; j--; }
-            chunks[0] = Chunk { kind: CHUNK_TEXT, at: at, n: 1, nx: 0, ny: 0 };
+            chunks[0] = Chunk { kind: ChunkKind.Text, at: at, n: 1, nx: 0, ny: 0 };
         }
     }
     if add_special && vocab::add_eos { add_token(vocab::special_eos_id); }
 }
 
 // Whether a model's image tokens see each other (mtmd_decode_use_non_causal).
-fn use_non_causal(c: Clip&) -> bool { c.proj == PROJ_GEMMA3 }
+fn use_non_causal(c: Clip&) -> bool { c.proj == Projector.Gemma3 }

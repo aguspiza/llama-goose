@@ -117,9 +117,7 @@ fn legacy_apply(tmpl: const u8[:], n: i64, add_ass: bool, out: u8[>..]&) -> bool
     return chat::apply(tmpl, views, add_ass, out);
 }
 
-let CNV_AUTO = -1;
-let CNV_OFF = 0;
-let CNV_ON = 1;
+enum Conversation { Auto, Off, On }
 
 // The text of the chat's messages; the messages are views of it.
 var chat_text: u8[>..] = [];
@@ -142,7 +140,7 @@ fn main() {
     var ga_n = 1;               // self-extend: the group-attention factor
     var ga_w = 512;             // and width
     var n_threads: i32 = 0;
-    var conversation = CNV_AUTO;
+    var conversation = Conversation.Auto;
     var single_turn = false;
     var interactive = false;
     var interactive_first = false;
@@ -194,8 +192,8 @@ fn main() {
         else if a == "--no-context-shift" { ctx_shift = false; }
         else if a == "-gan" || a == "--grp-attn-n" { ga_n = int_value(); }
         else if a == "-gaw" || a == "--grp-attn-w" { ga_w = int_value(); }
-        else if a == "-cnv" || a == "--conversation" { conversation = CNV_ON; }
-        else if a == "-no-cnv" || a == "--no-conversation" { conversation = CNV_OFF; }
+        else if a == "-cnv" || a == "--conversation" { conversation = Conversation.On; }
+        else if a == "-no-cnv" || a == "--no-conversation" { conversation = Conversation.Off; }
         else if a == "-st" || a == "--single-turn" { single_turn = true; }
         else if a == "-i" || a == "--interactive" { interactive = true; }
         else if a == "-if" || a == "--interactive-first" { interactive_first = true; }
@@ -315,11 +313,11 @@ fn main() {
     if !ts_ok { fail(str("common_chat_templates_init: failed to initialize chat template: ", jinja::err)); }
 
     let has_chat_template = ts.has_explicit_template;
-    if conversation == CNV_AUTO { conversation = if has_chat_template { CNV_ON } else { CNV_OFF }; }
-    if conversation == CNV_ON && !has_chat_template {
+    if conversation == Conversation.Auto { conversation = if has_chat_template { Conversation.On } else { Conversation.Off }; }
+    if conversation == Conversation.On && !has_chat_template {
         write_stderr("warning: chat template is not available or is not supported. This may cause the model to output suboptimal responses\n");
     }
-    let chat_mode = conversation == CNV_ON && enable_chat_template;
+    let chat_mode = conversation == Conversation.On && enable_chat_template;
 
     let add_bos = vocab::add_bos && !use_jinja;
     var embd_inp: i32[>..] = [];
@@ -390,7 +388,7 @@ fn main() {
         }
     }
 
-    if conversation == CNV_ON {
+    if conversation == Conversation.On {
         if single_turn && prompt.len > 0 { interactive = false; interactive_first = false; }
         else { interactive_first = true; }
     }
@@ -434,7 +432,7 @@ fn main() {
         history.push(t);
     }
 
-    console::set_display(console::PROMPT);
+    console::set_display(console::Display.Prompt);
     display = display_prompt;
 
     let t_start = clock();
@@ -451,9 +449,9 @@ fn main() {
             if embd.len > max_embd {
                 let skipped = embd.len - max_embd;
                 embd.resize(max_embd);
-                console::set_display(console::ERROR);
+                console::set_display(console::Display.Error);
                 write_stderr(str("<<input too long: skipped ", skipped, " token", if skipped != 1 { "s" } else { "" }, ">>"));
-                console::set_display(console::RESET);
+                console::set_display(console::Display.Reset);
             }
             if ga_n == 1 {
                 // infinite text generation: when the context is full, the n_keep
@@ -501,7 +499,7 @@ fn main() {
             remember(id);
             embd.push(id);
             n_generated++;
-            if conversation == CNV_ON && !waiting_for_first_input && !vocab::is_eog(id) {
+            if conversation == Conversation.On && !waiting_for_first_input && !vocab::is_eog(id) {
                 vocab::token_to_piece(id, assistant, 0, false);
             }
             input_echo = true;
@@ -526,7 +524,7 @@ fn main() {
 
         // the color back to normal when no input is left
         if input_echo && embd_inp.len == n_consumed {
-            console::set_display(console::RESET);
+            console::set_display(console::Display.Reset);
             display = true;
         }
 
@@ -573,7 +571,7 @@ fn main() {
                 }
             }
 
-            if conversation == CNV_ON && !waiting_for_first_input {
+            if conversation == Conversation.On && !waiting_for_first_input {
                 if prompt_text.len > 0 {
                     prompt_text.clear();
                     is_interacting = false;
@@ -581,18 +579,18 @@ fn main() {
             }
 
             if (c.n_past > 0 || waiting_for_first_input) && is_interacting {
-                if conversation == CNV_ON { write_stdout("\n> "); }
+                if conversation == Conversation.On { write_stdout("\n> "); }
                 if input_prefix_bos { embd_inp.push(vocab::special_bos_id); }
                 buffer.clear();
-                if input_prefix.len > 0 && conversation != CNV_ON { write_stdout(input_prefix); }
-                console::set_display(console::USER_INPUT);
+                if input_prefix.len > 0 && conversation != Conversation.On { write_stdout(input_prefix); }
+                console::set_display(console::Display.UserInput);
                 display = display_prompt;
                 loop {
                     let more = console::readline(line, multiline_input);
                     buffer.append(line);
                     if !more { break; }
                 }
-                console::set_display(console::RESET);
+                console::set_display(console::Display.Reset);
                 display = true;
 
                 if buffer.len == 0 {
@@ -602,9 +600,9 @@ fn main() {
                 if buffer[buffer.len - 1] == '\n' { buffer.pop(); }
 
                 if buffer.len > 0 {
-                    if input_suffix.len > 0 && conversation != CNV_ON { write_stdout(input_suffix); }
+                    if input_suffix.len > 0 && conversation != Conversation.On { write_stdout(input_suffix); }
                     if escape { process_escapes(buffer); }
-                    let format_chat = conversation == CNV_ON && enable_chat_template;
+                    let format_chat = conversation == Conversation.On && enable_chat_template;
                     if format_chat { chat_add_and_format("user", buffer); }
                     var pfx: i32[>..] = [];
                     var inp: i32[>..] = [];

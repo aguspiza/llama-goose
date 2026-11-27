@@ -429,29 +429,27 @@ fn split_gpt2(cpts: const u32[:], offsets: const i64[:], out: i64[>..]&) {
 // (?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?L+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+
 // where L is \p{L} (llama3, qwen2), [\p{L}\p{M}] (qwen35), or \p{L}, \p{M},
 // ZWNJ and ZWJ (k2-horizon). qwen2 and qwen35 take one digit at a time.
-let LETTERS_L = 0;
-let LETTERS_LM = 1;
-let LETTERS_K2_HORIZON = 2;
+enum Letters { L, Lm, K2Horizon }
 
 fn split_llama3_family(cpts: const u32[:], offsets: const i64[:], out: i64[>..]&,
-                       letters: i64, digits_one_by_one: bool) {
+                       letters: Letters, digits_one_by_one: bool) {
     each_piece(cpts, offsets, out) { p =>
         fn is_letter(pos: i64) -> bool {
             let f = flags_at(p, pos);
-            if letters == LETTERS_L { return is(f, LETTER); }
-            if letters == LETTERS_K2_HORIZON {
+            if letters == Letters.L { return is(f, LETTER); }
+            if letters == Letters.K2Horizon {
                 let c = cpt_at(p, pos);
                 if c == 0x200C || c == 0x200D { return true; }
             }
             return is(f, LETTER | ACCENT_MARK);
         }
-        let punct_excluded: u16 = if letters == LETTERS_LM { WHITESPACE | LETTER | ACCENT_MARK | NUMBER }
+        let punct_excluded: u16 = if letters == Letters.Lm { WHITESPACE | LETTER | ACCENT_MARK | NUMBER }
                              else { WHITESPACE | LETTER | NUMBER };
         var pos = p.ini;
         while pos < p.end {
             let c = cpt_at(p, pos);
             let f = flags_at(p, pos);
-            let n = contraction_len(p, pos, letters == LETTERS_K2_HORIZON);
+            let n = contraction_len(p, pos, letters == Letters.K2Horizon);
             if n > 0 { pos += add_token(p, pos + n); continue; }
 
             if !(c == '\r' || c == '\n' || is(f, NUMBER)) {           // [^\r\n\p{L}\p{N}]?L+
@@ -578,13 +576,13 @@ fn split_custom(cpts: const u32[:], regex: const u8[:], offsets: const i64[:], o
         split_gpt2(cpts, offsets, out);
     } else if regex == "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
            || regex == "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+" {
-        split_llama3_family(cpts, offsets, out, LETTERS_L, false);
+        split_llama3_family(cpts, offsets, out, Letters.L, false);
     } else if regex == "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+" {
-        split_llama3_family(cpts, offsets, out, LETTERS_L, true);
+        split_llama3_family(cpts, offsets, out, Letters.L, true);
     } else if regex == "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+" {
-        split_llama3_family(cpts, offsets, out, LETTERS_LM, true);
+        split_llama3_family(cpts, offsets, out, Letters.Lm, true);
     } else if regex == "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?(?:\\p{L}|\\p{M}|\\u200C|\\u200D)+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+" {
-        split_llama3_family(cpts, offsets, out, LETTERS_K2_HORIZON, false);
+        split_llama3_family(cpts, offsets, out, Letters.K2Horizon, false);
     } else if regex == "\\p{Han}+" {
         split_kimi_k2(cpts, offsets, out);       // K2's first pattern stands for all of them
     } else if regex == "\\p{AFMoE_digits}" || regex == "\\d{1,3}(?=(?:\\d{3})*\\b)" {

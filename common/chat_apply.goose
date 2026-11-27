@@ -45,11 +45,11 @@ struct Inputs {
     grammar: const u8[:] = "",
     json_schema: const u8[:] = "",
     add_generation_prompt: bool = true,
-    continue_final_message: i64 = chat_render::CONTINUE_NONE,
+    continue_final_message: chat_render::Continue = chat_render::Continue.None,
     tools: const Tool[:] = [],
-    tool_choice: i64 = chat_render::TOOL_CHOICE_AUTO,
+    tool_choice: chat_render::ToolChoice = chat_render::ToolChoice.Auto,
     parallel_tool_calls: bool = false,
-    reasoning_format: i64 = chat_render::REASONING_NONE,
+    reasoning_format: chat_render::ReasoningFormat = chat_render::ReasoningFormat.None,
     enable_thinking: bool = true,
     kwargs: const KV[:] = [],
     force_pure_content: bool = false,
@@ -201,7 +201,7 @@ fn fixed_messages(t: chat_render::Template, msgs_json: const u8[:], out: u8[>..]
         for i in jinja::arr_len(arr) {
             let m = jinja::arr_at(arr, i);
             let r = jinja::obj_get_name(m, "role");
-            if r >= 0 && jinja::kind(r) == jinja::K_STRING && jinja::sbytes(r) == "developer" {
+            if r >= 0 && jinja::kind(r) == jinja::ValKind.String && jinja::sbytes(r) == "developer" {
                 jinja::obj_set_name(m, "role", jinja::mk_str("system", false));
             }
         }
@@ -219,13 +219,13 @@ fn fixed_messages(t: chat_render::Template, msgs_json: const u8[:], out: u8[>..]
         for i in jinja::arr_len(arr) {
             let m = jinja::arr_at(arr, i);
             let tcs = jinja::obj_get_name(m, "tool_calls");
-            guard tcs >= 0 && jinja::kind(tcs) == jinja::K_ARRAY else { continue; }
+            guard tcs >= 0 && jinja::kind(tcs) == jinja::ValKind.Array else { continue; }
             for k in jinja::arr_len(tcs) {
                 let tc = jinja::arr_at(tcs, k);
                 let f = jinja::obj_get_name(tc, "function");
-                guard f >= 0 && jinja::kind(f) == jinja::K_OBJECT else { continue; }
+                guard f >= 0 && jinja::kind(f) == jinja::ValKind.Object else { continue; }
                 let a = jinja::obj_get_name(f, "arguments");
-                guard a >= 0 && jinja::kind(a) == jinja::K_STRING else { continue; }
+                guard a >= 0 && jinja::kind(a) == jinja::ValKind.String else { continue; }
                 let text = str(jinja::sbytes(a));
                 jinja::obj_set_name(f, "arguments", jinja::from_json(text, false));
             }
@@ -276,7 +276,7 @@ fn system_not_supported(arr: i64) {
         let second = jinja::arr_at(arr, 1);
         let a = jinja::obj_get_name(first, "content");
         let b = jinja::obj_get_name(second, "content");
-        if jinja::kind(a) != jinja::K_STRING || jinja::kind(b) != jinja::K_STRING {
+        if jinja::kind(a) != jinja::ValKind.String || jinja::kind(b) != jinja::ValKind.String {
             jinja::fail_plain("[json.exception.type_error.302] type must be string, but is array");
         }
         var joined: u8[>..] = [];
@@ -302,12 +302,12 @@ var cur_ts = Templates { .. };
 var raw_messages: u8[>..] = [];
 var schema_text: u8[>..] = [];
 var grammar_text: u8[>..] = [];
-var cur_tool_choice = 0;
+var cur_tool_choice = chat_render::ToolChoice.Auto;
 var cur_parallel = false;
-var cur_reasoning_format = 0;
+var cur_reasoning_format = chat_render::ReasoningFormat.None;
 var cur_enable_thinking = true;
 var cur_add_gen = true;
-var cur_cont = 0;
+var cur_cont = chat_render::Continue.None;
 var cur_has_cont_msg = false;
 
 // common_chat_templates_apply with jinja: the prompt in chat_render's
@@ -331,7 +331,7 @@ fn apply(ts: Templates, inp: Inputs) -> bool {
     var l_cr: u8[>..] = [];
     var l_cc: u8[>..] = [];
     var has_cont_msg = false;
-    if cont != chat_render::CONTINUE_NONE {
+    if cont != chat_render::Continue.None {
         add_gen = false;
         if inp.messages.len > 0 {
             let last = inp.messages[inp.messages.len - 1];
@@ -339,9 +339,9 @@ fn apply(ts: Templates, inp: Inputs) -> bool {
             has_cont_msg = true;
             l_cr.append(last.reasoning);
             render_content(l_cc, last);
-            if cont == chat_render::CONTINUE_AUTO {
-                cont = chat_render::CONTINUE_CONTENT;
-                if last.reasoning.len > 0 && last.content.len == 0 && last.parts.len == 0 { cont = chat_render::CONTINUE_REASONING; }
+            if cont == chat_render::Continue.Auto {
+                cont = chat_render::Continue.Content;
+                if last.reasoning.len > 0 && last.content.len == 0 && last.parts.len == 0 { cont = chat_render::Continue.Reasoning; }
             }
         }
     }
@@ -410,7 +410,7 @@ fn apply_current() -> bool {
     }
     exception::try<jinja::Fail>(fix) { f => err.clear(); err.append(jinja::err); };
     if !ok { return false; }
-    if tools_text.len > 0 && cur_tool_choice != chat_render::TOOL_CHOICE_NONE && grammar_text.len > 0 {
+    if tools_text.len > 0 && cur_tool_choice != chat_render::ToolChoice.None && grammar_text.len > 0 {
         err.clear();
         err.append("Cannot specify grammar with tools");
         return false;
@@ -434,7 +434,7 @@ fn apply_current() -> bool {
         add_eos: cur_ts.add_eos,
         mark_input: true,
     };
-    if t.handler >= 0 {
+    if t.handler != chat_render::Handler.None {
         if !chat_parsers::try_init(t, g) {
             err.clear();
             err.append(chat_parsers::err);
@@ -526,7 +526,7 @@ fn parse_tokens(output: const u8[:], toks: const i32[:], is_partial: bool) -> bo
     if !is_partial { flags |= peg::FLAG_COMPLETE; }
     let r, ok = peg::parse_tokens(a, input_text, input_toks, flags, 0);
     if !ok { err.clear(); err.append(peg::err); return false; }
-    if r.kind == peg::FAIL {
+    if r.kind == peg::ResultKind.Fail {
         if is_partial && r.end > 0 {
             map_result();
             return true;
@@ -540,11 +540,11 @@ fn parse_tokens(output: const u8[:], toks: const i32[:], is_partial: bool) -> bo
 }
 
 fn map_result() {
-    if chat_render::format == chat_render::FORMAT_PEG_GEMMA4 { chat_parsers::map_gemma4(); }
-    else if chat_render::format == chat_render::FORMAT_PEG_MINIMAX_M3 { chat_parsers::map_minimax_m3(); }
+    if chat_render::format == chat_render::Format.PegGemma4 { chat_parsers::map_gemma4(); }
+    else if chat_render::format == chat_render::Format.PegMinimaxM3 { chat_parsers::map_minimax_m3(); }
     else { chat_peg::map_parse(); }
 }
 
-fn format_name(f: i64) -> const u8[:] {
-    return match f { 0 => "Content-only", 1 => "peg-simple", 2 => "peg-native", 3 => "peg-gemma4", 4 => "peg-minimax-m3", _ => "unknown" };
+fn format_name(f: chat_render::Format) -> const u8[:] {
+    return match f { ContentOnly => "Content-only", PegSimple => "peg-simple", PegNative => "peg-native", PegGemma4 => "peg-gemma4", PegMinimaxM3 => "peg-minimax-m3" };
 }

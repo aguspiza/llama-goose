@@ -151,26 +151,14 @@ fn logf(x: f32) -> f32 { log(x) }
 // the samplers
 //
 
-let KIND_LOGIT_BIAS = 0;
-let KIND_PENALTIES = 1;
-let KIND_TOP_N_SIGMA = 2;
-let KIND_TOP_K = 3;
-let KIND_TYPICAL = 4;
-let KIND_TOP_P = 5;
-let KIND_MIN_P = 6;
-let KIND_XTC = 7;
-let KIND_TEMP_EXT = 8;
-let KIND_GREEDY = 9;
-let KIND_DIST = 10;
-let KIND_DRY = 11;
-let KIND_INFILL = 12;
-let KIND_ADAPTIVE_P = 13;
-let KIND_MIROSTAT = 14;
-let KIND_MIROSTAT_V2 = 15;
+enum Kind {
+    LogitBias, Penalties, TopNSigma, TopK, Typical, TopP, MinP, Xtc, TempExt, Greedy, Dist, Dry,
+    Infill, AdaptiveP, Mirostat, MirostatV2,
+}
 
 // One sampler of the chain, with its parameters (a, b, c, k, n by kind), its
 // RNG and mirostat's running target mu.
-struct Sampler { kind: i64, a: f32, b: f32, c: f32, k: i64, min_keep: i64, rng: Mt19937, seed: u32, n: i64, mu: f32 }
+struct Sampler { kind: Kind, a: f32, b: f32, c: f32, k: i64, min_keep: i64, rng: Mt19937, seed: u32, n: i64, mu: f32 }
 
 // The parameters common_params_sampling gives, with its defaults.
 struct Params {
@@ -201,8 +189,8 @@ struct Params {
     mirostat_eta: f32 = 0.10,
     top_n_sigma: f32 = -1.0,
     // the configurable part of the chain, in order (common_sampler_type)
-    order: i64[..16] = [KIND_PENALTIES, KIND_DRY, KIND_TOP_N_SIGMA, KIND_TOP_K, KIND_TYPICAL,
-                        KIND_TOP_P, KIND_MIN_P, KIND_XTC, KIND_TEMP_EXT],
+    order: Kind[..16] = [Kind.Penalties, Kind.Dry, Kind.TopNSigma, Kind.TopK, Kind.Typical,
+                        Kind.TopP, Kind.MinP, Kind.Xtc, Kind.TempExt],
     // the parameters the user gave (USER_* bits): the model's own
     // recommendations (general.sampling.*) do not override them
     user_set: u64 = 0,
@@ -259,8 +247,8 @@ fn apply_model_defaults(p: Params&, meta: gguf::Ctx) {
         if ok { dst = v as f32; }
     }
     if p.user_set & USER_SAMPLERS == 0 && meta_str(meta, "general.sampling.sequence", buf) {
-        var order: i64[..16] = [];
-        each_split(buf, ';') { if order.len < order.cap { let k = kind_from_name(trim(it)); if k >= 0 { order.push(k); } } };
+        var order: Kind[..16] = [];
+        each_split(buf, ';') { if order.len < order.cap { let k, ok = kind_from_name(trim(it)); if ok { order.push(k); } } };
         if order.len > 0 { p.order = order; }
     }
     get_int("general.sampling.top_k", p.top_k, USER_TOP_K);
@@ -276,20 +264,20 @@ fn apply_model_defaults(p: Params&, meta: gguf::Ctx) {
     get_float("general.sampling.mirostat_eta", p.mirostat_eta, USER_MIROSTAT_ETA);
 }
 
-// common_sampler_types_from_names, with its alternative names; -1 if unknown.
-fn kind_from_name(name: const u8[:]) -> i64 {
-    if name == "dry" { return KIND_DRY; }
-    if name == "top_k" || name == "top-k" { return KIND_TOP_K; }
-    if name == "top_p" || name == "top-p" || name == "nucleus" { return KIND_TOP_P; }
-    if name == "top_n_sigma" || name == "top-n-sigma" || name == "top-nsigma" { return KIND_TOP_N_SIGMA; }
-    if name == "min_p" || name == "min-p" { return KIND_MIN_P; }
-    if name == "xtc" { return KIND_XTC; }
-    if name == "typ_p" || name == "typical_p" || name == "typical" || name == "typ-p" || name == "typical-p" { return KIND_TYPICAL; }
-    if name == "temperature" || name == "temp" { return KIND_TEMP_EXT; }
-    if name == "penalties" { return KIND_PENALTIES; }
-    if name == "infill" { return KIND_INFILL; }
-    if name == "adaptive_p" || name == "adaptive-p" { return KIND_ADAPTIVE_P; }
-    return -1;
+// common_sampler_types_from_names, with its alternative names; ok false if unknown.
+fn kind_from_name(name: const u8[:]) -> Kind, bool {
+    if name == "dry" { return Kind.Dry, true; }
+    if name == "top_k" || name == "top-k" { return Kind.TopK, true; }
+    if name == "top_p" || name == "top-p" || name == "nucleus" { return Kind.TopP, true; }
+    if name == "top_n_sigma" || name == "top-n-sigma" || name == "top-nsigma" { return Kind.TopNSigma, true; }
+    if name == "min_p" || name == "min-p" { return Kind.MinP, true; }
+    if name == "xtc" { return Kind.Xtc, true; }
+    if name == "typ_p" || name == "typical_p" || name == "typical" || name == "typ-p" || name == "typical-p" { return Kind.Typical, true; }
+    if name == "temperature" || name == "temp" { return Kind.TempExt, true; }
+    if name == "penalties" { return Kind.Penalties, true; }
+    if name == "infill" { return Kind.Infill, true; }
+    if name == "adaptive_p" || name == "adaptive-p" { return Kind.AdaptiveP, true; }
+    return Kind.Dist, false;
 }
 
 struct Count { id: i32, n: i32 }
@@ -417,9 +405,9 @@ fn count_add(ch: Chain&, id: i32, d: i32) {
     ch.counts[i] = Count { id: id, n: d };
 }
 
-fn new_sampler(kind: i64) -> Sampler { Sampler { kind: kind, rng: Mt19937 { mt: [0; 624], index: 624 }, .. } }
+fn new_sampler(kind: Kind) -> Sampler { Sampler { kind: kind, rng: Mt19937 { mt: [0; 624], index: 624 }, .. } }
 
-fn seeded(kind: i64, seed: u32) -> Sampler {
+fn seeded(kind: Kind, seed: u32) -> Sampler {
     var s = new_sampler(kind);
     s.seed = seed;
     mt_seed(s.rng, rng_seed(seed));
@@ -432,15 +420,15 @@ fn init(ch: Chain&, p: Params) {
     ch.prev.clear();
     ch.counts.clear();
     // the model's suppressed tokens, as a logit bias of -inf
-    if vocab::suppress_tokens.len > 0 { ch.samplers.push(new_sampler(KIND_LOGIT_BIAS)); }
+    if vocab::suppress_tokens.len > 0 { ch.samplers.push(new_sampler(Kind.LogitBias)); }
     ch.dry_last.clear();
     guard p.penalty_last_n <= 4096 else { abort("penalty_last_n above 4096: not supported"); }
     if p.mirostat == 1 || p.mirostat == 2 {
         // the temperature, then mirostat, which draws the token
-        var t = new_sampler(KIND_TEMP_EXT);
+        var t = new_sampler(Kind.TempExt);
         t.a = p.temp;
         ch.samplers.push(t);
-        var m = seeded(if p.mirostat == 1 { KIND_MIROSTAT } else { KIND_MIROSTAT_V2 }, p.seed);
+        var m = seeded(if p.mirostat == 1 { Kind.Mirostat } else { Kind.MirostatV2 }, p.seed);
         m.a = p.mirostat_tau;
         m.b = p.mirostat_eta;
         m.mu = 2.0 * p.mirostat_tau;
@@ -453,7 +441,7 @@ fn init(ch: Chain&, p: Params) {
     for kind in p.order {
         var s = new_sampler(kind);
         match kind {
-            KIND_DRY => {
+            Dry => {
                 // a DRY sampler that cannot penalize anything is left out
                 let last_n = max(p.dry_penalty_last_n, 0);
                 guard p.dry_multiplier != 0.0 && p.dry_base >= 1.0 && last_n != 0 else { continue; }
@@ -461,37 +449,38 @@ fn init(ch: Chain&, p: Params) {
                 s.a = p.dry_multiplier; s.b = p.dry_base; s.k = p.dry_allowed_length; s.n = last_n;
                 dry_process_breakers(p.dry_breakers);
             },
-            KIND_PENALTIES => {
+            Penalties => {
                 s.k = if p.penalty_last_n < 0 { 0 } else { p.penalty_last_n };
                 s.a = p.penalty_repeat; s.b = p.penalty_freq; s.c = p.penalty_present;
             },
-            KIND_TOP_N_SIGMA => { s.a = p.top_n_sigma; },
-            KIND_TOP_K => { s.k = p.top_k; },
-            KIND_TYPICAL => { s.a = p.typ_p; s.min_keep = p.min_keep; },
-            KIND_TOP_P => { s.a = p.top_p; s.min_keep = p.min_keep; },
-            KIND_MIN_P => { s.a = p.min_p; s.min_keep = p.min_keep; },
-            KIND_XTC => {
-                s = seeded(KIND_XTC, p.seed);
+            TopNSigma => { s.a = p.top_n_sigma; },
+            TopK => { s.k = p.top_k; },
+            Typical => { s.a = p.typ_p; s.min_keep = p.min_keep; },
+            TopP => { s.a = p.top_p; s.min_keep = p.min_keep; },
+            MinP => { s.a = p.min_p; s.min_keep = p.min_keep; },
+            Xtc => {
+                s = seeded(Kind.Xtc, p.seed);
                 s.a = p.xtc_probability; s.b = p.xtc_threshold; s.min_keep = p.min_keep;
             },
-            KIND_TEMP_EXT => { s.a = p.temp; s.b = p.dynatemp_range; s.c = p.dynatemp_exponent; },
+            TempExt => { s.a = p.temp; s.b = p.dynatemp_range; s.c = p.dynatemp_exponent; },
             _ => { abort("infill and adaptive-p sampling: not ported yet"); },
         }
         ch.samplers.push(s);
     }
     // greedy when the chain ends in temp 0 or top-k 1 (and no probabilities are asked for)
-    let last = if p.order.len > 0 { p.order[p.order.len - 1] } else { -1 };
-    let greedy = p.n_probs == 0 && p.order.len > 0 &&
-                 ((last == KIND_TEMP_EXT && p.temp == 0.0 && p.dynatemp_range == 0.0) ||
-                  (last == KIND_TOP_K && p.top_k == 1));
-    ch.samplers.push(if greedy { new_sampler(KIND_GREEDY) } else { seeded(KIND_DIST, p.seed) });
+    let greedy = p.n_probs == 0 && p.order.len > 0 && (match p.order[p.order.len - 1] {
+        TempExt => p.temp == 0.0 && p.dynatemp_range == 0.0,
+        TopK => p.top_k == 1,
+        _ => false,
+    });
+    ch.samplers.push(if greedy { new_sampler(Kind.Greedy) } else { seeded(Kind.Dist, p.seed) });
 }
 
 fn penalties_disabled(s: Sampler&) -> bool { s.k == 0 || (s.a == 1.0 && s.b == 0.0 && s.c == 0.0) }
 
 fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
     match s.kind {
-        KIND_LOGIT_BIAS => {
+        LogitBias => {
             for t in vocab::suppress_tokens {
                 if t >= 0 && a.size > t && c[a.start + t].id == t {
                     c[a.start + t].logit += NEG_INF;
@@ -500,7 +489,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
                 }
             }
         },
-        KIND_PENALTIES => {
+        Penalties => {
             guard !penalties_disabled(s) else { return; }
             for &x in view(c, a) {
                 let count = count_of(ch, x.id);
@@ -510,7 +499,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             }
             a.sorted = false;
         },
-        KIND_TOP_N_SIGMA => {
+        TopNSigma => {
             guard s.a > 0.0 && a.size > 1 else { return; }
             let xs = view(c, a);
             var mx = xs[0].logit;
@@ -528,13 +517,13 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             let sd: f32 = if valid > 0 { sqrt(acc / valid) } else { 0.0 };
             for &x in xs { if x.logit < mx - s.a * sd { x.logit = NEG_INF; } }
         },
-        KIND_TOP_K => {
+        TopK => {
             guard s.k > 0 else { return; }
             let k = min(s.k, a.size);
             if !a.sorted { top_k_desc(view(c, a), k); a.sorted = true; }
             a.size = k;
         },
-        KIND_TYPICAL => {
+        Typical => {
             guard s.a < 1.0 else { return; }
             softmax_impl(c, a, true);
             let xs = view(c, a);
@@ -556,7 +545,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             a.size = kept.len;
             a.sorted = false;
         },
-        KIND_TOP_P => {
+        TopP => {
             guard s.a < 1.0 else { return; }
             softmax_impl(c, a, false);
             if !a.sorted { sort_desc(view(c, a)); a.sorted = true; }
@@ -569,7 +558,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             }
             a.size = last_idx;
         },
-        KIND_MIN_P => {
+        MinP => {
             guard s.a > 0.0 && a.size > 0 else { return; }
             var applied = false;
             if !a.sorted {
@@ -598,7 +587,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
                 a.size = i;
             }
         },
-        KIND_XTC => {
+        Xtc => {
             guard s.a > 0.0 && s.b <= 0.5 && a.size >= 2 else { return; }
             let chance = uniform_f32(s.rng);
             guard chance <= s.a else { return; }
@@ -611,7 +600,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
                 a.size -= pos_last;
             }
         },
-        KIND_TEMP_EXT => {
+        TempExt => {
             let temp = s.a;
             let delta = s.b;
             if delta > 0.0 {
@@ -634,8 +623,8 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
                 temp_impl(view(c, a), temp);
             }
         },
-        KIND_DRY => { dry_apply(ch, c, s, a); },
-        KIND_MIROSTAT => {
+        Dry => { dry_apply(ch, c, s, a); },
+        Mirostat => {
             softmax_impl(c, a, true);
             // the exponent of the Zipf law the top m tokens follow
             let xs = view(c, a);
@@ -663,7 +652,7 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             softmax_impl(c, a, true);
             mirostat_draw(c, s, a);
         },
-        KIND_MIROSTAT_V2 => {
+        MirostatV2 => {
             softmax_impl(c, a, true);
             // the tokens whose surprise is above mu go
             let xs = view(c, a);
@@ -673,12 +662,12 @@ fn apply(ch: Chain&, c: Cand[>..]&, s: Sampler&, a: Cands&) {
             softmax_impl(c, a, true);
             mirostat_draw(c, s, a);
         },
-        KIND_GREEDY => {
+        Greedy => {
             let xs = view(c, a);
             a.selected = 0;
             for i in 1..xs.len { if xs[i].logit > xs[a.selected].logit { a.selected = i; } }
         },
-        _ => {     // KIND_DIST
+        _ => {     // Kind.Dist
             if a.size == 0 { a.selected = -1; return; }
             a.selected = 0;
             let xs = view(c, a);
@@ -851,17 +840,17 @@ fn reset(ch: Chain&) {
     ch.counts.clear();
     ch.dry_last.clear();
     for &s in ch.samplers {
-        if s.kind == KIND_DIST || s.kind == KIND_XTC || s.kind == KIND_MIROSTAT || s.kind == KIND_MIROSTAT_V2 {
+        if s.kind == Kind.Dist || s.kind == Kind.Xtc || s.kind == Kind.Mirostat || s.kind == Kind.MirostatV2 {
             mt_seed(s.rng, rng_seed(s.seed));
         }
-        if s.kind == KIND_MIROSTAT || s.kind == KIND_MIROSTAT_V2 { s.mu = 2.0 * s.a; }
+        if s.kind == Kind.Mirostat || s.kind == Kind.MirostatV2 { s.mu = 2.0 * s.a; }
     }
 }
 
 // The windows of the penalties and DRY: their accept.
 fn accept(ch: Chain&, token: i32) {
     for s in ch.samplers {
-        if s.kind == KIND_DRY {
+        if s.kind == Kind.Dry {
             if ch.dry_last.len >= s.n {
                 for i in 0..ch.dry_last.len - 1 { ch.dry_last[i] = ch.dry_last[i + 1]; }
                 ch.dry_last.pop();
@@ -869,7 +858,7 @@ fn accept(ch: Chain&, token: i32) {
             ch.dry_last.push(token);
             continue;
         }
-        guard s.kind == KIND_PENALTIES && s.k > 0 else { continue; }
+        guard s.kind == Kind.Penalties && s.k > 0 else { continue; }
 
         count_add(ch, token, 1);
         if ch.prev.len >= s.k {

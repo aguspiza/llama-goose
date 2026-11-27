@@ -27,7 +27,7 @@ struct Template {
     eos_at: i64 = 0,
     eos_len: i64 = 0,
     // chat's: the dedicated handler, or the autoparser analysis
-    handler: i64 = -1,
+    handler: Handler = Handler.None,
     analysis: i64 = -1,
 }
 
@@ -51,31 +51,23 @@ fn make_template(src: const u8[:], bos: const u8[:], eos: const u8[:]) -> Templa
     return Template { prog: prog, caps: caps, bos_at: b0, bos_len: bos.len, eos_at: e0, eos_len: eos.len, .. };
 }
 
-let TOOL_CHOICE_AUTO = 0;
-let TOOL_CHOICE_REQUIRED = 1;
-let TOOL_CHOICE_NONE = 2;
+enum ToolChoice { Auto, Required, None }
 
-let REASONING_NONE = 0;
-let REASONING_AUTO = 1;
-let REASONING_DEEPSEEK_LEGACY = 2;
-let REASONING_DEEPSEEK = 3;
+enum ReasoningFormat { None, Auto, DeepseekLegacy, Deepseek }
 
-let CONTINUE_NONE = 0;
-let CONTINUE_AUTO = 1;
-let CONTINUE_REASONING = 2;
-let CONTINUE_CONTENT = 3;
+enum Continue { None, Auto, Reasoning, Content }
 
 // autoparser::generation_params, its JSON as text ("" for none).
 struct Gen {
     messages: const u8[:] = "[]",
     tools: const u8[:] = "",
-    tool_choice: i64 = TOOL_CHOICE_AUTO,
+    tool_choice: ToolChoice = ToolChoice.Auto,
     json_schema: const u8[:] = "",
     parallel_tool_calls: bool = true,
-    reasoning_format: i64 = REASONING_AUTO,
+    reasoning_format: ReasoningFormat = ReasoningFormat.Auto,
     grammar: const u8[:] = "",
     add_generation_prompt: bool = false,
-    continue_final_message: i64 = CONTINUE_NONE,
+    continue_final_message: Continue = Continue.None,
     // the message continued: whether there is one, its reasoning and content
     has_continue_msg: bool = false,
     continue_reasoning: const u8[:] = "",
@@ -87,7 +79,7 @@ struct Gen {
     mark_input: bool = true,
 }
 
-fn has_continuation(g: Gen) -> bool { g.continue_final_message != CONTINUE_NONE && g.has_continue_msg }
+fn has_continuation(g: Gen) -> bool { g.continue_final_message != Continue.None && g.has_continue_msg }
 
 // direct_apply_impl's overrides of the messages and tools, and more context.
 struct Override {
@@ -107,20 +99,20 @@ var prompt_parts: PromptPart[>..<] = [];
 fn normalize(t: Template, messages: i64, mark: bool) {
     let only_string = t.caps.supports_string_content && !t.caps.supports_typed_content;
     let only_typed = !t.caps.supports_string_content && t.caps.supports_typed_content;
-    guard (only_string || only_typed) && jinja::kind(messages) == jinja::K_ARRAY else { return; }
+    guard (only_string || only_typed) && jinja::kind(messages) == jinja::ValKind.Array else { return; }
     for i in jinja::arr_len(messages) {
         let m = jinja::arr_at(messages, i);
-        guard jinja::kind(m) == jinja::K_OBJECT else { continue; }
+        guard jinja::kind(m) == jinja::ValKind.Object else { continue; }
         let it = jinja::obj_get_name(m, "content");
         guard it >= 0 else { continue; }
-        if only_typed && jinja::kind(it) == jinja::K_STRING {
+        if only_typed && jinja::kind(it) == jinja::ValKind.String {
             let part = jinja::mk_object();
             jinja::obj_set_name(part, "type", jinja::mk_str("text", mark));
             jinja::obj_set_name(part, "text", it);
             let parts = jinja::mk_array();
             jinja::arr_push(parts, part);
             jinja::obj_set_name(m, "content", parts);
-        } else if only_string && jinja::kind(it) == jinja::K_ARRAY {
+        } else if only_string && jinja::kind(it) == jinja::ValKind.Array {
             jinja::obj_set_name(m, "content", jinja::mk_str(concat_content_parts(it), mark));
         }
     }
@@ -133,7 +125,7 @@ fn concat_content_parts(parts: i64) -> u8[>..] {
     for i in jinja::arr_len(parts) {
         let part = jinja::arr_at(parts, i);
         let ty = jinja::obj_get_name(part, "type");
-        let type_name = if ty >= 0 && jinja::kind(ty) == jinja::K_STRING { jinja::sbytes(ty) } else { "" };
+        let type_name = if ty >= 0 && jinja::kind(ty) == jinja::ValKind.String { jinja::sbytes(ty) } else { "" };
         var add_new_line = true;
         if type_name == "text" {
             add_new_line = !last_was_media && text.len > 0;
@@ -146,7 +138,7 @@ fn concat_content_parts(parts: i64) -> u8[>..] {
         }
         if add_new_line { text.push('\n'); }
         let tx = jinja::obj_get_name(part, "text");
-        if tx >= 0 && jinja::kind(tx) == jinja::K_STRING { text.append(jinja::sbytes(tx)); }
+        if tx >= 0 && jinja::kind(tx) == jinja::ValKind.String { text.append(jinja::sbytes(tx)); }
     }
     return text;
 }
@@ -155,7 +147,7 @@ fn concat_content_parts(parts: i64) -> u8[>..] {
 fn merge_into(o: i64, json_text: const u8[:], mark: bool) {
     guard json_text.len > 0 else { return; }
     let v = jinja::from_json(json_text, mark);
-    guard jinja::kind(v) == jinja::K_OBJECT else { return; }
+    guard jinja::kind(v) == jinja::ValKind.Object else { return; }
     for k in jinja::obj_len(v) {
         jinja::obj_set_name(o, jinja::sbytes(jinja::obj_key(v, k)), jinja::obj_value(v, k));
     }
@@ -187,9 +179,9 @@ fn direct_apply(t: Template, g: Gen, ov: Override) {
     merge_into(inp, ov.context, mark);
     if g.add_generation_prompt { jinja::obj_set_name(inp, "add_generation_prompt", jinja::mk_bool(true)); }
     let pr = jinja::obj_get_name(inp, "preserve_reasoning");
-    if pr >= 0 && jinja::kind(pr) == jinja::K_BOOL { jinja::caps_apply_preserve_reasoning(c, jinja::vals[pr].i != 0); }
+    if pr >= 0 && jinja::kind(pr) == jinja::ValKind.Bool { jinja::caps_apply_preserve_reasoning(c, jinja::vals[pr].i != 0); }
     let re = jinja::obj_get_name(inp, "reasoning_effort");
-    if re >= 0 && jinja::kind(re) == jinja::K_STRING && jinja::sbytes(re).len > 0 {
+    if re >= 0 && jinja::kind(re) == jinja::ValKind.String && jinja::sbytes(re).len > 0 {
         jinja::caps_apply_reasoning_effort(c, jinja::sbytes(re));
     }
     for k in jinja::obj_len(inp) {
@@ -244,7 +236,7 @@ fn append_part(text: const u8[:], input: bool) {
 fn generation_prompt(t: Template, g: Gen, ov: Override, out) {
     var params = g;
     params.add_generation_prompt = false;
-    params.continue_final_message = CONTINUE_NONE;
+    params.continue_final_message = Continue.None;
     direct_apply(t, params, ov);
     var without: u8[>..] = [];
     without.append(prompt);
@@ -259,11 +251,11 @@ fn generation_prompt(t: Template, g: Gen, ov: Override, out) {
 recursive fn dump(out: u8[>..]&, v: i64) {
     let x = jinja::vals[v];
     let k = x.kind;
-    if k == jinja::K_BOOL { out.append(if x.i != 0 { "true" } else { "false" }); return; }
-    if k == jinja::K_INT { format(out, x.i); return; }
-    if k == jinja::K_FLOAT { number::float_json(out, x.f); return; }
-    if k == jinja::K_STRING { jinja::json_string(out, jinja::sbytes(v)); return; }
-    if k == jinja::K_ARRAY {
+    if k == jinja::ValKind.Bool { out.append(if x.i != 0 { "true" } else { "false" }); return; }
+    if k == jinja::ValKind.Int { format(out, x.i); return; }
+    if k == jinja::ValKind.Float { number::float_json(out, x.f); return; }
+    if k == jinja::ValKind.String { jinja::json_string(out, jinja::sbytes(v)); return; }
+    if k == jinja::ValKind.Array {
         out.push('[');
         for i in x.n {
             if i > 0 { out.push(','); }
@@ -272,7 +264,7 @@ recursive fn dump(out: u8[>..]&, v: i64) {
         out.push(']');
         return;
     }
-    if k == jinja::K_OBJECT {
+    if k == jinja::ValKind.Object {
         out.push('{');
         for i in jinja::obj_len(v) {
             if i > 0 { out.push(','); }
@@ -290,18 +282,25 @@ recursive fn dump(out: u8[>..]&, v: i64) {
 // what an apply makes (common_chat_params), besides the prompt
 //
 
-let FORMAT_CONTENT_ONLY = 0;
-let FORMAT_PEG_SIMPLE = 1;
-let FORMAT_PEG_NATIVE = 2;
-let FORMAT_PEG_GEMMA4 = 3;
-let FORMAT_PEG_MINIMAX_M3 = 4;
+enum Format { ContentOnly, PegSimple, PegNative, PegGemma4, PegMinimaxM3 }
 
-let TRIGGER_TOKEN = 0;
-let TRIGGER_WORD = 1;
-let TRIGGER_PATTERN = 2;
-let TRIGGER_PATTERN_FULL = 3;
+// chat_parsers' dedicated handlers.
+enum Handler {
+    None,       // the autoparser's
+    Ministral3, LlmJpHarmony, HarmonyXml, GptOss, MuseSpark, MuseGlimmer, FunctionaryV3_2,
+    KimiK2, KimiK3, K2Horizon, Ling3, Cohere2moe, Lfm2, Lfm2_5, GigachatV3, MinimaxM3,
+    DeepseekV3_2, Gemma4, Minicpm5, TranslateGemma, Qwen3Coder, Inkling,
+}
 
-var format = FORMAT_CONTENT_ONLY;
+enum Trigger { Token, Word, Pattern, PatternFull }
+
+// common_grammar_trigger_type's number, as JSON carries it; an unknown one is a word.
+fn trigger_number(t: Trigger) -> i64 { match t { Token => 0, Word => 1, Pattern => 2, PatternFull => 3 } }
+fn trigger_of(n: i64) -> Trigger {
+    match n { 0 => Trigger.Token, 2 => Trigger.Pattern, 3 => Trigger.PatternFull, _ => Trigger.Word }
+}
+
+var format = Format.ContentOnly;
 var grammar: u8[>..] = [];
 var grammar_lazy = false;
 var gen_prompt: u8[>..] = [];
@@ -312,7 +311,7 @@ var thinking_ends: u8[>..] = [];
 var preserved_tokens: u8[>..] = [];
 var additional_stops: u8[>..] = [];
 // triggers: their types, and their values as a list
-var trigger_types: i64[>..] = [];
+var trigger_types: Trigger[>..] = [];
 var trigger_values: u8[>..] = [];
 // the parser of the output: a peg arena, -1 for content only
 var parser = -1;
@@ -323,7 +322,7 @@ var user_start: u8[>..] = [];
 fn clear_params() {
     // a parser knows the special tokens only if it asks (build_chat_peg_parser(inputs.specials, ...))
     peg::use_tokens = false;
-    format = FORMAT_CONTENT_ONLY;
+    format = Format.ContentOnly;
     grammar.clear();
     grammar_lazy = false;
     gen_prompt.clear();
@@ -341,4 +340,4 @@ fn clear_params() {
 
 fn list_push(l: u8[>..]&, s: const u8[:]) { l.append(s); l.push(0); }
 
-fn add_trigger(ty: i64, value: const u8[:]) { trigger_types.push(ty); list_push(trigger_values, value); }
+fn add_trigger(ty: Trigger, value: const u8[:]) { trigger_types.push(ty); list_push(trigger_values, value); }

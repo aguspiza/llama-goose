@@ -10,17 +10,11 @@ import .number;
 
 namespace jdoc;
 
-let NULL = 0;
-let BOOL = 1;
-let INT = 2;
-let FLOAT = 3;
-let STRING = 4;
-let ARRAY = 5;
-let OBJECT = 6;
+enum Kind { Null, Bool, Int, Float, String, Array, Object }
 
 // A value: its kind, its number, its string (text[s..s + sn]), its key in
 // its object (text[k..k + kn]), and its elements or members (kids[at..at + n]).
-struct V { kind: u8, i: i64 = 0, f: f64 = 0.0, s: i64 = 0, sn: i64 = 0, k: i64 = 0, kn: i64 = 0, at: i64 = 0, n: i64 = 0 }
+struct V { kind: Kind, i: i64 = 0, f: f64 = 0.0, s: i64 = 0, sn: i64 = 0, k: i64 = 0, kn: i64 = 0, at: i64 = 0, n: i64 = 0 }
 
 var vals: V[>..] = [];
 var kids: i64[>..] = [];
@@ -41,16 +35,16 @@ fn keep(b: const u8[:]) -> i64 {
 }
 
 recursive fn convert(n: json::Node&) -> i64 {
-    var v = V { kind: NULL, k: keep(n.key), kn: n.key.len, .. };
+    var v = V { kind: Kind.Null, k: keep(n.key), kn: n.key.len, .. };
     var container = false;
     match n.val {
         Null => {},
-        Bool b => { v.kind = BOOL; v.i = if b.v { 1 } else { 0 }; },
-        Int x => { v.kind = INT; v.i = x.v; v.f = x.v; },
-        Num x => { v.kind = FLOAT; v.f = x.v; v.i = to_i64(x.v); },
-        Str x => { v.kind = STRING; v.s = keep(x.s); v.sn = x.s.len; },
-        Arr => { v.kind = ARRAY; container = true; },
-        Obj => { v.kind = OBJECT; container = true; },
+        Bool b => { v.kind = Kind.Bool; v.i = if b.v { 1 } else { 0 }; },
+        Int x => { v.kind = Kind.Int; v.i = x.v; v.f = x.v; },
+        Num x => { v.kind = Kind.Float; v.f = x.v; v.i = to_i64(x.v); },
+        Str x => { v.kind = Kind.String; v.s = keep(x.s); v.sn = x.s.len; },
+        Arr => { v.kind = Kind.Array; container = true; },
+        Obj => { v.kind = Kind.Object; container = true; },
     }
     if container {
         let mark = stack.len;
@@ -95,14 +89,14 @@ fn to_i64(v: f64) -> i64 {
 // reading; -1 stands for a value that is not there
 //
 
-fn kind(v: i64) -> i64 { if v < 0 { -1 } else { vals[v].kind } }
-fn is_null(v: i64) -> bool { v < 0 || vals[v].kind == NULL }
-fn is_str(v: i64) -> bool { kind(v) == STRING }
-fn is_bool(v: i64) -> bool { kind(v) == BOOL }
-fn is_num(v: i64) -> bool { kind(v) == INT || kind(v) == FLOAT }
-fn is_int(v: i64) -> bool { kind(v) == INT }
-fn is_arr(v: i64) -> bool { kind(v) == ARRAY }
-fn is_obj(v: i64) -> bool { kind(v) == OBJECT }
+fn kind(v: i64) -> Kind { if v < 0 { Kind.Null } else { vals[v].kind } }     // one not there: null
+fn is_null(v: i64) -> bool { v < 0 || vals[v].kind == Kind.Null }
+fn is_str(v: i64) -> bool { kind(v) == Kind.String }
+fn is_bool(v: i64) -> bool { kind(v) == Kind.Bool }
+fn is_num(v: i64) -> bool { kind(v) == Kind.Int || kind(v) == Kind.Float }
+fn is_int(v: i64) -> bool { kind(v) == Kind.Int }
+fn is_arr(v: i64) -> bool { kind(v) == Kind.Array }
+fn is_obj(v: i64) -> bool { kind(v) == Kind.Object }
 
 // Elements or members.
 fn len(v: i64) -> i64 { if is_arr(v) || is_obj(v) { vals[v].n } else { 0 } }
@@ -237,12 +231,12 @@ fn put_f32(out: u8[>..]&, v: f32) { put_num(out, v); }
 recursive fn dump(out: u8[>..]&, v: i64) {
     if v < 0 { out.append("null"); return; }
     let x = vals[v];
-    if x.kind == NULL { out.append("null"); }
-    else if x.kind == BOOL { put_bool(out, x.i != 0); }
-    else if x.kind == INT { put_int(out, x.i); }
-    else if x.kind == FLOAT { put_num(out, x.f); }
-    else if x.kind == STRING { put_str(out, text[x.s..x.s + x.sn]); }
-    else if x.kind == ARRAY {
+    if x.kind == Kind.Null { out.append("null"); }
+    else if x.kind == Kind.Bool { put_bool(out, x.i != 0); }
+    else if x.kind == Kind.Int { put_int(out, x.i); }
+    else if x.kind == Kind.Float { put_num(out, x.f); }
+    else if x.kind == Kind.String { put_str(out, text[x.s..x.s + x.sn]); }
+    else if x.kind == Kind.Array {
         out.push('[');
         for k in x.n {
             if k > 0 { out.push(','); }

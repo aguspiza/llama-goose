@@ -20,17 +20,19 @@ namespace jinja;
 // JINJA_RECURSIVE_LIMIT: how deep templates, values and calls may nest.
 let LIMIT = 128;
 
-let K_UNDEF = 0;
-let K_NONE = 1;
-let K_BOOL = 2;
-let K_INT = 3;
-let K_FLOAT = 4;
-let K_STRING = 5;
-let K_ARRAY = 6;
-let K_TUPLE = 7;      // an array that cannot change
-let K_OBJECT = 8;
-let K_FUNC = 9;
-let K_KWARG = 10;     // a keyword argument, name=value, on its way into a call
+enum ValKind {
+    Undef,
+    None,
+    Bool,
+    Int,
+    Float,
+    String,
+    Array,
+    Tuple,   // an array that cannot change
+    Object,
+    Func,
+    Kwarg,   // a keyword argument, name=value, on its way into a call
+}
 
 // What a template did with a value, which caps_get reads: the operations
 // llama.cpp's stats record, the ones anything looks at.
@@ -43,7 +45,7 @@ let FN_MACRO = -1;    // a {% macro %}: c is its node
 let FN_CALLER = -2;   // the body of a {% call %}: c is its node, d the scope it captured
 
 struct Val {
-    kind: u8,
+    kind: ValKind,
     used: bool = false,     // stats: the template read it
     ops: u8 = 0,            // stats: OP_* the template applied to it
     builtins: bool = true,  // an object with methods: not the context, a loop or a namespace
@@ -165,19 +167,19 @@ fn new_val(v: Val) -> i64 {
     return vals.len - 1;
 }
 
-fn mk_undef() -> i64 { new_val(Val { kind: K_UNDEF, .. }) }
+fn mk_undef() -> i64 { new_val(Val { kind: ValKind.Undef, .. }) }
 
 // An undefined value that says where it came from, in error messages.
 fn mk_undef_hint(hint: const u8[:]) -> i64 {
     let h = mk_str(hint, false);
-    return new_val(Val { kind: K_UNDEF, a: h, .. });
+    return new_val(Val { kind: ValKind.Undef, a: h, .. });
 }
 
-fn mk_none() -> i64 { new_val(Val { kind: K_NONE, .. }) }
+fn mk_none() -> i64 { new_val(Val { kind: ValKind.None, .. }) }
 
 fn mk_bool(b: bool) -> i64 {
     let i = if b { 1 } else { 0 };
-    return new_val(Val { kind: K_BOOL, i: i, f: i, .. });
+    return new_val(Val { kind: ValKind.Bool, i: i, f: i, .. });
 }
 
 // value_int_t: its float is the same number, or an infinity when a double
@@ -185,11 +187,11 @@ fn mk_bool(b: bool) -> i64 {
 fn mk_int(v: i64) -> i64 {
     var f = v as f64;
     if f >= 9223372036854775808.0 || (f as! i64) != v { f = if v < 0 { -1.0 / 0.0 } else { 1.0 / 0.0 }; }
-    return new_val(Val { kind: K_INT, i: v, f: f, .. });
+    return new_val(Val { kind: ValKind.Int, i: v, f: f, .. });
 }
 
 fn mk_float(v: f64) -> i64 {
-    return new_val(Val { kind: K_FLOAT, i: trunc_int(v), f: v, .. });
+    return new_val(Val { kind: ValKind.Float, i: trunc_int(v), f: v, .. });
 }
 
 // static_cast<int64_t>(v) as x86 does it: 0 for NaN and infinities (which
@@ -205,12 +207,12 @@ fn mk_str(bytes: const u8[:], input: bool) -> i64 {
     let off = text.len;
     text.append(bytes);
     parts.push(Part { off: off, len: bytes.len, input: input });
-    return new_val(Val { kind: K_STRING, i: bytes.len, a: parts.len - 1, n: 1, flat: off, .. });
+    return new_val(Val { kind: ValKind.String, i: bytes.len, a: parts.len - 1, n: 1, flat: off, .. });
 }
 
 // A string of no parts: what an empty block makes.
 fn mk_empty() -> i64 {
-    return new_val(Val { kind: K_STRING, a: parts.len, n: 0, flat: 0, .. });
+    return new_val(Val { kind: ValKind.String, a: parts.len, n: 0, flat: 0, .. });
 }
 
 // A string of the parts parts[first..]: the ones just pushed.
@@ -219,7 +221,7 @@ fn mk_parts(first: i64) -> i64 {
     for k in first..parts.len { len += parts[k].len; }
     let n = parts.len - first;
     let flat = if n == 1 { parts[first].off } else if n == 0 { 0 } else { -1 };
-    return new_val(Val { kind: K_STRING, i: len, a: first, n: n, flat: flat, .. });
+    return new_val(Val { kind: ValKind.String, i: len, a: first, n: n, flat: flat, .. });
 }
 
 // Pushes the parts of string s onto parts.
@@ -265,11 +267,11 @@ fn sbytes(s: i64) -> const u8[:] {
 
 fn part_bytes(p: Part) -> const u8[:] { text[p.off..p.off + p.len] }
 
-fn mk_array() -> i64 { new_val(Val { kind: K_ARRAY, .. }) }
+fn mk_array() -> i64 { new_val(Val { kind: ValKind.Array, .. }) }
 
-fn mk_tuple() -> i64 { new_val(Val { kind: K_TUPLE, .. }) }
+fn mk_tuple() -> i64 { new_val(Val { kind: ValKind.Tuple, .. }) }
 
-fn mk_object() -> i64 { new_val(Val { kind: K_OBJECT, .. }) }
+fn mk_object() -> i64 { new_val(Val { kind: ValKind.Object, .. }) }
 
 // Room for one more item in array or object v (a pair takes two).
 fn grow(v: i64, width: i64) {
@@ -295,12 +297,12 @@ fn arr_len(a: i64) -> i64 { vals[a].n }
 
 fn arr_at(a: i64, k: i64) -> i64 { items[vals[a].a + k] }
 
-fn is_array(v: i64) -> bool { vals[v].kind == K_ARRAY || vals[v].kind == K_TUPLE }
+fn is_array(v: i64) -> bool { vals[v].kind == ValKind.Array || vals[v].kind == ValKind.Tuple }
 
-fn kind(v: i64) -> u8 { vals[v].kind }
+fn kind(v: i64) -> ValKind { vals[v].kind }
 
 // A new array (or tuple, after kind) of the values items[from..from + n].
-fn mk_array_of(kind: u8, from: i64, n: i64) -> i64 {
+fn mk_array_of(kind: ValKind, from: i64, n: i64) -> i64 {
     let a = new_val(Val { kind: kind, .. });
     for k in n { arr_push(a, items[from + k]); }
     return a;
@@ -315,7 +317,7 @@ fn obj_value(o: i64, k: i64) -> i64 { items[vals[o].a + 2 * k + 1] }
 // A copy of object o, its pairs in the same order (the object's own copy
 // constructor: it keeps whether o has methods).
 fn obj_copy(o: i64) -> i64 {
-    let c = new_val(Val { kind: K_OBJECT, used: vals[o].used, ops: vals[o].ops, builtins: vals[o].builtins, .. });
+    let c = new_val(Val { kind: ValKind.Object, used: vals[o].used, ops: vals[o].ops, builtins: vals[o].builtins, .. });
     for k in obj_len(o) { obj_append(c, obj_key(o, k), obj_value(o, k)); }
     return c;
 }
@@ -342,7 +344,7 @@ fn obj_find(o: i64, key: i64) -> i64 {
 fn obj_find_name(o: i64, name: const u8[:]) -> i64 {
     for k in obj_len(o) {
         let key = obj_key(o, k);
-        if vals[key].kind == K_STRING && vals[key].i == name.len && sbytes(key) == name { return k; }
+        if vals[key].kind == ValKind.String && vals[key].i == name.len && sbytes(key) == name { return k; }
     }
     return -1;
 }
@@ -377,31 +379,31 @@ fn obj_get_name(o: i64, name: const u8[:]) -> i64 {
 
 fn numeric(v: i64) -> bool {
     let k = vals[v].kind;
-    return k == K_INT || k == K_FLOAT || k == K_BOOL;
+    return k == ValKind.Int || k == ValKind.Float || k == ValKind.Bool;
 }
 
 fn immutable(v: i64) -> bool {
     let k = vals[v].kind;
-    return k != K_ARRAY && k != K_OBJECT;
+    return k != ValKind.Array && k != ValKind.Object;
 }
 
 recursive fn hashable(v: i64) -> bool {
     let x = vals[v];
-    if x.kind == K_ARRAY || x.kind == K_TUPLE {
+    if x.kind == ValKind.Array || x.kind == ValKind.Tuple {
         for k in x.n {
             let e = items[x.a + k];
             if !immutable(e) || !hashable(e) { return false; }
         }
         return true;
     }
-    if x.kind == K_OBJECT {
+    if x.kind == ValKind.Object {
         for k in x.n {
             let e = items[x.a + 2 * k + 1];
             if !immutable(e) || !hashable(e) { return false; }
         }
         return true;
     }
-    return x.kind != K_UNDEF && x.kind != K_FUNC;
+    return x.kind != ValKind.Undef && x.kind != ValKind.Func;
 }
 
 // `==` (value_t::operator==, its equivalent()): numbers by their int and
@@ -410,37 +412,37 @@ recursive fn hashable(v: i64) -> bool {
 recursive fn equiv(a: i64, b: i64) -> bool {
     let x = vals[a];
     let y = vals[b];
-    if x.kind == K_INT || x.kind == K_FLOAT || x.kind == K_BOOL {
+    if x.kind == ValKind.Int || x.kind == ValKind.Float || x.kind == ValKind.Bool {
         return numeric(b) && x.i == y.i && x.f == y.f;
     }
-    if x.kind == K_STRING { return y.kind == K_STRING && x.i == y.i && sbytes(a) == sbytes(b); }
-    if x.kind == K_ARRAY || x.kind == K_TUPLE {
+    if x.kind == ValKind.String { return y.kind == ValKind.String && x.i == y.i && sbytes(a) == sbytes(b); }
+    if x.kind == ValKind.Array || x.kind == ValKind.Tuple {
         if y.kind != x.kind || !hashable(a) || !hashable(b) || x.n != y.n { return false; }
         for k in x.n {
             if !equiv(items[x.a + k], items[y.a + k]) { return false; }
         }
         return true;
     }
-    if x.kind == K_OBJECT {
-        if y.kind != K_OBJECT || !hashable(a) || !hashable(b) || x.n != y.n { return false; }
+    if x.kind == ValKind.Object {
+        if y.kind != ValKind.Object || !hashable(a) || !hashable(b) || x.n != y.n { return false; }
         for k in x.n {
             if !equiv(items[x.a + 2 * k], items[y.a + 2 * k]) { return false; }
             if !equiv(items[x.a + 2 * k + 1], items[y.a + 2 * k + 1]) { return false; }
         }
         return true;
     }
-    if x.kind == K_KWARG { return y.kind == K_KWARG && equiv(x.a, y.a) && x.b == y.b; }
+    if x.kind == ValKind.Kwarg { return y.kind == ValKind.Kwarg && equiv(x.a, y.a) && x.b == y.b; }
     return x.kind == y.kind;
 }
 
 // as_bool(): what `if` makes of a value. A function or keyword argument has none.
 fn truthy(v: i64) -> bool {
     let x = vals[v];
-    if x.kind == K_BOOL || x.kind == K_INT { return x.i != 0; }
-    if x.kind == K_FLOAT { return x.f != 0.0; }
-    if x.kind == K_STRING { return x.i > 0; }
-    if x.kind == K_ARRAY || x.kind == K_TUPLE || x.kind == K_OBJECT { return x.n > 0; }
-    if x.kind == K_NONE || x.kind == K_UNDEF { return false; }
+    if x.kind == ValKind.Bool || x.kind == ValKind.Int { return x.i != 0; }
+    if x.kind == ValKind.Float { return x.f != 0.0; }
+    if x.kind == ValKind.String { return x.i > 0; }
+    if x.kind == ValKind.Array || x.kind == ValKind.Tuple || x.kind == ValKind.Object { return x.n > 0; }
+    if x.kind == ValKind.None || x.kind == ValKind.Undef { return false; }
     fail(str(tname(v), " is not a bool value"));
     return false;
 }
@@ -448,14 +450,14 @@ fn truthy(v: i64) -> bool {
 // as_int(), for the values that have one.
 fn as_int(v: i64) -> i64 {
     let k = vals[v].kind;
-    if k == K_INT || k == K_FLOAT || k == K_BOOL { return vals[v].i; }
+    if k == ValKind.Int || k == ValKind.Float || k == ValKind.Bool { return vals[v].i; }
     fail(str(tname(v), " is not an int value"));
     return 0;
 }
 
 fn as_float(v: i64) -> f64 {
     let k = vals[v].kind;
-    if k == K_INT || k == K_FLOAT { return vals[v].f; }
+    if k == ValKind.Int || k == ValKind.Float { return vals[v].f; }
     fail(str(tname(v), " is not a float value"));
     return 0.0;
 }
@@ -463,20 +465,20 @@ fn as_float(v: i64) -> f64 {
 // value_t::type(): a value's type, as error messages name it.
 fn tname(v: i64) -> u8[>..] {
     let x = vals[v];
-    if x.kind == K_UNDEF {
+    if x.kind == ValKind.Undef {
         if x.a < 0 { return str("Undefined"); }
         return str("Undefined (hint: '", sbytes(x.a), "')");
     }
     return str(match x.kind {
-        K_NONE => "None",
-        K_BOOL => "Boolean",
-        K_INT => "Integer",
-        K_FLOAT => "Float",
-        K_STRING => "String",
-        K_ARRAY => "Array",
-        K_TUPLE => "Tuple",
-        K_OBJECT => "Object",
-        K_FUNC => "Function",
+        None => "None",
+        Bool => "Boolean",
+        Int => "Integer",
+        Float => "Float",
+        String => "String",
+        Array => "Array",
+        Tuple => "Tuple",
+        Object => "Object",
+        Func => "Function",
         _ => "KwArg",
     });
 }
@@ -508,7 +510,7 @@ fn json_string(out: u8[>..]&, s: const u8[:]) {
 // An object key's text in JSON: a float as float_json writes it, anything
 // else as its as_string().
 fn key_text(out: u8[>..]&, key: i64) {
-    if vals[key].kind == K_FLOAT { number::float_json(out, vals[key].f); } else { out.append(sbytes(as_string(key))); }
+    if vals[key].kind == ValKind.Float { number::float_json(out, vals[key].f); } else { out.append(sbytes(as_string(key))); }
 }
 
 fn key_less(a: i64, b: i64) -> bool {
@@ -529,13 +531,13 @@ var json_order: i64[>..<] = [];
 // indent < 0 writes one line; otherwise each item on a line of its own.
 recursive fn to_json(out: u8[>..]&, v: i64, lvl: i64, indent: i64, item_sep: const u8[:], key_sep: const u8[:], sort_keys: bool = false) {
     let x = vals[v];
-    if x.kind == K_NONE || x.kind == K_UNDEF { out.append("null"); return; }
-    if x.kind == K_BOOL { out.append(if x.i != 0 { "true" } else { "false" }); return; }
-    if x.kind == K_INT { format(out, x.i); return; }
-    if x.kind == K_FLOAT { number::float_json(out, x.f); return; }
-    if x.kind == K_STRING { json_string(out, sbytes(v)); return; }
-    let is_arr = x.kind == K_ARRAY || x.kind == K_TUPLE;
-    if !is_arr && x.kind != K_OBJECT { out.append("null"); return; }
+    if x.kind == ValKind.None || x.kind == ValKind.Undef { out.append("null"); return; }
+    if x.kind == ValKind.Bool { out.append(if x.i != 0 { "true" } else { "false" }); return; }
+    if x.kind == ValKind.Int { format(out, x.i); return; }
+    if x.kind == ValKind.Float { number::float_json(out, x.f); return; }
+    if x.kind == ValKind.String { json_string(out, sbytes(v)); return; }
+    let is_arr = x.kind == ValKind.Array || x.kind == ValKind.Tuple;
+    if !is_arr && x.kind != ValKind.Object { out.append("null"); return; }
     if lvl >= LIMIT { fail(str("value is nested more than ", LIMIT, " levels deep")); }
     out.push(if is_arr { '[' } else { '{' });
     let mark = json_order.len;
@@ -552,7 +554,7 @@ recursive fn to_json(out: u8[>..]&, v: i64, lvl: i64, indent: i64, item_sep: con
                 to_json(out, items[x.a + k], lvl + 1, indent, item_sep, key_sep, sort_keys);
             } else {
                 let key = items[x.a + 2 * k];
-                if vals[key].kind == K_FLOAT {
+                if vals[key].kind == ValKind.Float {
                     var t: u8[>..] = [];
                     number::float_json(t, vals[key].f);
                     json_string(out, t);
@@ -581,7 +583,7 @@ fn json_key(out: u8[>..]&, key: i64) {
 // anything else as its repr.
 recursive fn write_repr(out: u8[>..]&, v: i64) {
     let x = vals[v];
-    if x.kind == K_STRING {
+    if x.kind == ValKind.String {
         let s = sbytes(v);
         if find(s, "'") >= 0 { json_string(out, s); } else { out.push('\''); out.append(s); out.push('\''); }
         return;
@@ -592,13 +594,13 @@ recursive fn write_repr(out: u8[>..]&, v: i64) {
 // as_string() for what is not a string, as_repr() for what has no string.
 recursive fn write_text(out: u8[>..]&, v: i64) {
     let x = vals[v];
-    if x.kind == K_STRING { out.append(sbytes(v)); return; }
-    if x.kind == K_INT { format(out, x.i); return; }
-    if x.kind == K_FLOAT { number::format_float(out, x.f); return; }
-    if x.kind == K_BOOL { out.append(if x.i != 0 { "True" } else { "False" }); return; }
-    if x.kind == K_NONE { out.append("None"); return; }
-    if x.kind == K_ARRAY || x.kind == K_TUPLE {
-        let t = x.kind == K_TUPLE;
+    if x.kind == ValKind.String { out.append(sbytes(v)); return; }
+    if x.kind == ValKind.Int { format(out, x.i); return; }
+    if x.kind == ValKind.Float { number::format_float(out, x.f); return; }
+    if x.kind == ValKind.Bool { out.append(if x.i != 0 { "True" } else { "False" }); return; }
+    if x.kind == ValKind.None { out.append("None"); return; }
+    if x.kind == ValKind.Array || x.kind == ValKind.Tuple {
+        let t = x.kind == ValKind.Tuple;
         out.push(if t { '(' } else { '[' });
         for k in x.n {
             if k > 0 { out.append(", "); }
@@ -608,7 +610,7 @@ recursive fn write_text(out: u8[>..]&, v: i64) {
         out.push(if t { ')' } else { ']' });
         return;
     }
-    if x.kind == K_OBJECT {
+    if x.kind == ValKind.Object {
         out.push('{');
         for k in x.n {
             if k > 0 { out.append(", "); }
@@ -619,7 +621,7 @@ recursive fn write_text(out: u8[>..]&, v: i64) {
         out.push('}');
         return;
     }
-    if x.kind == K_FUNC {
+    if x.kind == ValKind.Func {
         out.append("Function<");
         if x.name >= 0 { out.append(sbytes(x.name)); }
         out.append(">(");
@@ -635,8 +637,8 @@ recursive fn write_text(out: u8[>..]&, v: i64) {
 // the rest; undefined, functions and keyword arguments have none.
 fn as_string(v: i64) -> i64 {
     let k = vals[v].kind;
-    if k == K_STRING { return v; }
-    if k == K_UNDEF || k == K_FUNC || k == K_KWARG { fail(str(tname(v), " is not a string value")); }
+    if k == ValKind.String { return v; }
+    if k == ValKind.Undef || k == ValKind.Func || k == ValKind.Kwarg { fail(str(tname(v), " is not a string value")); }
     var out: u8[>..] = [];
     write_text(out, v);
     return mk_str(out, false);
@@ -736,7 +738,7 @@ fn parse_json_string(s: const u8[:], pos: i64&, mark: bool) -> i64 {
     pos = p;
     let len = text.len - off;
     parts.push(Part { off: off, len: len, input: mark });
-    return new_val(Val { kind: K_STRING, i: len, a: parts.len - 1, n: 1, flat: off, .. });
+    return new_val(Val { kind: ValKind.String, i: len, a: parts.len - 1, n: 1, flat: off, .. });
 }
 
 // The UTF-8 of code point cp, onto text.
@@ -823,12 +825,12 @@ recursive fn mark_used(v: i64, deep: bool, depth: i64) {
     vals[v].used = true;
     if !deep { return; }
     let x = vals[v];
-    if (x.kind == K_ARRAY || x.kind == K_TUPLE || x.kind == K_OBJECT) && depth >= LIMIT {
+    if (x.kind == ValKind.Array || x.kind == ValKind.Tuple || x.kind == ValKind.Object) && depth >= LIMIT {
         fail(str("value is nested more than ", LIMIT, " levels deep"));
     }
-    if x.kind == K_ARRAY || x.kind == K_TUPLE {
+    if x.kind == ValKind.Array || x.kind == ValKind.Tuple {
         for k in x.n { mark_used(items[x.a + k], deep, depth + 1); }
-    } else if x.kind == K_OBJECT {
+    } else if x.kind == ValKind.Object {
         for k in 2 * x.n { mark_used(items[x.a + k], deep, depth + 1); }
     }
 }

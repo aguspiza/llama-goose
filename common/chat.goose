@@ -19,14 +19,16 @@ struct Msg { role: const u8[:], content: const u8[:], reasoning: const u8[:] = "
 // What llama.cpp's specialized handlers do to the messages before the
 // template sees them (common_chat_template_detect_params_init); the rest
 // render them as they are.
-let HANDLER_NONE = 0;
-let HANDLER_LFM2 = 1;       // LFM2 and LFM2.5: the reasoning is also the field thinking
-let HANDLER_OTHER = 2;      // another specialized one, of those not ported
+enum Handler {
+    None,
+    Lfm2,   // LFM2 and LFM2.5: the reasoning is also the field thinking
+    Other,  // another specialized one, of those not ported
+}
 
 struct Template {
     prog: jinja::Program = jinja::Program { .. },
     caps: jinja::Caps = jinja::Caps { .. },
-    handler: i64 = HANDLER_NONE,
+    handler: Handler = Handler.None,
 }
 
 // common_chat_templates: the default template and the one for tools, the
@@ -48,19 +50,19 @@ var keep: u8[>..] = [];
 let CHATML = "{%- for message in messages -%}\n  {{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>\n' -}}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n  {{- '<|im_start|>assistant\n' -}}\n{%- endif -%}";
 
 // The handler llama.cpp picks for a template, as far as the prompt goes.
-fn detect_handler(src: const u8[:]) -> i64 {
+fn detect_handler(src: const u8[:]) -> Handler {
     fn has(s: const u8[:]) -> bool { find(src, s) >= 0 }
-    if has("[SYSTEM_PROMPT]") && has("[TOOL_CALLS]") && has("[ARGS]") && !has("[CALL_ID]") { return HANDLER_OTHER; }  // Ministral 3
-    if has("chat_format=llm-jp-harmony-v1") { return HANDLER_OTHER; }
-    if has("<|channel|>") { return HANDLER_OTHER; }                                             // GPT-OSS, Harmony XML
-    if has("<|ifm|im_start|>") && has("<ifm|tool_calls>") { return HANDLER_OTHER; }              // K2 Horizon
-    if has("<|tool_list_start|>") && has("<|tool_list_end|>") { return HANDLER_LFM2; }
-    if has("List of tools: ") && !has("<|tool_list_start|>") { return HANDLER_LFM2; }          // LFM2.5
+    if has("[SYSTEM_PROMPT]") && has("[TOOL_CALLS]") && has("[ARGS]") && !has("[CALL_ID]") { return Handler.Other; }  // Ministral 3
+    if has("chat_format=llm-jp-harmony-v1") { return Handler.Other; }
+    if has("<|channel|>") { return Handler.Other; }                                             // GPT-OSS, Harmony XML
+    if has("<|ifm|im_start|>") && has("<ifm|tool_calls>") { return Handler.Other; }              // K2 Horizon
+    if has("<|tool_list_start|>") && has("<|tool_list_end|>") { return Handler.Lfm2; }
+    if has("List of tools: ") && !has("<|tool_list_start|>") { return Handler.Lfm2; }          // LFM2.5
     if (has("dsml_token") && has("DSML") && (has("function_calls") || has("tool_calls"))) || has("｜DSML｜ calls>") {
-        return HANDLER_OTHER;                                                                     // DeepSeek V3.2/V4
+        return Handler.Other;                                                                     // DeepSeek V3.2/V4
     }
-    if has("[source_lang_code]") && has("[target_lang_code]") { return HANDLER_OTHER; }          // TranslateGemma
-    return HANDLER_NONE;
+    if has("[source_lang_code]") && has("[target_lang_code]") { return Handler.Other; }          // TranslateGemma
+    return Handler.None;
 }
 
 // A template parsed and probed (common_chat_template's constructor).
@@ -180,7 +182,7 @@ fn messages_value(t: Template, msgs: const Msg[:]) -> i64 {
         }
         if reasoning.len > 0 {
             jinja::obj_set_name(o, "reasoning_content", jinja::mk_str(reasoning, true));
-            if t.handler == HANDLER_LFM2 { jinja::obj_set_name(o, "thinking", jinja::mk_str(reasoning, true)); }
+            if t.handler == Handler.Lfm2 { jinja::obj_set_name(o, "thinking", jinja::mk_str(reasoning, true)); }
         }
         jinja::arr_push(arr, o);
     }
@@ -200,7 +202,7 @@ fn system_not_supported(arr: i64) {
         let second = jinja::arr_at(arr, 1);
         let a = jinja::obj_get_name(first, "content");
         let b = jinja::obj_get_name(second, "content");
-        if jinja::kind(a) != jinja::K_STRING || jinja::kind(b) != jinja::K_STRING {
+        if jinja::kind(a) != jinja::ValKind.String || jinja::kind(b) != jinja::ValKind.String {
             jinja::fail_plain("[json.exception.type_error.302] type must be string, but is array");
         }
         var joined: u8[>..] = [];

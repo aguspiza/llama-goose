@@ -54,25 +54,16 @@ import plod from "github.com/kaitk/plod@067b57c804435ea9479d58ba55e3cc103788a151
 let BUILD_INFO = "b0-goose";
 
 // task_response_type
-let RES_NONE = 0;
-let RES_OAI_CMPL = 1;
-let RES_OAI_CHAT = 2;
+enum ResponseKind { None, OaiCmpl, OaiChat }
 
 // stop_type
-let STOP_NONE = 0;
-let STOP_EOS = 1;
-let STOP_WORD = 2;
-let STOP_LIMIT = 3;
+enum Stop { None, Eos, Word, Limit }
 
 // error_type
-let E_INVALID_REQUEST = 0;
-let E_AUTHENTICATION = 1;
-let E_NOT_FOUND = 2;
-let E_SERVER = 3;
-let E_PERMISSION = 4;
-let E_NOT_SUPPORTED = 5;
-let E_UNAVAILABLE = 6;
-let E_EXCEED_CONTEXT = 7;
+enum ErrorKind {
+    InvalidRequest, Authentication, NotFound, Server, Permission, NotSupported, Unavailable,
+    ExceedContext,
+}
 
 fn die(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
@@ -100,7 +91,7 @@ var model_name: u8[>..] = [];
 var api_key: u8[>..] = [];
 var static_dir: u8[>..] = [];           // --path: the files served under /, such as the web UI
 var use_jinja = true;
-var reasoning_format = chat_render::REASONING_DEEPSEEK;
+var reasoning_format = chat_render::ReasoningFormat.Deepseek;
 var enable_thinking = true;
 var prefill_assistant = true;
 var ts = chat_apply::Templates { .. };
@@ -137,33 +128,33 @@ fn tokens_of(s: i64) -> const i32[:] { slot_tokens[s * c.n_ctx_seq..s * c.n_ctx_
 // errors: what a request fails with, thrown to the route's handler
 //
 
-struct Fail { kind: i64 }
+struct Fail { kind: ErrorKind }
 var fail_msg: u8[>..] = [];
 
-fn fail(kind: i64, msg: const u8[:]) {
+fn fail(kind: ErrorKind, msg: const u8[:]) {
     fail_msg.clear();
     fail_msg.append(msg);
     exception::throw(Fail { kind: kind });
 }
 
-fn error_code(kind: i64) -> i64 {
+fn error_code(kind: ErrorKind) -> i64 {
     return match kind {
-        E_INVALID_REQUEST => 400, E_AUTHENTICATION => 401, E_NOT_FOUND => 404, E_SERVER => 500,
-        E_PERMISSION => 403, E_NOT_SUPPORTED => 501, E_UNAVAILABLE => 503, E_EXCEED_CONTEXT => 400, _ => 500,
+        InvalidRequest => 400, Authentication => 401, NotFound => 404, Server => 500,
+        Permission => 403, NotSupported => 501, Unavailable => 503, ExceedContext => 400,
     };
 }
 
-fn error_type_name(kind: i64) -> const u8[:] {
+fn error_type_name(kind: ErrorKind) -> const u8[:] {
     return match kind {
-        E_INVALID_REQUEST => "invalid_request_error", E_AUTHENTICATION => "authentication_error",
-        E_NOT_FOUND => "not_found_error", E_SERVER => "server_error", E_PERMISSION => "permission_error",
-        E_NOT_SUPPORTED => "not_supported_error", E_UNAVAILABLE => "unavailable_error",
-        E_EXCEED_CONTEXT => "exceed_context_size_error", _ => "server_error",
+        InvalidRequest => "invalid_request_error", Authentication => "authentication_error",
+        NotFound => "not_found_error", Server => "server_error", Permission => "permission_error",
+        NotSupported => "not_supported_error", Unavailable => "unavailable_error",
+        ExceedContext => "exceed_context_size_error",
     };
 }
 
 // format_error_response
-fn error_json(out: u8[>..]&, kind: i64, msg: const u8[:]) {
+fn error_json(out: u8[>..]&, kind: ErrorKind, msg: const u8[:]) {
     out.append("{\"code\":");
     jdoc::put_int(out, error_code(kind));
     out.append(",\"message\":");
@@ -243,7 +234,7 @@ fn tokenize_mixed(v: i64, add_special: bool, parse_special: bool, out: i32[>..]&
         vocab::tokenize(jdoc::str_of(v), add_special, parse_special, out);
         return;
     }
-    guard jdoc::is_arr(v) else { fail(E_INVALID_REQUEST, "\"prompt\" elements must be a string, a list of tokens, a JSON object containing a prompt string, or a list of mixed strings & tokens."); }
+    guard jdoc::is_arr(v) else { fail(ErrorKind.InvalidRequest, "\"prompt\" elements must be a string, a list of tokens, a JSON object containing a prompt string, or a list of mixed strings & tokens."); }
     var first = true;
     for i in jdoc::len(v) {
         let e = jdoc::at(v, i);
@@ -254,7 +245,7 @@ fn tokenize_mixed(v: i64, add_special: bool, parse_special: bool, out: i32[>..]&
         } else if jdoc::is_int(e) {
             out.push(jdoc::int_of(e) as! i32);
         } else {
-            fail(E_INVALID_REQUEST, "\"prompt\" elements must be a string, a list of tokens, a JSON object containing a prompt string, or a list of mixed strings & tokens.");
+            fail(ErrorKind.InvalidRequest, "\"prompt\" elements must be a string, a list of tokens, a JSON object containing a prompt string, or a list of mixed strings & tokens.");
         }
         first = false;
     }
@@ -266,7 +257,7 @@ fn tokenize_mixed(v: i64, add_special: bool, parse_special: bool, out: i32[>..]&
 
 struct LogitBias { token: i32, bias: f32 }
 
-var t_res_type = RES_NONE;
+var t_res_type = ResponseKind.None;
 var t_stream = false;
 var t_include_usage = false;
 var t_timings_per_token = false;
@@ -284,17 +275,17 @@ var t_logit_bias: LogitBias[>..] = [];
 var t_grammar: u8[>..] = [];
 var t_grammar_lazy = false;
 var t_grammar_user = false;           // the request's own "grammar": not prefilled
-var t_trig_types: i64[>..] = [];
+var t_trig_types: chat_render::Trigger[>..] = [];
 var t_trig_values: u8[>..] = [];        // each ended by a NUL
 var t_trig_tokens: i32[>..] = [];       // the token of a TOKEN trigger, else -1
 var t_preserved: i32[>..] = [];         // sorted
 var t_chat = false;                     // the output is a chat message, parsed
-var t_chat_format = chat_render::FORMAT_CONTENT_ONLY;
-var t_reasoning_format = chat_render::REASONING_NONE;
+var t_chat_format = chat_render::Format.ContentOnly;
+var t_reasoning_format = chat_render::ReasoningFormat.None;
 var t_gen_prompt: u8[>..] = [];
 var t_cmpl_id: u8[>..] = [];
 
-fn reset_task(res_type: i64) {
+fn reset_task(res_type: ResponseKind) {
     t_res_type = res_type;
     t_stream = false;
     t_include_usage = false;
@@ -319,7 +310,7 @@ fn reset_task(res_type: i64) {
     t_trig_tokens.clear();
     t_preserved.clear();
     t_chat = false;
-    t_chat_format = chat_render::FORMAT_CONTENT_ONLY;
+    t_chat_format = chat_render::Format.ContentOnly;
     t_reasoning_format = reasoning_format;
     t_gen_prompt.clear();
     t_cmpl_id.clear();
@@ -333,7 +324,7 @@ fn field(data: i64, a: const u8[:], b: const u8[:] = "", c2: const u8[:] = "") -
     return -1, "";
 }
 
-fn field_fail(name: const u8[:], msg: const u8[:]) { fail(E_INVALID_REQUEST, str("Field '", name, "': ", msg)); }
+fn field_fail(name: const u8[:], msg: const u8[:]) { fail(ErrorKind.InvalidRequest, str("Field '", name, "': ", msg)); }
 
 fn want_num(v: i64, name: const u8[:]) {
     if !jdoc::is_num(v) { field_fail(name, str("[json.exception.type_error.302] type must be number, but is ", kind_name(v))); }
@@ -341,8 +332,8 @@ fn want_num(v: i64, name: const u8[:]) {
 
 fn kind_name(v: i64) -> const u8[:] {
     return match jdoc::kind(v) {
-        jdoc::NULL => "null", jdoc::BOOL => "boolean", jdoc::INT => "number", jdoc::FLOAT => "number",
-        jdoc::STRING => "string", jdoc::ARRAY => "array", jdoc::OBJECT => "object", _ => "null",
+        Null => "null", Bool => "boolean", Int => "number", Float => "number",
+        String => "string", Array => "array", Object => "object",
     };
 }
 
@@ -441,7 +432,7 @@ fn eval_params(data: i64) {
         }
     }
     t_sp.n_probs = num_i(data, t_sp.n_probs, -I32_MAX, I32_MAX, "n_probs", "logprobs");
-    if t_sp.n_probs > 0 { fail(E_NOT_SUPPORTED, "n_probs: token probabilities are not supported yet"); }
+    if t_sp.n_probs > 0 { fail(ErrorKind.NotSupported, "n_probs: token probabilities are not supported yet"); }
     t_sp.min_keep = num_i_hard(data, t_sp.min_keep, 0, I32_MAX, "min_keep");
 
     {
@@ -497,7 +488,7 @@ fn eval_params(data: i64) {
         if v >= 0 {
             for i in jdoc::len(v) {
                 let t = jdoc::at(v, i);
-                add_trigger(jdoc::get_int(t, "type", chat_render::TRIGGER_WORD), jdoc::get_str(t, "value", ""));
+                add_trigger(chat_render::trigger_of(jdoc::get_int(t, "type", 1)), jdoc::get_str(t, "value", ""));
             }
         }
     }
@@ -572,14 +563,14 @@ fn eval_params(data: i64) {
             if jdoc::is_arr(v) {
                 t_sp.order.clear();
                 for i in jdoc::len(v) {
-                    let kind = sampler::kind_from_name(jdoc::str_of(jdoc::at(v, i)));
-                    if kind >= 0 && t_sp.order.len < t_sp.order.cap { t_sp.order.push(kind); }
+                    let kind, ok = sampler::kind_from_name(jdoc::str_of(jdoc::at(v, i)));
+                    if ok && t_sp.order.len < t_sp.order.cap { t_sp.order.push(kind); }
                 }
             } else if jdoc::is_str(v) {
                 t_sp.order.clear();
                 for ch0 in jdoc::str_of(v) {
-                    let kind = kind_from_char(ch0);
-                    if kind >= 0 && t_sp.order.len < t_sp.order.cap { t_sp.order.push(kind); }
+                    let kind, ok = kind_from_char(ch0);
+                    if ok && t_sp.order.len < t_sp.order.cap { t_sp.order.push(kind); }
                 }
             }
         }
@@ -598,37 +589,38 @@ fn list_has(list: const u8[:], s: const u8[:]) -> bool {
 }
 
 // common_sampler_types_from_chars
-fn kind_from_char(c0: u8) -> i64 {
-    return match c0 {
-        'd' => sampler::KIND_DRY, 'k' => sampler::KIND_TOP_K, 'y' => sampler::KIND_TYPICAL, 'p' => sampler::KIND_TOP_P,
-        's' => sampler::KIND_TOP_N_SIGMA, 'm' => sampler::KIND_MIN_P, 't' => sampler::KIND_TEMP_EXT, 'x' => sampler::KIND_XTC,
-        'e' => sampler::KIND_PENALTIES, _ => -1,
+fn kind_from_char(c0: u8) -> sampler::Kind, bool {
+    let kind = match c0 {
+        'd' => sampler::Kind.Dry, 'k' => sampler::Kind.TopK, 'y' => sampler::Kind.Typical, 'p' => sampler::Kind.TopP,
+        's' => sampler::Kind.TopNSigma, 'm' => sampler::Kind.MinP, 't' => sampler::Kind.TempExt, 'x' => sampler::Kind.Xtc,
+        'e' => sampler::Kind.Penalties, _ => { return sampler::Kind.Dist, false; },
     };
+    return kind, true;
 }
 
 // common_sampler_type_to_str
-fn kind_name_of(kind: i64) -> const u8[:] {
+fn kind_name_of(kind: sampler::Kind) -> const u8[:] {
     return match kind {
-        sampler::KIND_DRY => "dry", sampler::KIND_TOP_K => "top_k", sampler::KIND_TYPICAL => "typ_p",
-        sampler::KIND_TOP_P => "top_p", sampler::KIND_TOP_N_SIGMA => "top_n_sigma", sampler::KIND_MIN_P => "min_p",
-        sampler::KIND_XTC => "xtc", sampler::KIND_TEMP_EXT => "temperature", sampler::KIND_PENALTIES => "penalties",
-        sampler::KIND_INFILL => "infill", sampler::KIND_ADAPTIVE_P => "adaptive_p", _ => "",
+        Dry => "dry", TopK => "top_k", Typical => "typ_p",
+        TopP => "top_p", TopNSigma => "top_n_sigma", MinP => "min_p",
+        Xtc => "xtc", TempExt => "temperature", Penalties => "penalties",
+        Infill => "infill", AdaptiveP => "adaptive_p", _ => "",
     };
 }
 
-fn reasoning_format_from_name(name: const u8[:]) -> i64 {
-    if name == "none" { return chat_render::REASONING_NONE; }
-    if name == "auto" { return chat_render::REASONING_AUTO; }
-    if name == "deepseek" { return chat_render::REASONING_DEEPSEEK; }
-    if name == "deepseek-legacy" { return chat_render::REASONING_DEEPSEEK_LEGACY; }
-    fail(E_INVALID_REQUEST, str("Unknown reasoning format: ", name));
-    return 0;
+fn reasoning_format_from_name(name: const u8[:]) -> chat_render::ReasoningFormat {
+    if name == "none" { return chat_render::ReasoningFormat.None; }
+    if name == "auto" { return chat_render::ReasoningFormat.Auto; }
+    if name == "deepseek" { return chat_render::ReasoningFormat.Deepseek; }
+    if name == "deepseek-legacy" { return chat_render::ReasoningFormat.DeepseekLegacy; }
+    fail(ErrorKind.InvalidRequest, str("Unknown reasoning format: ", name));
+    return chat_render::ReasoningFormat.None;
 }
 
-fn reasoning_format_name(f: i64) -> const u8[:] {
+fn reasoning_format_name(f: chat_render::ReasoningFormat) -> const u8[:] {
     return match f {
-        chat_render::REASONING_NONE => "none", chat_render::REASONING_AUTO => "auto",
-        chat_render::REASONING_DEEPSEEK => "deepseek", chat_render::REASONING_DEEPSEEK_LEGACY => "deepseek-legacy", _ => "unknown",
+        None => "none", Auto => "auto",
+        Deepseek => "deepseek", DeepseekLegacy => "deepseek-legacy",
     };
 }
 
@@ -651,18 +643,18 @@ fn is_preserved(t: i32) -> bool {
 }
 
 // common_sampling_add_grammar_triggers: a word that is one token, a token trigger.
-fn add_trigger(ty: i64, value: const u8[:]) {
+fn add_trigger(ty: chat_render::Trigger, value: const u8[:]) {
     var tok: i32 = -1;
     var kind = ty;
-    if ty == chat_render::TRIGGER_WORD {
+    if ty == chat_render::Trigger.Word {
         var ids: i32[>..] = [];
         vocab::tokenize(value, false, true, ids);
         if ids.len == 1 {
-            if !is_preserved(ids[0]) { fail(E_INVALID_REQUEST, str("Grammar trigger word should be marked as preserved token: ", value)); }
-            kind = chat_render::TRIGGER_TOKEN;
+            if !is_preserved(ids[0]) { fail(ErrorKind.InvalidRequest, str("Grammar trigger word should be marked as preserved token: ", value)); }
+            kind = chat_render::Trigger.Token;
             tok = ids[0];
         }
-    } else if ty == chat_render::TRIGGER_TOKEN {
+    } else if ty == chat_render::Trigger.Token {
         var ids: i32[>..] = [];
         vocab::tokenize(value, false, true, ids);
         if ids.len == 1 { tok = ids[0]; }
@@ -733,9 +725,9 @@ fn params_json(o: u8[>..]&, only_metrics: bool) {
             guard b == 0 else { continue; }
             sep(o);
             o.push('{');
-            ki(o, "type", t_trig_types[n]);
+            ki(o, "type", chat_render::trigger_number(t_trig_types[n]));
             ks(o, "value", t_trig_values[start..i]);
-            if t_trig_types[n] == chat_render::TRIGGER_TOKEN { ki(o, "token", t_trig_tokens[n]); }
+            if t_trig_types[n] == chat_render::Trigger.Token { ki(o, "token", t_trig_tokens[n]); }
             o.push('}');
             start = i + 1;
             n++;
@@ -748,7 +740,7 @@ fn params_json(o: u8[>..]&, only_metrics: bool) {
     }
     ks(o, "chat_format", chat_apply::format_name(t_chat_format));
     ks(o, "reasoning_format", reasoning_format_name(t_reasoning_format));
-    kb(o, "reasoning_in_content", t_stream && t_reasoning_format == chat_render::REASONING_DEEPSEEK_LEGACY);
+    kb(o, "reasoning_in_content", t_stream && t_reasoning_format == chat_render::ReasoningFormat.DeepseekLegacy);
     ks(o, "generation_prompt", t_gen_prompt);
     k(o, "samplers");
     o.push('[');
@@ -797,7 +789,7 @@ fn need_str(v: i64, what: const u8[:]) -> const u8[:] {
     if !jdoc::is_str(v) {
         var d: u8[>..] = [];
         jdoc::dump(d, v);
-        fail(E_INVALID_REQUEST, str(what, d));
+        fail(ErrorKind.InvalidRequest, str(what, d));
     }
     return jdoc::str_of(v);
 }
@@ -816,8 +808,8 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
     let stream = jdoc::get_bool(body, "stream", false);
     let tool_choice_name = jdoc::get_str(body, "tool_choice", "auto");
     if !use_jinja {
-        if has_tools { fail(E_INVALID_REQUEST, "tools param requires --jinja flag"); }
-        if tool_choice_name != "auto" { fail(E_INVALID_REQUEST, "tool_choice param requires --jinja flag"); }
+        if has_tools { fail(ErrorKind.InvalidRequest, "tools param requires --jinja flag"); }
+        if tool_choice_name != "auto" { fail(ErrorKind.InvalidRequest, "tool_choice param requires --jinja flag"); }
     }
     var json_schema_text: u8[>..] = [];
     var has_schema = false;
@@ -826,7 +818,7 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
         if !jdoc::is_null(s) { jdoc::dump(json_schema_text, s); has_schema = true; }
     }
     let grammar = jdoc::get_str(body, "grammar", "");
-    if has_schema && grammar.len > 0 { fail(E_INVALID_REQUEST, "Cannot use both json_schema and grammar"); }
+    if has_schema && grammar.len > 0 { fail(ErrorKind.InvalidRequest, "Cannot use both json_schema and grammar"); }
     if jdoc::contains(body, "response_format") {
         let rf = jdoc::get(body, "response_format");
         let ty = jdoc::get_str(rf, "type", "");
@@ -843,14 +835,14 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
             if s >= 0 { jdoc::dump(json_schema_text, s); } else { json_schema_text.append("{}"); }
             has_schema = true;
         } else if ty.len > 0 && ty != "text" {
-            fail(E_INVALID_REQUEST, str("response_format type must be one of \"text\", \"json_object\" or \"json_schema\", but got: ", ty));
+            fail(ErrorKind.InvalidRequest, str("response_format type must be one of \"text\", \"json_object\" or \"json_schema\", but got: ", ty));
         }
     }
     if json_schema_text == "{}" { json_schema_text.clear(); json_schema_text.append("{\"type\":\"object\"}"); }
 
-    guard jdoc::contains(body, "messages") else { fail(E_INVALID_REQUEST, "'messages' is required"); }
+    guard jdoc::contains(body, "messages") else { fail(ErrorKind.InvalidRequest, "'messages' is required"); }
     let msgs_v = jdoc::get(body, "messages");
-    guard jdoc::is_arr(msgs_v) else { fail(E_INVALID_REQUEST, "Expected 'messages' to be an array"); }
+    guard jdoc::is_arr(msgs_v) else { fail(ErrorKind.InvalidRequest, "Expected 'messages' to be an array"); }
 
     // the messages and tools as spans of chat_text
     chat_text.clear();
@@ -863,10 +855,10 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
         let role = jdoc::get_str(msg, "role", "");
         let has_content = jdoc::contains(msg, "content");
         let has_calls = jdoc::contains(msg, "tool_calls");
-        if role != "assistant" && !has_content { fail(E_INVALID_REQUEST, "All non-assistant messages must contain 'content'"); }
-        if role == "assistant" && !has_content && !has_calls { fail(E_INVALID_REQUEST, "Assistant message must contain either 'content' or 'tool_calls'!"); }
-        guard jdoc::is_obj(msg) else { fail(E_INVALID_REQUEST, "Expected 'message' to be an object"); }
-        guard jdoc::contains(msg, "role") else { fail(E_INVALID_REQUEST, "Missing 'role' in message"); }
+        if role != "assistant" && !has_content { fail(ErrorKind.InvalidRequest, "All non-assistant messages must contain 'content'"); }
+        if role == "assistant" && !has_content && !has_calls { fail(ErrorKind.InvalidRequest, "Assistant message must contain either 'content' or 'tool_calls'!"); }
+        guard jdoc::is_obj(msg) else { fail(ErrorKind.InvalidRequest, "Expected 'message' to be an object"); }
+        guard jdoc::contains(msg, "role") else { fail(ErrorKind.InvalidRequest, "Missing 'role' in message"); }
         var r = MsgRaw {
             role: keep(need_str(jdoc::get(msg, "role"), "Invalid role: ")),
             content: Span { at: 0, len: 0 }, reasoning: Span { at: 0, len: 0 },
@@ -881,29 +873,29 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
                 for p in jdoc::len(content) {
                     let part = jdoc::at(content, p);
                     let ty = jdoc::get_str(part, "type", "");
-                    guard jdoc::contains(part, "type") else { fail(E_INVALID_REQUEST, "Missing content part type"); }
+                    guard jdoc::contains(part, "type") else { fail(ErrorKind.InvalidRequest, "Missing content part type"); }
                     if ty == "text" || ty == "media_marker" {
                         parts.push(PartRaw { kind: keep(ty), text: keep(jdoc::get_str(part, "text", "")), name: Span { at: 0, len: 0 } });
                     } else if ty == "tool_reference" {
                         parts.push(PartRaw { kind: keep(ty), text: Span { at: 0, len: 0 }, name: keep(jdoc::get_str(part, "name", "")) });
                     } else if ty == "image_url" || ty == "input_audio" || ty == "input_video" || ty == "video_url" {
-                        fail(E_INVALID_REQUEST, "image input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
+                        fail(ErrorKind.InvalidRequest, "image input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
                     } else {
-                        fail(E_INVALID_REQUEST, "unsupported content[].type");
+                        fail(ErrorKind.InvalidRequest, "unsupported content[].type");
                     }
                 }
                 r.nparts = parts.len - r.part0;
             } else if !jdoc::is_null(content) {
-                fail(E_INVALID_REQUEST, "Expected 'content' to be a string or an array");
+                fail(ErrorKind.InvalidRequest, "Expected 'content' to be a string or an array");
             }
         }
         if has_calls {
             let tcs = jdoc::get(msg, "tool_calls");
             for t in jdoc::len(tcs) {
                 let tc = jdoc::at(tcs, t);
-                guard jdoc::get_str(tc, "type", "") == "function" else { fail(E_INVALID_REQUEST, "Unsupported tool call type"); }
+                guard jdoc::get_str(tc, "type", "") == "function" else { fail(ErrorKind.InvalidRequest, "Unsupported tool call type"); }
                 let fc = jdoc::get(tc, "function");
-                guard jdoc::contains(fc, "name") else { fail(E_INVALID_REQUEST, "Missing tool call name"); }
+                guard jdoc::contains(fc, "name") else { fail(ErrorKind.InvalidRequest, "Missing tool call name"); }
                 let args = jdoc::get(fc, "arguments");
                 let name = keep(jdoc::get_str(fc, "name", ""));
                 let arguments = if jdoc::is_str(args) { keep(jdoc::str_of(args)) } else { keep_dump(args) };
@@ -919,7 +911,7 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
     if has_tools {
         for i in jdoc::len(tools_v) {
             let tool = jdoc::at(tools_v, i);
-            guard jdoc::get_str(tool, "type", "") == "function" else { fail(E_INVALID_REQUEST, "Unsupported tool type"); }
+            guard jdoc::get_str(tool, "type", "") == "function" else { fail(ErrorKind.InvalidRequest, "Unsupported tool type"); }
             let f = jdoc::get(tool, "function");
             let params = jdoc::get(f, "parameters");
             tools.push(ToolRaw {
@@ -946,38 +938,38 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
     var tool_views: chat_apply::Tool[>..] = [];
     for tr in tools { tool_views.push(chat_apply::Tool { name: txt(tr.name), description: txt(tr.description), parameters: txt(tr.parameters) }); }
 
-    let tool_choice = if tool_choice_name == "auto" { chat_render::TOOL_CHOICE_AUTO }
-        else if tool_choice_name == "none" { chat_render::TOOL_CHOICE_NONE }
-        else if tool_choice_name == "required" { chat_render::TOOL_CHOICE_REQUIRED }
-        else { fail(E_INVALID_REQUEST, str("Invalid tool_choice: ", tool_choice_name)); chat_render::TOOL_CHOICE_AUTO };
+    let tool_choice = if tool_choice_name == "auto" { chat_render::ToolChoice.Auto }
+        else if tool_choice_name == "none" { chat_render::ToolChoice.None }
+        else if tool_choice_name == "required" { chat_render::ToolChoice.Required }
+        else { fail(ErrorKind.InvalidRequest, str("Invalid tool_choice: ", tool_choice_name)); chat_render::ToolChoice.Auto };
     let caps = if ts.has_tool_use { ts.tool_use.caps } else { ts.main.caps };
     var add_gen = jdoc::get_bool(body, "add_generation_prompt", true);
-    var cont = chat_render::CONTINUE_NONE;
+    var cont = chat_render::Continue.None;
     if jdoc::contains(body, "continue_final_message") {
         let cv = jdoc::get(body, "continue_final_message");
-        if jdoc::is_bool(cv) { cont = if jdoc::bool_of(cv) { chat_render::CONTINUE_AUTO } else { chat_render::CONTINUE_NONE }; }
+        if jdoc::is_bool(cv) { cont = if jdoc::bool_of(cv) { chat_render::Continue.Auto } else { chat_render::Continue.None }; }
         else if jdoc::is_str(cv) {
             let s = jdoc::str_of(cv);
-            cont = if s == "auto" { chat_render::CONTINUE_AUTO } else if s == "reasoning" { chat_render::CONTINUE_REASONING }
-                else if s == "content" { chat_render::CONTINUE_CONTENT } else if s == "none" { chat_render::CONTINUE_NONE }
-                else { fail(E_INVALID_REQUEST, str("Invalid continue_final_message: ", s)); 0 };
+            cont = if s == "auto" { chat_render::Continue.Auto } else if s == "reasoning" { chat_render::Continue.Reasoning }
+                else if s == "content" { chat_render::Continue.Content } else if s == "none" { chat_render::Continue.None }
+                else { fail(ErrorKind.InvalidRequest, str("Invalid continue_final_message: ", s)); 0 };
         }
     }
     let n = msgs.len;
-    if cont == chat_render::CONTINUE_NONE && prefill_assistant && n > 0 && msgs[n - 1].role == "assistant" {
-        if n >= 2 && msgs[n - 2].role == "assistant" { fail(E_INVALID_REQUEST, "Cannot have 2 or more assistant messages at the end of the list."); }
-        cont = chat_render::CONTINUE_AUTO;
+    if cont == chat_render::Continue.None && prefill_assistant && n > 0 && msgs[n - 1].role == "assistant" {
+        if n >= 2 && msgs[n - 2].role == "assistant" { fail(ErrorKind.InvalidRequest, "Cannot have 2 or more assistant messages at the end of the list."); }
+        cont = chat_render::Continue.Auto;
         add_gen = false;
     }
-    if cont != chat_render::CONTINUE_NONE && add_gen { fail(E_INVALID_REQUEST, "Cannot set both add_generation_prompt and continue_final_message to true."); }
-    if cont != chat_render::CONTINUE_NONE && n > 0 && msgs[n - 1].role == "assistant" && msgs[n - 1].tool_calls.len > 0 {
-        fail(E_INVALID_REQUEST, "Cannot continue an assistant message that contains tool calls.");
+    if cont != chat_render::Continue.None && add_gen { fail(ErrorKind.InvalidRequest, "Cannot set both add_generation_prompt and continue_final_message to true."); }
+    if cont != chat_render::Continue.None && n > 0 && msgs[n - 1].role == "assistant" && msgs[n - 1].tool_calls.len > 0 {
+        fail(ErrorKind.InvalidRequest, "Cannot continue an assistant message that contains tool calls.");
     }
     var rfmt = reasoning_format;
     if jdoc::contains(body, "reasoning_format") { rfmt = reasoning_format_from_name(jdoc::get_str(body, "reasoning_format", "")); }
     var thinking = enable_thinking;
-    if tool_views.len > 0 && tool_choice != chat_render::TOOL_CHOICE_NONE && jdoc::contains(body, "grammar") {
-        fail(E_INVALID_REQUEST, "Cannot use custom grammar constraints with tools.");
+    if tool_views.len > 0 && tool_choice != chat_render::ToolChoice.None && jdoc::contains(body, "grammar") {
+        fail(ErrorKind.InvalidRequest, "Cannot use custom grammar constraints with tools.");
     }
     // the template's kwargs: the request's, as JSON
     var kw_text: u8[>..] = [];
@@ -994,7 +986,7 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
                 if key == "enable_thinking" {
                     let v = jdoc::at(kw, i);
                     if jdoc::is_bool(v) { thinking = jdoc::bool_of(v); }
-                    else if jdoc::is_str(v) { fail(E_INVALID_REQUEST, "invalid type for \"enable_thinking\" (expected boolean, got string)"); }
+                    else if jdoc::is_str(v) { fail(ErrorKind.InvalidRequest, "invalid type for \"enable_thinking\" (expected boolean, got string)"); }
                 }
             }
         }
@@ -1020,7 +1012,7 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
             } else if effort.len > 0 {
                 for lv in caps.reasoning_effort_rejected {
                     if jinja::effort_name(lv) == effort {
-                        fail(E_INVALID_REQUEST, str("reasoning_effort \"", effort, "\" is not supported by the chat template, supported levels: ", levels));
+                        fail(ErrorKind.InvalidRequest, str("reasoning_effort \"", effort, "\" is not supported by the chat template, supported levels: ", levels));
                     }
                 }
                 kw_text.append("reasoning_effort");
@@ -1067,10 +1059,10 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
         enable_thinking: thinking,
         kwargs: kws,
     };
-    if !chat_apply::apply(ts, inp) { fail(E_INVALID_REQUEST, chat_apply::err); }
+    if !chat_apply::apply(ts, inp) { fail(ErrorKind.InvalidRequest, chat_apply::err); }
     prompt.append(chat_render::prompt);
     gen_prompt_tokens(chat_render::gen_prompt, chat_apply::gen_prompt_toks);
-    if stream && jdoc::get_bool(body, "logprobs", false) && has_tools { fail(E_INVALID_REQUEST, "logprobs is not supported with tools + stream"); }
+    if stream && jdoc::get_bool(body, "logprobs", false) && has_tools { fail(ErrorKind.InvalidRequest, "logprobs is not supported with tools + stream"); }
 }
 
 // apply_chat_session: the template's grammar, triggers, stops and parser.
@@ -1101,7 +1093,7 @@ fn apply_chat_session() {
             }
         }
     }
-    if t_grammar_lazy && t_trig_types.len == 0 { fail(E_INVALID_REQUEST, "Error: no triggers set for lazy grammar!"); }
+    if t_grammar_lazy && t_trig_types.len == 0 { fail(ErrorKind.InvalidRequest, "Error: no triggers set for lazy grammar!"); }
     t_chat_format = chat_render::format;
     t_stops.append(chat_render::additional_stops);
 }
@@ -1117,7 +1109,7 @@ var gen_tokens: i32[>..] = [];
 var fed: u8[>..] = [];              // the text sent so far (the chat parser's input)
 var gen_itok: i32[>..] = [];        // the token each byte of generated starts, -1 for the rest of its piece
 var n_sent = 0;
-var stop_type = STOP_NONE;
+var stop_type = Stop.None;
 var stopping_word: u8[>..] = [];
 var has_new_line = false;
 var truncated = false;
@@ -1151,7 +1143,7 @@ fn find_stop(text: const u8[:], last_len: i64, full: bool) -> i64 {
         }
         if pos >= 0 && (stop_pos < 0 || pos < stop_pos) {
             if full {
-                stop_type = STOP_WORD;
+                stop_type = Stop.Word;
                 stopping_word.clear();
                 stopping_word.append(word);
             }
@@ -1252,7 +1244,7 @@ fn parse_chat(text: const u8[:], partial: bool) -> bool {
     if !chat_apply::parse_tokens(text, toks, partial) {
         if partial { return false; }
         log(str("parse_chat: unparsed ", chat_apply::format_name(chat_render::format), " output: ", chat_apply::input_text));
-        fail(E_SERVER, chat_apply::err);
+        fail(ErrorKind.Server, chat_apply::err);
     }
     let empty = chat_peg::content_text.len == 0 && chat_peg::reasoning_text.len == 0 && chat_peg::calls.len == 0;
     return !empty;
@@ -1265,7 +1257,7 @@ fn chat_diffs(deltas: u8[>..]&) {
         if last.len == 0 { return str(cur); }
         if !starts_with(cur, last) {
             if starts_with(last, cur) { return str(""); }
-            fail(E_SERVER, str("Invalid diff: '", last, "' not found at start of '", cur, "'"));
+            fail(ErrorKind.Server, str("Invalid diff: '", last, "' not found at start of '", cur, "'"));
         }
         return str(cur[last.len..]);
     }
@@ -1317,7 +1309,7 @@ fn chat_diffs(deltas: u8[>..]&) {
         deltas.append(o);
         deltas.push(0);
     }
-    if ncalls < n_prev_calls { fail(E_SERVER, "Invalid diff: now finding less tool calls!"); }
+    if ncalls < n_prev_calls { fail(ErrorKind.Server, "Invalid diff: now finding less tool calls!"); }
     if n_prev_calls > 0 {
         let idx = n_prev_calls - 1;
         let pname = nth(prev_calls, 3 * idx);
@@ -1326,7 +1318,7 @@ fn chat_diffs(deltas: u8[>..]&) {
         let nname = nth(calls, 3 * idx);
         let nargs = nth(calls, 3 * idx + 1);
         let nid = nth(calls, 3 * idx + 2);
-        if pname != nname && pname.len > 0 && nname.len > 0 && !starts_with(nname, pname) { fail(E_SERVER, "Invalid diff: tool call mismatch!"); }
+        if pname != nname && pname.len > 0 && nname.len > 0 && !starts_with(nname, pname) { fail(ErrorKind.Server, "Invalid diff: tool call mismatch!"); }
         let args_diff = string_diff(pargs, nargs);
         if args_diff.len > 0 || pid != nid || pname != nname {
             let changed = pid != nid || pname != nname;
@@ -1439,9 +1431,9 @@ fn chat_chunk(o: u8[>..]&, delta: const u8[:], finish: const u8[:]) {
 
 // send_partial_response with the token's text (text_to_send).
 fn send_partial(tok: i32, text: const u8[:]) {
-    let with_stats = stop_type != STOP_NONE || t_timings_per_token;
+    let with_stats = stop_type != Stop.None || t_timings_per_token;
     if with_stats { finish_stats(); }
-    if t_res_type == RES_NONE {
+    if t_res_type == ResponseKind.None {
         var o: u8[>..] = [];
         o.push('{');
         ki(o, "index", 0);
@@ -1457,7 +1449,7 @@ fn send_partial(tok: i32, text: const u8[:]) {
         if with_stats { k(o, "timings"); stats_json(o); }
         o.push('}');
         send(o);
-    } else if t_res_type == RES_OAI_CMPL {
+    } else if t_res_type == ResponseKind.OaiCmpl {
         var o: u8[>..] = [];
         o.push('{');
         k(o, "choices");
@@ -1534,11 +1526,11 @@ fn process_token(tok: i32, piece0: const u8[:]) -> bool {
     }
     if !ctx_shift && slots[loaded].n + 1 >= c.n_ctx_seq {
         truncated = true;
-        stop_type = STOP_LIMIT;
+        stop_type = Stop.Limit;
         has_next = false;
     }
     if n_gen > 0 && has_next && t_n_predict != -1 && t_n_predict - n_gen <= 0 {
-        stop_type = STOP_LIMIT;
+        stop_type = Stop.Limit;
         has_next = false;
     }
     if has_new_line && t_n_indent > 0 {
@@ -1547,7 +1539,7 @@ fn process_token(tok: i32, piece0: const u8[:]) -> bool {
             var n_indent = 0;
             while pos < generated.len && (generated[pos] == ' ' || generated[pos] == '\t') { n_indent++; pos++; }
             if pos < generated.len && n_indent < t_n_indent {
-                stop_type = STOP_LIMIT;
+                stop_type = Stop.Limit;
                 has_next = false;
                 generated.resize(pos);
             }
@@ -1559,12 +1551,12 @@ fn process_token(tok: i32, piece0: const u8[:]) -> bool {
         has_new_line = true;
         has_new_line_now = false;
         if t_max_predict_ms > 0 && t_last - t_gen_start > t_max_predict_ms {
-            stop_type = STOP_LIMIT;
+            stop_type = Stop.Limit;
             has_next = false;
         }
     }
     if vocab::is_eog(tok) {
-        stop_type = STOP_EOS;
+        stop_type = Stop.Eos;
         has_next = false;
     }
     return has_next;
@@ -1891,7 +1883,7 @@ fn start(prompt: const i32[:]) {
     gen_tokens.clear();
     fed.clear();
     n_sent = 0;
-    stop_type = STOP_NONE;
+    stop_type = Stop.None;
     stopping_word.clear();
     has_new_line = false;
     has_new_line_now = false;
@@ -1902,7 +1894,7 @@ fn start(prompt: const i32[:]) {
     reset_chat_state();
     if t_cmpl_id.len == 0 { t_cmpl_id.append("chatcmpl-"); t_cmpl_id.append(random_string()); }
 
-    if prompt.len == 0 { fail(E_INVALID_REQUEST, "\"prompt\" must not be empty"); }
+    if prompt.len == 0 { fail(ErrorKind.InvalidRequest, "\"prompt\" must not be empty"); }
     // the sampler (common_sampler_init) and the grammar
     sampler::init(ch, t_sp);
     ch.has_grammar = false;
@@ -1910,18 +1902,18 @@ fn start(prompt: const i32[:]) {
         // ignore_eos bans the end-of-generation tokens as llama.cpp's logit biases do
         var banned = t_ignore_eos;
         for lb in t_logit_bias { if lb.bias == -F_INF && vocab::is_eog(lb.token) { banned = true; } }
-        if banned { fail(E_INVALID_REQUEST, "Failed to initialize samplers: EOG tokens cannot be banned when a grammar is set"); }
+        if banned { fail(ErrorKind.InvalidRequest, "Failed to initialize samplers: EOG tokens cannot be banned when a grammar is set"); }
     }
     if t_grammar.len > 0 {
         if !sampler::set_grammar(ch, t_grammar, "root") {
-            fail(E_INVALID_REQUEST, str("Failed to initialize samplers: failed to parse grammar: ", grammar::err));
+            fail(ErrorKind.InvalidRequest, str("Failed to initialize samplers: failed to parse grammar: ", grammar::err));
         }
         if t_grammar_lazy {
             grammar::make_lazy();
             for ty, i in t_trig_types {
-                if ty == chat_render::TRIGGER_TOKEN && t_trig_tokens[i] >= 0 { grammar::add_trigger_token(t_trig_tokens[i]); }
-                else if ty == chat_render::TRIGGER_WORD { grammar::add_trigger_word(nth(t_trig_values, i)); }
-                else { fail(E_NOT_SUPPORTED, "regex grammar triggers are not supported yet"); }
+                if ty == chat_render::Trigger.Token && t_trig_tokens[i] >= 0 { grammar::add_trigger_token(t_trig_tokens[i]); }
+                else if ty == chat_render::Trigger.Word { grammar::add_trigger_word(nth(t_trig_values, i)); }
+                else { fail(ErrorKind.NotSupported, "regex grammar triggers are not supported yet"); }
             }
         } else if !t_grammar_user && t_gen_prompt.len > 0 {
             // the generation prompt is in the prompt already: the grammar goes past it
@@ -1938,7 +1930,7 @@ fn start(prompt: const i32[:]) {
     let s = pick_slot(prompt);
     if prompt.len >= c.n_ctx_seq {
         slots[s].used_at = clock_ns();      // the slot took the request, and released it
-        fail(E_EXCEED_CONTEXT, str("request (", prompt.len, " tokens) exceeds the available context size (", c.n_ctx_seq, " tokens), try increasing it"));
+        fail(ErrorKind.ExceedContext, str("request (", prompt.len, " tokens) exceeds the available context size (", c.n_ctx_seq, " tokens), try increasing it"));
     }
     // the cache: the common prefix kept, at least one token to evaluate
     var n_past = 0;
@@ -1952,7 +1944,7 @@ fn start(prompt: const i32[:]) {
     let n_prefix = n_past;
     var pos_next = n_past;
     if n_past > 0 && !context::any_recurrent(m) {
-        let n_swa = if m.hp.swa_type != model::SWA_NONE { m.hp.n_swa as i64 } else { 0 };
+        let n_swa = if m.hp.swa_type != model::Swa.None { m.hp.n_swa as i64 } else { 0 };
         let pos_eval = n_past - (if n_past < prompt.len { 0 } else { 1 });
         let thold = max(0, if n_swa > 0 { pos_eval - n_swa + 2 } else { pos_eval });
         if context::seq_pos_min(s) >= thold {
@@ -2160,7 +2152,7 @@ fn fail_all(msg: const u8[:]) {
     for s in slots.len {
         guard slots[s].busy else { continue; }
         load(s);
-        send_error(E_SERVER, msg);
+        send_error(ErrorKind.Server, msg);
         finish(s);
         forget(s);
     }
@@ -2176,8 +2168,8 @@ fn purge_idle_slot() -> bool {
     return false;
 }
 
-fn stop_type_name(s: i64) -> const u8[:] {
-    return match s { STOP_EOS => "eos", STOP_WORD => "word", STOP_LIMIT => "limit", _ => "none" };
+fn stop_type_name(s: Stop) -> const u8[:] {
+    return match s { None => "none", Eos => "eos", Word => "word", Limit => "limit" };
 }
 
 // to_json_non_oaicompat of the final result.
@@ -2209,14 +2201,14 @@ fn final_json(o: u8[>..]&) {
 
 // send_final_response, in the response's format.
 fn send_final() {
-    let finish = if stop_type == STOP_WORD || stop_type == STOP_EOS { "stop" } else { "length" };
+    let finish = if stop_type == Stop.Word || stop_type == Stop.Eos { "stop" } else { "length" };
     var o: u8[>..] = [];
-    if t_res_type == RES_NONE {
+    if t_res_type == ResponseKind.None {
         final_json(o);
         if t_stream { send(o); } else { respond_with(200, "application/json; charset=utf-8", o); }
         return;
     }
-    if t_res_type == RES_OAI_CMPL {
+    if t_res_type == ResponseKind.OaiCmpl {
         if t_stream {
             // the final chunk: its text is empty, it was streamed
             o.push('{');
@@ -2254,7 +2246,7 @@ fn send_final() {
     var deltas: u8[>..] = [];
     if parse_chat(if t_stream { fed[..] } else { generated[..] }, false) { chat_diffs(deltas); }
     else if !t_stream && prev_content.len == 0 { prev_content.append(generated); }
-    let chat_finish = if stop_type == STOP_WORD || stop_type == STOP_EOS { if n_prev_calls > 0 { "tool_calls" } else { "stop" } } else { "length" };
+    let chat_finish = if stop_type == Stop.Word || stop_type == Stop.Eos { if n_prev_calls > 0 { "tool_calls" } else { "stop" } } else { "length" };
     if !t_stream {
         o.push('{');
         k(o, "choices");
@@ -2308,7 +2300,7 @@ fn send_final() {
 
 fn respond_json(data: const u8[:]) { respond_with(200, "application/json; charset=utf-8", data); }
 
-fn respond_error(kind: i64, msg: const u8[:]) {
+fn respond_error(kind: ErrorKind, msg: const u8[:]) {
     var o: u8[>..] = [];
     o.append("{\"error\":");
     error_json(o, kind, msg);
@@ -2318,7 +2310,7 @@ fn respond_error(kind: i64, msg: const u8[:]) {
 
 // A request's failure: an event if its response is events begun already,
 // else the whole response.
-fn send_error(kind: i64, msg: const u8[:]) {
+fn send_error(kind: ErrorKind, msg: const u8[:]) {
     guard streaming else { respond_error(kind, msg); return; }
     var o: u8[>..] = [];
     o.append("{\"error\":");
@@ -2331,13 +2323,13 @@ fn send_error(kind: i64, msg: const u8[:]) {
 fn body_json() -> i64 {
     jdoc::reset();
     let v = jdoc::parse(net::body);
-    if v < 0 { fail(E_INVALID_REQUEST, str("[json.exception.parse_error.101] parse error: ", jdoc::err)); }
+    if v < 0 { fail(ErrorKind.InvalidRequest, str("[json.exception.parse_error.101] parse error: ", jdoc::err)); }
     return v;
 }
 
 fn route_props() {
-    reset_task(RES_NONE);
-    t_reasoning_format = chat_render::REASONING_NONE;
+    reset_task(ResponseKind.None);
+    t_reasoning_format = chat_render::ReasoningFormat.None;
     var o: u8[>..] = [];
     o.push('{');
     k(o, "default_generation_settings");
@@ -2425,7 +2417,7 @@ fn route_models() {
     ks(o, "owned_by", "llamacpp");
     k(o, "meta");
     o.push('{');
-    ki(o, "vocab_type", vocab::vtype);
+    ki(o, "vocab_type", vocab::type_number(vocab::vtype));
     ki(o, "n_vocab", vocab::n_tokens());
     ki(o, "n_ctx", c.n_ctx_seq);
     ki(o, "n_ctx_train", m.hp.n_ctx_train);
@@ -2490,7 +2482,7 @@ fn route_detokenize() {
         for t in tokens {
             // llama_vocab's token_get_attr, which checks with .at()
             if t < 0 || t >= vocab::n_tokens() {
-                fail(E_SERVER, str("vector::_M_range_check: __n (which is ", t as! u64, ") >= this->size() (which is ", vocab::n_tokens(), ")"));
+                fail(ErrorKind.Server, str("vector::_M_range_check: __n (which is ", t as! u64, ") >= this->size() (which is ", vocab::n_tokens(), ")"));
             }
             content.append(piece(t, true));
         }
@@ -2513,21 +2505,21 @@ fn route_apply_template() {
     respond_json(o);
 }
 
-fn route_completion(res_type: i64) {
+fn route_completion(res_type: ResponseKind) {
     let body = body_json();
     reset_task(res_type);
-    if res_type == RES_OAI_CMPL {
-        guard jdoc::contains(body, "prompt") else { fail(E_INVALID_REQUEST, "\"prompt\" is required"); }
-        if jdoc::get_bool(body, "echo", false) { fail(E_INVALID_REQUEST, "Only no echo is supported"); }
-        if jdoc::contains(body, "best_of") { fail(E_INVALID_REQUEST, "Unsupported param: best_of"); }
-        if jdoc::contains(body, "suffix") { fail(E_INVALID_REQUEST, "Unsupported param: suffix"); }
+    if res_type == ResponseKind.OaiCmpl {
+        guard jdoc::contains(body, "prompt") else { fail(ErrorKind.InvalidRequest, "\"prompt\" is required"); }
+        if jdoc::get_bool(body, "echo", false) { fail(ErrorKind.InvalidRequest, "Only no echo is supported"); }
+        if jdoc::contains(body, "best_of") { fail(ErrorKind.InvalidRequest, "Unsupported param: best_of"); }
+        if jdoc::contains(body, "suffix") { fail(ErrorKind.InvalidRequest, "Unsupported param: suffix"); }
     }
     let pv = jdoc::get(body, "prompt");
-    guard pv >= 0 else { fail(E_INVALID_REQUEST, "[json.exception.out_of_range.403] key 'prompt' not found"); }
+    guard pv >= 0 else { fail(ErrorKind.InvalidRequest, "[json.exception.out_of_range.403] key 'prompt' not found"); }
     var tokens: i32[>..] = [];
     // an array of prompts: one, or an error
     if jdoc::is_arr(pv) && jdoc::len(pv) > 0 && !has_number(pv) {
-        guard jdoc::len(pv) == 1 else { fail(E_NOT_SUPPORTED, "several prompts in one request are not supported yet"); }
+        guard jdoc::len(pv) == 1 else { fail(ErrorKind.NotSupported, "several prompts in one request are not supported yet"); }
         let p = jdoc::at(pv, 0);
         if jdoc::is_obj(p) { tokenize_mixed(jdoc::get(p, "prompt_string"), true, true, tokens); } else { tokenize_mixed(p, true, true, tokens); }
     } else if jdoc::is_obj(pv) {
@@ -2535,7 +2527,7 @@ fn route_completion(res_type: i64) {
     } else {
         tokenize_mixed(pv, true, true, tokens);
     }
-    for t in tokens { if t < 0 || t >= vocab::n_tokens() { fail(E_INVALID_REQUEST, "Prompt contains invalid tokens"); } }
+    for t in tokens { if t < 0 || t >= vocab::n_tokens() { fail(ErrorKind.InvalidRequest, "Prompt contains invalid tokens"); } }
     eval_params(body);
     start(tokens);
 }
@@ -2547,7 +2539,7 @@ fn has_number(v: i64) -> bool {
 
 fn route_chat() {
     let body = body_json();
-    reset_task(RES_OAI_CHAT);
+    reset_task(ResponseKind.OaiChat);
     var prompt: u8[>..] = [];
     chat_prompt(body, prompt);
     // the request as a completion's: its own grammar fields give way to the template's
@@ -2566,7 +2558,7 @@ fn route_chat() {
         if chat_render::grammar.len == 0 && !jdoc::is_null(s) && g.len == 0 {
             var schema: u8[>..] = [];
             jdoc::dump(schema, s);
-            if !json_schema::to_grammar(schema, t_grammar) { fail(E_INVALID_REQUEST, str("Field 'json_schema': \"json_schema\": ", json_schema::err)); }
+            if !json_schema::to_grammar(schema, t_grammar) { fail(ErrorKind.InvalidRequest, str("Field 'json_schema': \"json_schema\": ", json_schema::err)); }
         }
     }
     if jdoc::contains(body, "reasoning_format") { t_reasoning_format = reasoning_format_from_name(jdoc::get_str(body, "reasoning_format", "")); }
@@ -2619,25 +2611,25 @@ fn handle(raw: const u8[:]) {
     streaming = false;
     client_gone = false;
     let st = net::take_request(raw);
-    if st > 0 { respond_error(E_INVALID_REQUEST, net::status_text(st)); return; }
+    if st > 0 { respond_error(ErrorKind.InvalidRequest, net::status_text(st)); return; }
     let method = net::method();
     let path = str(net::path());
     log(str("request: ", method, " ", path));
-    if !authorized() { respond_error(E_AUTHENTICATION, "Invalid API Key"); return; }
+    if !authorized() { respond_error(ErrorKind.Authentication, "Invalid API Key"); return; }
     let get = method == "GET";
     let post = method == "POST";
     fn body() {
         if get && (path == "/health" || path == "/v1/health") { respond_json("{\"status\":\"ok\"}"); }
         else if get && path == "/props" { route_props(); }
         else if get && (path == "/models" || path == "/v1/models") { route_models(); }
-        else if post && (path == "/completion" || path == "/completions") { route_completion(RES_NONE); }
-        else if post && path == "/v1/completions" { route_completion(RES_OAI_CMPL); }
+        else if post && (path == "/completion" || path == "/completions") { route_completion(ResponseKind.None); }
+        else if post && path == "/v1/completions" { route_completion(ResponseKind.OaiCmpl); }
         else if post && (path == "/chat/completions" || path == "/v1/chat/completions") { route_chat(); }
         else if post && path == "/apply-template" { route_apply_template(); }
         else if post && path == "/tokenize" { route_tokenize(); }
         else if post && path == "/detokenize" { route_detokenize(); }
         else if get && static_dir.len > 0 && serve_file(path) {}
-        else { respond_error(E_NOT_FOUND, "File Not Found"); }
+        else { respond_error(ErrorKind.NotFound, "File Not Found"); }
     }
     exception::try<Fail>(body) { f => send_error(f.kind, fail_msg); };
 }
@@ -2937,8 +2929,8 @@ fn setup() {
         }
         else if a == "--reasoning-format" {
             let v = value();
-            reasoning_format = if v == "none" { chat_render::REASONING_NONE } else if v == "auto" { chat_render::REASONING_DEEPSEEK }
-                else if v == "deepseek" { chat_render::REASONING_DEEPSEEK } else if v == "deepseek-legacy" { chat_render::REASONING_DEEPSEEK_LEGACY }
+            reasoning_format = if v == "none" { chat_render::ReasoningFormat.None } else if v == "auto" { chat_render::ReasoningFormat.Deepseek }
+                else if v == "deepseek" { chat_render::ReasoningFormat.Deepseek } else if v == "deepseek-legacy" { chat_render::ReasoningFormat.DeepseekLegacy }
                 else { die(str("unknown reasoning format: ", v)); 0 };
         }
         else if a == "--reasoning" {
@@ -2993,7 +2985,7 @@ fn setup() {
     c.n_threads = n_threads;
     // the slots: llama-server's 4 by default, in one cache unified for them; those
     // of -np, a stream of the cache each unless -kvu
-    if context::any_recurrent(m) || m.hp.arch == model::ARCH_T5 {
+    if context::any_recurrent(m) || m.hp.arch == model::Arch.T5 {
         if n_slots > 1 { write_stderr("warning: this model's cache holds one sequence: one slot\n"); }
         n_slots = 1;
     }

@@ -33,16 +33,16 @@ fn say(s: const u8[:]) { write_stdout(s); flush_stdout(); }
 fn show_message(s: const u8[:]) { say(s); say("\n"); }
 
 fn show_error(title: const u8[:], message: const u8[:] = "") {
-    console::set_display(console::ERROR);
+    console::set_display(console::Display.Error);
     say(str("Error: ", title, "\n"));
-    console::set_display(console::RESET);
+    console::set_display(console::Display.Reset);
     if message.len > 0 { show_message(message); }
 }
 
 fn show_info(s: const u8[:]) {
-    console::set_display(console::INFO);
+    console::set_display(console::Display.Info);
     show_message(s);
-    console::set_display(console::RESET);
+    console::set_display(console::Display.Reset);
 }
 
 // The server: where it is, and the one this program started (0 for none).
@@ -162,11 +162,11 @@ fn list_and_ask_models() -> bool {
     show_message(message);
     loop {
         if proc::take_interrupts() > 0 { return false; }
-        console::set_display(console::USER_INPUT);
+        console::set_display(console::Display.UserInput);
         say("Select model by number: ");
         var line: u8[>..] = [];
         console::readline(line, false);
-        console::set_display(console::RESET);
+        console::set_display(console::Display.Reset);
         guard line.len > 0 else { return false; }
         let idx, ok = parse_int(trim(line));
         if ok && idx > 0 && idx <= n {
@@ -237,23 +237,22 @@ fn write_output_file(s: const u8[:]) {
 
 // The reply as it streams, shown: reasoning dimmed between its markers
 // (ui::assistant_turn).
-let MODE_CONTENT = 0;
-let MODE_REASONING = 1;
-var mode = MODE_CONTENT;
+enum Mode { Content, Reasoning }
+var mode = Mode.Content;
 var trailing_newline = true;
 var inside_reasoning = false;
 
-fn push_text(m: i64, text: const u8[:]) {
+fn push_text(m: Mode, text: const u8[:]) {
     if m != mode {
         add_newline_if_needed();
-        if m == MODE_CONTENT {
+        if m == Mode.Content {
             if inside_reasoning {
                 say("[End thinking]\n\n");
                 inside_reasoning = false;
             }
-            console::set_display(console::RESET);
+            console::set_display(console::Display.Reset);
         } else {
-            console::set_display(console::REASONING);
+            console::set_display(console::Display.Reasoning);
             inside_reasoning = true;
             say("\n[Start thinking]\n\n");
         }
@@ -293,10 +292,10 @@ fn generate_completion() -> bool {
     if model.len > 0 { body.append(",\"model\":"); jdoc::put_str(body, model); }
     body.push('}');
 
-    mode = MODE_CONTENT;
+    mode = Mode.Content;
     trailing_newline = true;
     inside_reasoning = false;
-    console::set_display(console::RESET);
+    console::set_display(console::Display.Reset);
     var ok = true;
     let status = net::open_request(host, port, "POST", path_of("/v1/chat/completions"), body, "text/event-stream");
     if status < 0 {
@@ -341,17 +340,17 @@ fn generate_completion() -> bool {
         let r_text = jdoc::get(delta, "reasoning_content");
         if jdoc::is_str(r_text) && jdoc::str_of(r_text).len > 0 {
             reply_reasoning.append(jdoc::str_of(r_text));
-            push_text(MODE_REASONING, jdoc::str_of(r_text));
+            push_text(Mode.Reasoning, jdoc::str_of(r_text));
         }
         let c_text = jdoc::get(delta, "content");
         if jdoc::is_str(c_text) && jdoc::str_of(c_text).len > 0 {
             reply_content.append(jdoc::str_of(c_text));
-            push_text(MODE_CONTENT, jdoc::str_of(c_text));
+            push_text(Mode.Content, jdoc::str_of(c_text));
         }
     }
     net::close_request();
     proc::take_interrupts();
-    console::set_display(console::RESET);
+    console::set_display(console::Display.Reset);
     add_newline_if_needed();
     return ok;
 }
@@ -567,7 +566,7 @@ fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: b
 
     loop {
         var buffer: u8[>..] = [];
-        console::set_display(console::USER_INPUT);
+        console::set_display(console::Display.UserInput);
         if prompt.len == 0 {
             say("\n> ");
             var line: u8[>..] = [];
@@ -581,7 +580,7 @@ fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: b
             if buffer.len > 500 { say(str("\n> ", buffer[..500], " ... (truncated)\n")); } else { say(str("\n> ", buffer, "\n")); }
             prompt.clear();
         }
-        console::set_display(console::RESET);
+        console::set_display(console::Display.Reset);
         if proc::take_interrupts() > 0 { break; }
         // an empty read is the end of the input
         if buffer.len == 0 { break; }

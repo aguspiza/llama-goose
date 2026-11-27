@@ -61,9 +61,8 @@ fn common_prefix_len(a: const u8[:], b: const u8[:]) -> i64 { var n = 0; while n
 fn common_suffix_len(a: const u8[:], b: const u8[:]) -> i64 { var n = 0; while n < a.len && n < b.len && a[a.len - 1 - n] == b[b.len - 1 - n] { n++; } return n; }
 
 // A text of markers (<...>, [...]) and of what is between them.
-let SEG_TEXT = 0;
-let SEG_MARKER = 1;
-struct Seg { kind: i64, at: i64, len: i64 }
+enum SegKind { Text, Marker }
+struct Seg { kind: SegKind, at: i64, len: i64 }
 
 fn segmentize(text: const u8[:], out: Seg[>..]&) {
     out.clear();
@@ -73,18 +72,18 @@ fn segmentize(text: const u8[:], out: Seg[>..]&) {
     for i in text.len {
         let c = text[i];
         if !in_marker && (c == '<' || c == '[') {
-            if last < i { out.push(Seg { kind: SEG_TEXT, at: last, len: i - last }); }
+            if last < i { out.push(Seg { kind: SegKind.Text, at: last, len: i - last }); }
             last = i;
             in_marker = true;
             opener = c;
         } else if in_marker && ((opener == '<' && c == '>') || (opener == '[' && c == ']')) {
-            out.push(Seg { kind: SEG_MARKER, at: last, len: i - last + 1 });
+            out.push(Seg { kind: SegKind.Marker, at: last, len: i - last + 1 });
             last = i + 1;
             in_marker = false;
             opener = 0;
         }
     }
-    if last < text.len { out.push(Seg { kind: SEG_TEXT, at: last, len: text.len - last }); }
+    if last < text.len { out.push(Seg { kind: SegKind.Text, at: last, len: text.len - last }); }
 }
 
 fn seg_text(text: const u8[:], s: Seg) -> const u8[:] { text[s.at..s.at + s.len] }
@@ -169,13 +168,13 @@ fn diff_split(left: const u8[:], right: const u8[:]) {
             lstart++;
             right_done = true;
         }
-    } else if lstart == lend && rstart == rend && seg_eq(left, ls[lstart], right, rs[rstart]) && ls[lstart].kind == SEG_MARKER {
+    } else if lstart == lend && rstart == rend && seg_eq(left, ls[lstart], right, rs[rstart]) && ls[lstart].kind == SegKind.Marker {
         d_prefix.append(seg_text(right, rs[rstart]));
         left_done = true;
         right_done = true;
     }
-    let can_text_suffix = ls[lend].kind == SEG_TEXT && rs[rend].kind == SEG_TEXT;
-    let can_text_prefix = rs[rstart].kind == SEG_TEXT && ls[lstart].kind == SEG_TEXT;
+    let can_text_suffix = ls[lend].kind == SegKind.Text && rs[rend].kind == SegKind.Text;
+    let can_text_prefix = rs[rstart].kind == SegKind.Text && ls[lstart].kind == SegKind.Text;
     var rem_l: u8[>..] = [];
     var rem_r: u8[>..] = [];
     let l_last = if left_done { lend } else { lend + 1 };
@@ -347,32 +346,22 @@ fn non_markers() -> i64 { let a = peg::any(); let n = peg::negate(peg::marker())
 // the analysis
 //
 
-let MODE_NONE = 0;
-let MODE_TAG_BASED = 1;
-let MODE_TOOLS_ONLY = 2;
+enum Mode { None, TagBased, ToolsOnly }
 
-let CONTENT_PLAIN = 0;
-let CONTENT_ALWAYS_WRAPPED = 1;
-let CONTENT_WRAPPED_WITH_REASONING = 2;
+enum Content { Plain, AlwaysWrapped, WrappedWithReasoning }
 
-let ID_NONE = 0;
-let ID_PRE_FUNC_NAME = 1;
-let ID_BETWEEN_FUNC_AND_ARGS = 2;
-let ID_POST_ARGS = 3;
+enum IdPlace { None, PreFuncName, BetweenFuncAndArgs, PostArgs }
 
-let TOOLS_NONE = 0;
-let TOOLS_JSON_NATIVE = 1;
-let TOOLS_TAG_WITH_JSON = 2;
-let TOOLS_TAG_WITH_TAGGED = 3;
+enum Tools { None, JsonNative, TagWithJson, TagWithTagged }
 
 // The analysis being made, as growable texts (one template at a time).
-var r_mode = MODE_NONE;
+var r_mode = Mode.None;
 var r_start: u8[>..] = [];
 var r_end: u8[>..] = [];
-var c_mode = CONTENT_PLAIN;
+var c_mode = Content.Plain;
 var c_start: u8[>..] = [];
 var c_end: u8[>..] = [];
-var f_mode = TOOLS_NONE;
+var f_mode = Tools.None;
 var section_start: u8[>..] = [];
 var section_end: u8[>..] = [];
 var per_call_start: u8[>..] = [];
@@ -398,7 +387,7 @@ var a_value_prefix: u8[>..] = [];
 var a_value_suffix: u8[>..] = [];
 var a_separator: u8[>..] = [];
 var a_tolerate_ws = false;
-var id_pos = ID_NONE;
+var id_pos = IdPlace.None;
 var id_prefix: u8[>..] = [];
 var id_suffix: u8[>..] = [];
 var user_start: u8[>..] = [];
@@ -427,10 +416,10 @@ fn list_has(l: const u8[:], s: const u8[:]) -> bool {
 }
 
 fn clear_analysis() {
-    r_mode = MODE_NONE;
+    r_mode = Mode.None;
     r_start.clear();
     r_end.clear();
-    c_mode = CONTENT_PLAIN;
+    c_mode = Content.Plain;
     c_start.clear();
     c_end.clear();
     clear_tools();
@@ -441,7 +430,7 @@ fn clear_analysis() {
 }
 
 fn clear_tools() {
-    f_mode = TOOLS_NONE;
+    f_mode = Tools.None;
     section_start.clear();
     section_end.clear();
     per_call_start.clear();
@@ -467,7 +456,7 @@ fn clear_tools() {
     a_value_suffix.clear();
     a_separator.clear();
     a_tolerate_ws = false;
-    id_pos = ID_NONE;
+    id_pos = IdPlace.None;
     id_prefix.clear();
     id_suffix.clear();
 }
@@ -502,11 +491,11 @@ fn reasoning_presence() {
     let pre = tag("pre");
     let post = tag("post");
     if pre.len > 0 && post.len > 0 {
-        r_mode = MODE_TAG_BASED;
+        r_mode = Mode.TagBased;
         set(r_start, pre);
         set(r_end, post);
     } else if post.len > 0 {
-        r_mode = MODE_TAG_BASED;
+        r_mode = Mode.TagBased;
         set(r_end, post);
     }
 }
@@ -521,7 +510,7 @@ fn thinking_enabled() {
         if right_trimmed.len > 0 && ends_with(out_b, right_trimmed) {
             if r_start.len == 0 {
                 set(r_start, d_right);
-                r_mode = MODE_TAG_BASED;
+                r_mode = Mode.TagBased;
             }
         }
     } else if right_trimmed.len == 0 && d_left.len > 0 {
@@ -529,11 +518,11 @@ fn thinking_enabled() {
             var seg: Seg[>..] = [];
             segmentize(out_a, seg);
             prune_whitespace(out_a, seg);
-            if seg.len >= 2 && seg_text(out_a, seg[seg.len - 1]) == left_trimmed && seg[seg.len - 2].kind == SEG_MARKER {
+            if seg.len >= 2 && seg_text(out_a, seg[seg.len - 1]) == left_trimmed && seg[seg.len - 2].kind == SegKind.Marker {
                 set(r_start, seg_text(out_a, seg[seg.len - 2]));
             }
             set(r_end, d_left);
-            r_mode = MODE_TAG_BASED;
+            r_mode = Mode.TagBased;
         }
     } else if left_trimmed.len > 0 && right_trimmed.len > 0 {
         // one output's generation prompt tail may be in the other with
@@ -551,15 +540,15 @@ fn thinking_enabled() {
             var seg: Seg[>..] = [];
             segmentize(extra, seg);
             prune_whitespace(extra, seg);
-            if seg.len == 2 && seg[0].kind == SEG_MARKER && seg[1].kind == SEG_MARKER {
+            if seg.len == 2 && seg[0].kind == SegKind.Marker && seg[1].kind == SegKind.Marker {
                 if r_start.len == 0 { set(r_start, seg_text(extra, seg[0])); }
                 if r_end.len == 0 { set(r_end, seg_text(extra, seg[1])); }
-                r_mode = MODE_TAG_BASED;
+                r_mode = Mode.TagBased;
                 break;
             }
         }
     }
-    if r_mode == MODE_NONE && r_start.len == 0 && r_end.len > 0 { r_mode = MODE_TAG_BASED; }
+    if r_mode == Mode.None && r_start.len == 0 && r_end.len > 0 { r_mode = Mode.TagBased; }
 }
 
 // analyze_reasoning::compare_reasoning_scope
@@ -572,7 +561,7 @@ fn reasoning_scope() {
     let in_a = contains(out_a, THINKING_CONTENT);
     let in_b = contains(out_b, THINKING_CONTENT);
     guard !in_a && in_b else { return; }
-    r_mode = MODE_TOOLS_ONLY;
+    r_mode = Mode.ToolsOnly;
     fn wrapped() -> i64 {
         // tag("pre", marker() + space()) + literal(R) + space() + tag("post", marker() + space())
         let post = peg::tag("post", marker_space());
@@ -594,7 +583,7 @@ fn reasoning_scope() {
     } else if tagged(true, out_b, delimiter) {
         set(r_end, tag("post"));
     } else {
-        r_mode = MODE_NONE;
+        r_mode = Mode.None;
     }
 }
 
@@ -627,10 +616,10 @@ fn analyze_content() {
             return peg::chain([peg::ci(l1), peg::ci(s), peg::ci(l2)]);
         }
         if tagged(false, dr_left, plain) {
-            c_mode = CONTENT_PLAIN;
+            c_mode = Content.Plain;
             found_plain = true;
-        } else if r_mode != MODE_NONE && r_end.len > 0 && tagged(true, dr_left, post_reasoning) {
-            c_mode = CONTENT_PLAIN;
+        } else if r_mode != Mode.None && r_end.len > 0 && tagged(true, dr_left, post_reasoning) {
+            c_mode = Content.Plain;
             found_plain = true;
         }
     }
@@ -650,10 +639,10 @@ fn analyze_content() {
         set(c_start, tag("pre"));
         set(c_end, tag("post"));
     }
-    if c_start.len > 0 || c_end.len > 0 { c_mode = CONTENT_ALWAYS_WRAPPED; }
+    if c_start.len > 0 || c_end.len > 0 { c_mode = Content.AlwaysWrapped; }
 }
 
-fn content_always_wrapped() -> bool { c_mode == CONTENT_ALWAYS_WRAPPED && c_start.len > 0 && c_end.len > 0 }
+fn content_always_wrapped() -> bool { c_mode == Content.AlwaysWrapped && c_start.len > 0 && c_end.len > 0 }
 
 //
 // tool calls
@@ -691,7 +680,7 @@ fn in_json_haystack(haystack: const u8[:], needle: const u8[:]) -> bool {
 fn analyze_tool_call_format(haystack: const u8[:], supports_parallel: bool) {
     let fun_quote = in_json_haystack(haystack, FUN_FIRST);
     let arg_quote = in_json_haystack(haystack, ARG_FIRST);
-    f_mode = if fun_quote { TOOLS_JSON_NATIVE } else if arg_quote { TOOLS_TAG_WITH_JSON } else { TOOLS_TAG_WITH_TAGGED };
+    f_mode = if fun_quote { Tools.JsonNative } else if arg_quote { Tools.TagWithJson } else { Tools.TagWithTagged };
     // the reasoning markers out
     var clean = str(haystack);
     if r_start.len > 0 {
@@ -702,7 +691,7 @@ fn analyze_tool_call_format(haystack: const u8[:], supports_parallel: bool) {
         let p = find(clean, r_end);
         if p >= 0 { let cut = str(clean[..p], clean[p + r_end.len..]); clean = copy(cut); }
     }
-    if f_mode == TOOLS_JSON_NATIVE {
+    if f_mode == Tools.JsonNative {
         json_native_format(clean);
         if supports_parallel { json_native_parallel_calls(); }
     } else {
@@ -729,7 +718,7 @@ fn json_native_parallel_calls() {
 
 fn register_field(prefix: const u8[:], key: const u8[:], value: i64) {
     let full = if prefix.len > 0 { str(prefix, ".", key) } else { str(key) };
-    let is_str = json_schema::json_kind(value) == json_schema::J_STRING;
+    let is_str = json_schema::json_kind(value) == json_schema::JsonKind.String;
     var dumped: u8[>..] = [];
     json_schema::json_dump(dumped, value);
     if is_str && contains(json_schema::json_str(value), "call0000") { set(id_field, full); }
@@ -750,7 +739,7 @@ fn json_native_format(clean: const u8[:]) {
     let cut = str(clean[json_start..min(clean.len, max(json_start, json_end + 1))]);
     let call_struct = json_schema::json_value(cut);
     if call_struct < 0 { json_schema::fail(str("[json.exception.parse_error] ", json_schema::err)); }
-    if json_schema::json_kind(call_struct) == json_schema::J_OBJECT {
+    if json_schema::json_kind(call_struct) == json_schema::JsonKind.Object {
         for k in json_schema::json_len(call_struct) {
             let key = str(json_schema::json_key(call_struct, k));
             let value = json_schema::json_at(call_struct, k);
@@ -761,7 +750,7 @@ fn json_native_format(clean: const u8[:]) {
             } else {
                 var dumped: u8[>..] = [];
                 json_schema::json_dump(dumped, value);
-                if json_schema::json_kind(value) == json_schema::J_OBJECT && !contains(dumped, ARG_FIRST) {
+                if json_schema::json_kind(value) == json_schema::JsonKind.Object && !contains(dumped, ARG_FIRST) {
                     set(function_field, key);
                     for j in json_schema::json_len(value) {
                         register_field(key, str(json_schema::json_key(value, j)), json_schema::json_at(value, j));
@@ -963,7 +952,7 @@ fn extract_function_markers() {
         set(fn_name_prefix, str(fn_name_prefix, chat_peg::tag_text("pre")));
         set(fn_name_suffix, chat_peg::tag_text("post"));
     }
-    if f_mode == TOOLS_TAG_WITH_JSON {
+    if f_mode == Tools.TagWithJson {
         fn suffix_parser() -> i64 {
             // tag("ext", zero_or_more(marker() | (negate("{") + negate("[") + any())))
             //   + zero_or_more(negate(marker()) + any()) + marker()
@@ -1009,7 +998,7 @@ fn extract_function_markers() {
         closer = str(until_find(suffix, suffix_marker));
     }
     if closer.len > 0 {
-        if f_mode == TOOLS_TAG_WITH_TAGGED {
+        if f_mode == Tools.TagWithTagged {
             fn closer_tagged() -> i64 {
                 // until("YYYY") + "YYYY" + space() + marker() + space() + tag("close", rest())
                 let close = peg::tag("close", peg::rest());
@@ -1021,7 +1010,7 @@ fn extract_function_markers() {
                 return peg::chain([peg::ci(u), peg::ci(y), peg::ci(s1), peg::ci(m), peg::ci(s2), peg::ci(close)]);
             }
             if tagged(false, closer, closer_tagged) { set(fn_close, chat_peg::tag_text("close")); }
-        } else if f_mode == TOOLS_TAG_WITH_JSON {
+        } else if f_mode == Tools.TagWithJson {
             fn closer_json() -> i64 {
                 let post = peg::tag("post_val", peg::rest());
                 let y = peg::literal("YYYY");
@@ -1161,7 +1150,7 @@ fn extract_call_id_markers() {
         let args_in_prefix = find_from(prefix, "{", in_prefix);
         let args_in_suffix = find(suffix, "{");
         if args_in_suffix >= 0 && args_in_prefix < 0 {
-            id_pos = ID_BETWEEN_FUNC_AND_ARGS;
+            id_pos = IdPlace.BetweenFuncAndArgs;
             let after_func = str(prefix[in_prefix + FUN_FIRST.len..]);
             fn id_prefix_parser() -> i64 {
                 // tag("prefix", marker()) + zero_or_more(negate(marker()) + negate(literal(common)) + any()) + literal(common)
@@ -1185,7 +1174,7 @@ fn extract_call_id_markers() {
             }
             if tagged(true, suffix, suffix_parser) { set(id_suffix, chat_peg::tag_text("suffix")); }
         } else if args_in_prefix >= 0 {
-            id_pos = ID_POST_ARGS;
+            id_pos = IdPlace.PostArgs;
             let after_args = str(prefix[args_in_prefix..]);
             var closing = -1;
             for i in after_args.len { if after_args[i] == '}' { closing = i; } }
@@ -1193,21 +1182,21 @@ fn extract_call_id_markers() {
             set(id_suffix, first_marker_of(suffix));
         }
     } else if in_suffix >= 0 && in_prefix < 0 {
-        id_pos = ID_PRE_FUNC_NAME;
+        id_pos = IdPlace.PreFuncName;
         set(id_prefix, last_marker_anywhere(prefix));
         set(id_suffix, first_marker_of(suffix[..in_suffix]));
     }
     if id_prefix == a_end { id_prefix.clear(); }
     if id_suffix == a_start { id_suffix.clear(); }
-    if id_pos != ID_NONE && id_suffix.len > 0 && starts_with(per_call_end, id_suffix) { per_call_end.clear(); }
+    if id_pos != IdPlace.None && id_suffix.len > 0 && starts_with(per_call_end, id_suffix) { per_call_end.clear(); }
 }
 
 fn analyze_tools(caps: jinja::Caps) {
     analyze_tool_calls(caps.supports_parallel_tool_calls);
-    guard f_mode != TOOLS_NONE && f_mode != TOOLS_JSON_NATIVE else { return; }
+    guard f_mode != Tools.None && f_mode != Tools.JsonNative else { return; }
     if caps.supports_parallel_tool_calls { check_per_call_markers(); }
     extract_function_markers();
-    if f_mode == TOOLS_TAG_WITH_TAGGED {
+    if f_mode == Tools.TagWithTagged {
         extract_argument_name_markers();
         extract_argument_value_markers();
     }
@@ -1261,9 +1250,9 @@ fn detect_user_start() {
     for s in segs {
         let v = seg_text(candidate, s);
         // what may be end markers, at the start, out
-        if s.kind == SEG_MARKER && !encountered_marker && (lower_has(v, "end") || lower_has(v, "close")) { continue; }
-        if s.kind == SEG_TEXT && !encountered_marker && trim_whitespace(v).len == 0 { continue; }
-        if s.kind == SEG_MARKER { encountered_marker = true; }
+        if s.kind == SegKind.Marker && !encountered_marker && (lower_has(v, "end") || lower_has(v, "close")) { continue; }
+        if s.kind == SegKind.Text && !encountered_marker && trim_whitespace(v).len == 0 { continue; }
+        if s.kind == SegKind.Marker { encountered_marker = true; }
         result.append(v);
     }
     set(user_start, trim_whitespace(result));
@@ -1302,8 +1291,8 @@ fn collect_preserved_tokens() {
 fn workarounds(src: const u8[:]) {
     fn has(s: const u8[:]) -> bool { contains(src, s) }
     // old reasoning Qwen templates
-    if has("content.split('</think>')") && !has("reasoning_content") && !has("<SPECIAL_12>") && r_mode == MODE_NONE {
-        r_mode = MODE_TAG_BASED;
+    if has("content.split('</think>')") && !has("reasoning_content") && !has("<SPECIAL_12>") && r_mode == Mode.None {
+        r_mode = Mode.TagBased;
         set(r_start, "<think>");
         set(r_end, "</think>");
         list_push(preserved, "<think>");
@@ -1311,12 +1300,12 @@ fn workarounds(src: const u8[:]) {
     }
     // Granite 3.3
     if has("Write your thoughts between <think></think> and write your response between <response></response>") {
-        r_mode = MODE_TAG_BASED;
+        r_mode = Mode.TagBased;
         set(r_start, "<think>");
         set(r_end, "</think>");
         list_push(preserved, "<think>");
         list_push(preserved, "</think>");
-        c_mode = CONTENT_WRAPPED_WITH_REASONING;
+        c_mode = Content.WrappedWithReasoning;
         set(c_start, "<response>");
         set(c_end, "</response>");
         list_push(preserved, "<response>");
@@ -1324,7 +1313,7 @@ fn workarounds(src: const u8[:]) {
     }
     // Cohere Command R+
     if has("<|CHATBOT_TOKEN|>") && has("<|END_OF_TURN_TOKEN|>") && c_start.len == 0 {
-        c_mode = CONTENT_ALWAYS_WRAPPED;
+        c_mode = Content.AlwaysWrapped;
         set(c_start, "<|CHATBOT_TOKEN|>");
         set(c_end, "<|END_OF_TURN_TOKEN|>");
         list_push(preserved, "<|CHATBOT_TOKEN|>");
@@ -1333,7 +1322,7 @@ fn workarounds(src: const u8[:]) {
     }
     // Functionary
     if has("set has_code_interpreter = tools | selectattr(\"type\", \"equalto\", \"code_interpreter\") | list | length > 0") {
-        c_mode = CONTENT_PLAIN;
+        c_mode = Content.Plain;
         c_end.clear();
         fn_name_prefix.clear();
         section_start.clear();
@@ -1359,16 +1348,16 @@ fn workarounds(src: const u8[:]) {
     }
     // Nemotron Nano v2
     if has("<SPECIAL_10>") && has("<SPECIAL_11>") && has("<SPECIAL_12>") && has("<TOOL_RESPONSE>") {
-        f_mode = TOOLS_JSON_NATIVE;
+        f_mode = Tools.JsonNative;
         section_start.clear();
         section_end.clear();
         set(per_call_start, "<TOOLCALL>");
         set(per_call_end, "</TOOLCALL>");
         tools_array_wrapped = true;
-        c_mode = CONTENT_PLAIN;
+        c_mode = Content.Plain;
         c_start.clear();
         c_end.clear();
-        r_mode = MODE_TAG_BASED;
+        r_mode = Mode.TagBased;
         set(r_start, "<think>\n");
         set(r_end, "</think>");
         set(assistant_start, "<SPECIAL_11>Assistant");
@@ -1446,21 +1435,21 @@ fn analyze_tmpl() -> bool {
 
 // what the parser depends on of the generation_params, and its JSON read
 // into json_schema values
-var g_tool_choice = 0;
+var g_tool_choice = chat_render::ToolChoice.Auto;
 var g_parallel = true;
-var g_reasoning_format = 0;
+var g_reasoning_format = chat_render::ReasoningFormat.None;
 var tools_v = -1;
 var schema_v = -1;
 var extracting_reasoning = false;
 var reasoning_parser = -1;
 
-fn has_tools() -> bool { tools_v >= 0 && json_schema::json_kind(tools_v) == json_schema::J_ARRAY && json_schema::json_len(tools_v) > 0 }
-fn has_response_format() -> bool { schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::J_OBJECT && json_schema::json_len(schema_v) > 0 }
+fn has_tools() -> bool { tools_v >= 0 && json_schema::json_kind(tools_v) == json_schema::JsonKind.Array && json_schema::json_len(tools_v) > 0 }
+fn has_response_format() -> bool { schema_v >= 0 && json_schema::json_kind(schema_v) == json_schema::JsonKind.Object && json_schema::json_len(schema_v) > 0 }
 
 // analyze_reasoning::build_parser
 fn build_reasoning() -> i64 {
     if !extracting_reasoning { return peg::eps(); }
-    if (r_mode == MODE_TAG_BASED || r_mode == MODE_TOOLS_ONLY) && r_end.len > 0 {
+    if (r_mode == Mode.TagBased || r_mode == Mode.ToolsOnly) && r_end.len > 0 {
         if r_start.len > 0 {
             // optional(optspace(start) + reasoning(until(trim(end))) + optspace(end))
             let oe = chat_peg::optspace(r_end);
@@ -1526,7 +1515,7 @@ fn build_tools_json_native() -> i64 {
         af = copy(a2);
     }
     let order = order_list();
-    let required = g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+    let required = g_tool_choice == chat_render::ToolChoice.Required;
     var tools_parser = peg::eps();
     if section_start.len == 0 && per_call_start.len > 0 {
         let single = chat_peg::standard_json_tools(per_call_start, per_call_end, tools_v, g_parallel, required, nf, af,
@@ -1606,13 +1595,13 @@ fn build_func_parser(name: const u8[:], call_id_section: i64, have_call_id: bool
 // foreach_function's test: a function tool
 fn is_function_tool(tool: i64) -> bool {
     let ty = chat_peg::jget(tool, "type");
-    return ty >= 0 && chat_peg::jstr(ty) == "function" && json_schema::json_kind(ty) == json_schema::J_STRING && chat_peg::jget(tool, "function") >= 0;
+    return ty >= 0 && chat_peg::jstr(ty) == "function" && json_schema::json_kind(ty) == json_schema::JsonKind.String && chat_peg::jget(tool, "function") >= 0;
 }
 
 // The call id parser between the function and its arguments; -1 for none
 // (the eps it starts as is made by the caller).
 fn call_id_parser(with_suffix_inside: bool) -> i64 {
-    guard id_pos == ID_BETWEEN_FUNC_AND_ARGS && id_prefix.len > 0 && (id_suffix.len > 0 || a_start.len > 0) else { return -1; }
+    guard id_pos == IdPlace.BetweenFuncAndArgs && id_prefix.len > 0 && (id_suffix.len > 0 || a_start.len > 0) else { return -1; }
     if id_suffix.len > 0 {
         let ti = chat_peg::tool_id(peg::until(id_suffix));
         if with_suffix_inside {
@@ -1658,7 +1647,7 @@ fn build_tools_tag_json() -> i64 {
         let r = peg::rule(str("tool-", i), f, false);
         tool_choice = peg::choice2(tool_choice, r);
     }
-    let require_calls = g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+    let require_calls = g_tool_choice == chat_render::ToolChoice.Required;
     var tool_calls = peg::eps();
     if per_call_start.len > 0 {
         let wrapped = peg::chain([peg::cs(per_call_start), peg::ci(tool_choice), peg::cs(per_call_end)]);
@@ -1748,7 +1737,7 @@ fn build_tools_tag_tagged() -> i64 {
         let r = peg::rule(str("tool-", i), f, false);
         tool_choice = peg::choice2(tool_choice, r);
     }
-    let require_tools = g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED;
+    let require_tools = g_tool_choice == chat_render::ToolChoice.Required;
     var tool_calls = peg::eps();
     if per_call_start.len > 0 {
         // per_call_start + space() + tool_choice + space() + per_call_end
@@ -1797,9 +1786,9 @@ fn build_tools_tag_tagged() -> i64 {
 
 // analyze_tools::build_parser
 fn build_tools() -> i64 {
-    if f_mode == TOOLS_JSON_NATIVE { return build_tools_json_native(); }
-    if f_mode == TOOLS_TAG_WITH_JSON { return build_tools_tag_json(); }
-    if f_mode == TOOLS_TAG_WITH_TAGGED { return build_tools_tag_tagged(); }
+    if f_mode == Tools.JsonNative { return build_tools_json_native(); }
+    if f_mode == Tools.TagWithJson { return build_tools_tag_json(); }
+    if f_mode == Tools.TagWithTagged { return build_tools_tag_tagged(); }
     write_stderr("[ERROR] Template seems to support tool calls, but failed to determine tool format. Tool calling will not work properly.\n");
     return peg::eps();
 }
@@ -1809,11 +1798,11 @@ fn build_parser(generation_prompt: const u8[:]) -> i64 {
     peg::begin();
     // parser_build_context's constructor: reasoning_parser(p.eps())
     peg::eps();
-    let extract = g_reasoning_format != chat_render::REASONING_NONE;
-    extracting_reasoning = extract && r_mode != MODE_NONE;
+    let extract = g_reasoning_format != chat_render::ReasoningFormat.None;
+    extracting_reasoning = extract && r_mode != Mode.None;
     reasoning_parser = build_reasoning();
     var parser = peg::eps();
-    var pure_content = r_mode == MODE_NONE;
+    var pure_content = r_mode == Mode.None;
     if has_response_format() {
         let j = peg::json();
         let node = json_schema::build_document(schema_v);
@@ -1832,7 +1821,7 @@ fn build_parser(generation_prompt: const u8[:]) -> i64 {
         let s = peg::space();
         parser = peg::chain([peg::ci(reasoning_parser), peg::ci(s), peg::ci(ch), peg::ci(e)]);
         pure_content = false;
-    } else if has_tools() && g_tool_choice != chat_render::TOOL_CHOICE_NONE && tmpl.caps.supports_tool_calls {
+    } else if has_tools() && g_tool_choice != chat_render::ToolChoice.None && tmpl.caps.supports_tool_calls {
         parser = build_tools();
         pure_content = false;
     } else {
@@ -1876,7 +1865,7 @@ fn generate(g: chat_render::Gen) {
     fn try_render() { render(); rendered = true; }
     exception::try<jinja::Fail>(try_render);
     if !rendered { json_schema::fail(jinja::err); }
-    chat_render::format = chat_render::FORMAT_PEG_NATIVE;
+    chat_render::format = chat_render::Format.PegNative;
     chat_render::preserved_tokens.append(preserved);
     chat_render::additional_stops.append(stops);
     let parser_gp = str(gp);
@@ -1887,43 +1876,43 @@ fn generate(g: chat_render::Gen) {
             gp = copy(cut);
             gp.append(r_start);
             gp.append(g.continue_reasoning);
-            if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(r_end); }
+            if g.continue_final_message == chat_render::Continue.Content { gp.append(r_end); }
         }
-        if g.continue_final_message == chat_render::CONTINUE_CONTENT { gp.append(g.continue_content); }
+        if g.continue_final_message == chat_render::Continue.Content { gp.append(g.continue_content); }
         chat_render::append_part(gp, false);
     }
     chat_render::gen_prompt.append(gp);
     chat_render::parser = build_parser(parser_gp);
-    let tools_ok = f_mode != TOOLS_NONE && has_tools();
+    let tools_ok = f_mode != Tools.None && has_tools();
     let trigger = if section_start.len > 0 { str(section_start) } else { str(per_call_start) };
     // bare JSON calls with no start marker (Llama 3.x): the lazy grammar triggers on the call's opening
     var trigger_pattern: u8[>..] = [];
     let top_level_name = (function_field.len == 0 || function_field == "function") && find(name_field, ".") < 0;
-    if trigger.len == 0 && f_mode == TOOLS_JSON_NATIVE && !fun_name_is_key && !tools_array_wrapped && top_level_name {
+    if trigger.len == 0 && f_mode == Tools.JsonNative && !fun_name_is_key && !tools_array_wrapped && top_level_name {
         trigger_pattern.append("\\{\\s*\"");
         regex_escape(trigger_pattern, name_field);
         trigger_pattern.append("\"\\s*:");
     }
     let rf = has_response_format();
-    let include = rf || (tools_ok && ((g_tool_choice == chat_render::TOOL_CHOICE_AUTO && (trigger.len > 0 || trigger_pattern.len > 0)) || g_tool_choice == chat_render::TOOL_CHOICE_REQUIRED));
+    let include = rf || (tools_ok && ((g_tool_choice == chat_render::ToolChoice.Auto && (trigger.len > 0 || trigger_pattern.len > 0)) || g_tool_choice == chat_render::ToolChoice.Required));
     if include {
-        chat_render::grammar_lazy = !rf && g_tool_choice == chat_render::TOOL_CHOICE_AUTO;
+        chat_render::grammar_lazy = !rf && g_tool_choice == chat_render::ToolChoice.Auto;
         json_schema::begin_grammar();
         peg::build_grammar(chat_render::parser, chat_render::grammar_lazy);
         json_schema::end_grammar(chat_render::grammar);
         if chat_render::grammar_lazy {
             if trigger.len > 0 {
-                chat_render::add_trigger(chat_render::TRIGGER_WORD, trigger);
+                chat_render::add_trigger(chat_render::Trigger.Word, trigger);
             } else {
-                chat_render::add_trigger(chat_render::TRIGGER_PATTERN, trigger_pattern);
+                chat_render::add_trigger(chat_render::Trigger.Pattern, trigger_pattern);
             }
-            if openai_wrapper_trigger { chat_render::add_trigger(chat_render::TRIGGER_WORD, "{\"type\": \"function\","); }
+            if openai_wrapper_trigger { chat_render::add_trigger(chat_render::Trigger.Word, "{\"type\": \"function\","); }
         }
     }
     // the rest of templates_apply_jinja's autoparser branch
     chat_render::assistant_start.append(assistant_start);
     chat_render::user_start.append(user_start);
-    chat_render::supports_thinking = r_mode != MODE_NONE;
+    chat_render::supports_thinking = r_mode != Mode.None;
     if chat_render::supports_thinking {
         chat_render::thinking_start.append(trim_whitespace(r_start));
         let end_tag = trim_whitespace(r_end);

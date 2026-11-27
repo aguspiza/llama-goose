@@ -233,14 +233,14 @@ fn test_builtin(name: const u8[:]) -> i64 {
 // The method name of v, or -1. A function or keyword argument has none.
 fn type_builtin(v: i64, name: const u8[:]) -> i64 {
     let k = kind(v);
-    if k == K_INT { return lookup(INT_METHODS[..], name); }
-    if k == K_FLOAT { return lookup(FLOAT_METHODS[..], name); }
-    if k == K_STRING { return lookup(STRING_METHODS[..], name); }
-    if k == K_BOOL { return lookup(BOOL_METHODS[..], name); }
-    if k == K_ARRAY || k == K_TUPLE { return lookup(ARRAY_METHODS[..], name); }
-    if k == K_OBJECT { return if vals[v].builtins { lookup(OBJECT_METHODS[..], name) } else { -1 }; }
-    if k == K_NONE { return lookup(NONE_METHODS[..], name); }
-    if k == K_UNDEF { return lookup(UNDEFINED_METHODS[..], name); }
+    if k == ValKind.Int { return lookup(INT_METHODS[..], name); }
+    if k == ValKind.Float { return lookup(FLOAT_METHODS[..], name); }
+    if k == ValKind.String { return lookup(STRING_METHODS[..], name); }
+    if k == ValKind.Bool { return lookup(BOOL_METHODS[..], name); }
+    if k == ValKind.Array || k == ValKind.Tuple { return lookup(ARRAY_METHODS[..], name); }
+    if k == ValKind.Object { return if vals[v].builtins { lookup(OBJECT_METHODS[..], name) } else { -1 }; }
+    if k == ValKind.None { return lookup(NONE_METHODS[..], name); }
+    if k == ValKind.Undef { return lookup(UNDEFINED_METHODS[..], name); }
     fail(str(tname(v), " has no builtins"));
     return -1;
 }
@@ -265,7 +265,7 @@ recursive fn apply_filter_by_name(c: Ctx, filter: const u8[:], input: i64, a: Ar
                else if filter == "e" { "escape" } else if filter == "trim" { "strip" } else { filter };
     var inp = input;
     // the string filters take anything, as its text
-    if kind(inp) != K_UNDEF && kind(inp) != K_STRING &&
+    if kind(inp) != ValKind.Undef && kind(inp) != ValKind.String &&
        (name == "capitalize" || name == "lower" || name == "replace" || name == "strip" ||
         name == "title" || name == "upper" || name == "wordcount") {
         inp = copy_string(as_string(inp));
@@ -298,7 +298,7 @@ fn get_pos_or(a: Args, k: i64, d: i64) -> i64 { if a.n > k { arg(a, k) } else { 
 fn get_kwarg(a: Args, key: const u8[:], d: i64) -> i64 {
     for k in a.n {
         let v = arg(a, k);
-        if kind(v) == K_KWARG && sbytes(vals[v].a) == key { return vals[v].b; }
+        if kind(v) == ValKind.Kwarg && sbytes(vals[v].a) == key { return vals[v].b; }
     }
     return d;
 }
@@ -307,8 +307,8 @@ fn get_kwarg(a: Args, key: const u8[:], d: i64) -> i64 {
 // a keyword argument), or undefined.
 fn get_kwarg_or_pos(a: Args, key: const u8[:], pos: i64) -> i64 {
     let v = get_kwarg(a, key, -1);
-    if v >= 0 && kind(v) != K_UNDEF { return v; }
-    if pos < a.n && kind(arg(a, pos)) != K_KWARG { return arg(a, pos); }
+    if v >= 0 && kind(v) != ValKind.Undef { return v; }
+    if pos < a.n && kind(arg(a, pos)) != ValKind.Kwarg { return arg(a, pos); }
     return if v >= 0 { v } else { mk_undef() };
 }
 
@@ -316,7 +316,7 @@ fn get_kwarg_or_pos(a: Args, key: const u8[:], pos: i64) -> i64 {
 fn ensure_kwargs(a: Args, n1: const u8[:], n2: const u8[:]) {
     for k in a.n {
         let v = arg(a, k);
-        if kind(v) != K_KWARG { continue; }
+        if kind(v) != ValKind.Kwarg { continue; }
         let key = sbytes(vals[v].a);
         if key != n1 && key != n2 {
             fail(str("Function '", fname(a), "' got an unexpected keyword argument '", key, "'"));
@@ -347,8 +347,8 @@ fn class_name(w: u8) -> const u8[:] {
 fn is_class(v: i64, w: u8) -> bool {
     let k = kind(v);
     return match w {
-        'S' => k == K_STRING, 'I' => k == K_INT, 'F' => k == K_FLOAT, 'B' => k == K_BOOL,
-        'A' => k == K_ARRAY || k == K_TUPLE, _ => k == K_OBJECT,
+        'S' => k == ValKind.String, 'I' => k == ValKind.Int, 'F' => k == ValKind.Float, 'B' => k == ValKind.Bool,
+        'A' => k == ValKind.Array || k == ValKind.Tuple, _ => k == ValKind.Object,
     };
 }
 
@@ -451,7 +451,7 @@ fn call_other(id: i64, a: Args) -> i64 {
     if id == B_ARR_LIST {
         ensure_vals(a, "A", 1);
         let v = arg(a, 0);
-        return mk_array_of(K_ARRAY, vals[v].a, vals[v].n);
+        return mk_array_of(ValKind.Array, vals[v].a, vals[v].n);
     }
     if id == B_ARR_FIRST || id == B_ARR_LAST {
         ensure_vals(a, "A", 1);
@@ -472,7 +472,7 @@ fn call_other(id: i64, a: Args) -> i64 {
         ensure_count(a, 2, 999);
         let v = get_pos(a, 0);
         if !is_array(v) { fail("append: first argument must be an array"); }
-        if kind(v) == K_TUPLE { fail("Attempting to modify immutable type"); }
+        if kind(v) == ValKind.Tuple { fail("Attempting to modify immutable type"); }
         arr_push(v, get_pos(a, 1));
         return v;
     }
@@ -481,7 +481,7 @@ fn call_other(id: i64, a: Args) -> i64 {
         ensure_vals(a, "AI", 1);
         let v = arg(a, 0);
         var index = if a.n == 2 { as_int(arg(a, 1)) } else { -1 };
-        if kind(v) == K_TUPLE { fail("Attempting to modify immutable type"); }
+        if kind(v) == ValKind.Tuple { fail("Attempting to modify immutable type"); }
         let len = arr_len(v);
         if index < 0 { index += len; }
         if index < 0 || index >= len { fail(str("Index ", index, " out of bounds for array of size ", len)); }
@@ -501,8 +501,8 @@ fn call_other(id: i64, a: Args) -> i64 {
     if id == B_OBJ_GET {
         ensure_count(a, 2, 3);
         let o = arg(a, 0);
-        if kind(o) != K_OBJECT { fail("get: first argument must be an object"); }
-        if kind(arg(a, 1)) != K_STRING { fail("get: second argument must be a string (key)"); }
+        if kind(o) != ValKind.Object { fail("get: first argument must be an object"); }
+        if kind(arg(a, 1)) != ValKind.String { fail("get: second argument must be a string (key)"); }
         let d = if a.n == 3 { arg(a, 2) } else { mk_none() };
         let v = obj_get(o, arg(a, 1));
         return if v >= 0 { v } else { d };
@@ -556,7 +556,7 @@ fn call_test(id: i64, a: Args) -> i64 {
     }
     if id >= B_TEST_EQ && id <= B_TEST_NE {
         ensure_count(a, 2, 2);
-        let op = match id { B_TEST_EQ => CMP_EQ, B_TEST_GE => CMP_GE, B_TEST_GT => CMP_GT, B_TEST_LT => CMP_LT, _ => CMP_NE };
+        let op = match id { B_TEST_EQ => Cmp.Eq, B_TEST_GE => Cmp.Ge, B_TEST_GT => Cmp.Gt, B_TEST_LT => Cmp.Lt, _ => Cmp.Ne };
         return mk_bool(compare(arg(a, 0), arg(a, 1), op));
     }
     if id == B_TEST_IN {
@@ -575,10 +575,10 @@ fn call_test(id: i64, a: Args) -> i64 {
         let kx = kind(x);
         let ky = kind(y);
         var res = false;
-        if kx != K_UNDEF && ky != K_UNDEF {
-            if kx == K_NONE && ky == K_NONE { res = true; }
-            else if kx == K_BOOL && ky == K_BOOL { res = vals[x].i == vals[y].i; }
-            else if kx == K_INT && ky == K_INT { res = vals[x].i >= -5 && vals[x].i <= 256 && vals[x].i == vals[y].i; }
+        if kx != ValKind.Undef && ky != ValKind.Undef {
+            if kx == ValKind.None && ky == ValKind.None { res = true; }
+            else if kx == ValKind.Bool && ky == ValKind.Bool { res = vals[x].i == vals[y].i; }
+            else if kx == ValKind.Int && ky == ValKind.Int { res = vals[x].i >= -5 && vals[x].i <= 256 && vals[x].i == vals[y].i; }
             else { res = x == y; }
         }
         return mk_bool(res);
@@ -589,19 +589,19 @@ fn call_test(id: i64, a: Args) -> i64 {
     let v = get_pos(a, 0);
     let k = kind(v);
     let r = match id {
-        B_TEST_BOOLEAN => k == K_BOOL,
-        B_TEST_CALLABLE => k == K_FUNC,
-        B_TEST_FALSE => k == K_BOOL && vals[v].i == 0,
-        B_TEST_TRUE => k == K_BOOL && vals[v].i != 0,
-        B_TEST_STRING => k == K_STRING,
-        B_TEST_INTEGER => k == K_INT,
-        B_TEST_FLOAT => k == K_FLOAT,
-        B_TEST_NUMBER => k == K_INT || k == K_FLOAT,
-        B_TEST_ITERABLE => k == K_OBJECT || k == K_ARRAY || k == K_TUPLE || k == K_STRING || k == K_UNDEF,
-        B_TEST_MAPPING => k == K_OBJECT,
-        B_TEST_NONE => k == K_NONE,
-        B_TEST_DEFINED => k != K_UNDEF,
-        _ => k == K_UNDEF,
+        B_TEST_BOOLEAN => k == ValKind.Bool,
+        B_TEST_CALLABLE => k == ValKind.Func,
+        B_TEST_FALSE => k == ValKind.Bool && vals[v].i == 0,
+        B_TEST_TRUE => k == ValKind.Bool && vals[v].i != 0,
+        B_TEST_STRING => k == ValKind.String,
+        B_TEST_INTEGER => k == ValKind.Int,
+        B_TEST_FLOAT => k == ValKind.Float,
+        B_TEST_NUMBER => k == ValKind.Int || k == ValKind.Float,
+        B_TEST_ITERABLE => k == ValKind.Object || k == ValKind.Array || k == ValKind.Tuple || k == ValKind.String || k == ValKind.Undef,
+        B_TEST_MAPPING => k == ValKind.Object,
+        B_TEST_NONE => k == ValKind.None,
+        B_TEST_DEFINED => k != ValKind.Undef,
+        _ => k == ValKind.Undef,
     };
     return mk_bool(r);
 }
@@ -609,47 +609,43 @@ fn call_test(id: i64, a: Args) -> i64 {
 // needle in haystack (test_is_in).
 fn test_is_in(needle: i64, haystack: i64) -> bool {
     let k = kind(haystack);
-    if k == K_UNDEF { return false; }
-    if k == K_ARRAY || k == K_TUPLE {
+    if k == ValKind.Undef { return false; }
+    if k == ValKind.Array || k == ValKind.Tuple {
         for i in arr_len(haystack) { if equiv(needle, arr_at(haystack, i)) { return true; } }
         return false;
     }
-    if k == K_STRING {
-        if kind(needle) != K_STRING {
+    if k == ValKind.String {
+        if kind(needle) != ValKind.String {
             fail(str("'in' test expects args[1] as string when args[0] is string, got args[1] as ", tname(needle)));
         }
         return find(sbytes(haystack), sbytes(needle)) >= 0;
     }
-    if k == K_OBJECT { return obj_find(haystack, needle) >= 0; }
+    if k == ValKind.Object { return obj_find(haystack, needle) >= 0; }
     fail(str("'in' test expects iterable as first argument, got ", tname(haystack)));
     return false;
 }
 
-let CMP_EQ = 0;
-let CMP_GE = 1;
-let CMP_GT = 2;
-let CMP_LT = 3;
-let CMP_NE = 4;
+enum Cmp { Eq, Ge, Gt, Lt, Ne }
 
 // value_compare: numbers as floats, strings (and a string with a number) by
 // their text, bools for equality only; anything else is not equal.
-fn compare(a: i64, b: i64, op: i64) -> bool {
+fn compare(a: i64, b: i64, op: Cmp) -> bool {
     let ka = kind(a);
     let kb = kind(b);
-    let na = ka == K_INT || ka == K_FLOAT;
-    let nb = kb == K_INT || kb == K_FLOAT;
+    let na = ka == ValKind.Int || ka == ValKind.Float;
+    let nb = kb == ValKind.Int || kb == ValKind.Float;
     if na && nb {
         let x = vals[a].f;
         let y = vals[b].f;
-        return match op { CMP_EQ => x == y, CMP_GE => x >= y, CMP_GT => x > y, CMP_LT => x < y, _ => x != y };
+        return match op { Eq => x == y, Ge => x >= y, Gt => x > y, Lt => x < y, _ => x != y };
     }
-    if (kb == K_STRING && na) || (ka == K_STRING && nb) || (ka == K_STRING && kb == K_STRING) {
+    if (kb == ValKind.String && na) || (ka == ValKind.String && nb) || (ka == ValKind.String && kb == ValKind.String) {
         let c = cmp_bytes(sbytes(as_string(a)), sbytes(as_string(b)));
-        return match op { CMP_EQ => c == 0, CMP_GE => c >= 0, CMP_GT => c > 0, CMP_LT => c < 0, _ => c != 0 };
+        return match op { Eq => c == 0, Ge => c >= 0, Gt => c > 0, Lt => c < 0, _ => c != 0 };
     }
-    if ka == K_BOOL && kb == K_BOOL {
-        if op == CMP_EQ { return vals[a].i == vals[b].i; }
-        if op == CMP_NE { return vals[a].i != vals[b].i; }
+    if ka == ValKind.Bool && kb == ValKind.Bool {
+        if op == Cmp.Eq { return vals[a].i == vals[b].i; }
+        if op == Cmp.Ne { return vals[a].i != vals[b].i; }
         fail("Unsupported comparison operator for bool type");
     }
     return false;
@@ -666,11 +662,11 @@ fn cmp_bytes(x: const u8[:], y: const u8[:]) -> i64 {
 // val[attr] for an array or object (an attribute of digits indexes an
 // array), or d.
 fn get_attribute(val: i64, attr: i64, d: i64) -> i64 {
-    if kind(attr) == K_UNDEF { return d; }
+    if kind(attr) == ValKind.Undef { return d; }
     let k = kind(val);
-    if k == K_ARRAY || k == K_TUPLE {
+    if k == ValKind.Array || k == ValKind.Tuple {
         var idx = attr;
-        if kind(attr) == K_STRING {
+        if kind(attr) == ValKind.String {
             let s = sbytes(attr);
             var digits = s.len > 0;
             for c in s { if c < '0' || c > '9' { digits = false; } }
@@ -680,14 +676,14 @@ fn get_attribute(val: i64, attr: i64, d: i64) -> i64 {
             }
         }
         let ik = kind(idx);
-        if ik != K_INT && ik != K_BOOL { return d; }
+        if ik != ValKind.Int && ik != ValKind.Bool { return d; }
         var i = vals[idx].i;
         let len = arr_len(val);
         if i < 0 { i += len; }
         if i < 0 || i >= len { return d; }
         return arr_at(val, i);
     }
-    if k == K_OBJECT {
+    if k == ValKind.Object {
         let v = obj_get(val, attr);
         return if v >= 0 { v } else { d };
     }
@@ -709,13 +705,13 @@ fn to_object(a: Args) -> i64 {
                 fail(str("namespace/dict() iterable argument must consist of tuples, not ", tname(it)));
             }
         }
-    } else if iter >= 0 && kind(iter) == K_OBJECT {
+    } else if iter >= 0 && kind(iter) == ValKind.Object {
         iter_first = true;
         for i in obj_len(iter) { obj_set(out, obj_key(iter, i), obj_value(iter, i)); }
     }
     for k in a.n {
         let v = arg(a, k);
-        if kind(v) == K_KWARG {
+        if kind(v) == ValKind.Kwarg {
             obj_set(out, vals[v].a, vals[v].b);
         } else if !iter_first {
             fail(str("namespace/dict() arguments must be kwargs, dict and/or iterable of tuples, not ", tname(v)));
@@ -753,7 +749,7 @@ fn tojson(a: Args) -> i64 {
     let seps = get_kwarg_or_pos(a, "separators", 3);
     let sort = get_kwarg_or_pos(a, "sort_keys", 4);
     if stats { mark_used(get_pos(a, 0), true, 0); }
-    let indent = if kind(indent_v) == K_INT { vals[indent_v].i } else { -1 };
+    let indent = if kind(indent_v) == ValKind.Int { vals[indent_v].i } else { -1 };
     let ensure_ascii = truthy(ascii);
     var item_sep: u8[>..] = [];
     var key_sep: u8[>..] = [];
@@ -870,9 +866,9 @@ recursive fn array_map(a: Args) -> i64 {
     let v = arg(a, 0);
     if !is_array(v) { fail("map: first argument must be an array"); }
     let out = new_val(Val { kind: kind(v), .. });
-    if kind(arg(a, 1)) != K_KWARG {
+    if kind(arg(a, 1)) != ValKind.Kwarg {
         let filter = arg(a, 1);
-        if kind(filter) != K_STRING { fail("map: filter name must be a string"); }
+        if kind(filter) != ValKind.String { fail("map: filter name must be a string"); }
         let fargs = Args { ctx: a.ctx, at: a.at + 2, n: a.n - 2 };
         for i in arr_len(v) {
             let r = apply_filter_by_name(a.ctx, sbytes(filter), arr_at(v, i), fargs);
@@ -895,7 +891,7 @@ recursive fn array_sort(a: Args) -> i64 {
     let reverse = truthy(get_kwarg_or_pos(a, "reverse", 1));
     get_kwarg_or_pos(a, "case_sensitive", 2);
     let attribute = get_kwarg_or_pos(a, "attribute", 3);
-    let op = if reverse { CMP_GT } else { CMP_LT };
+    let op = if reverse { Cmp.Gt } else { Cmp.Lt };
     let out = new_val(Val { kind: kind(v), .. });
     for i in arr_len(v) { arr_push(out, arr_at(v, i)); }
     let undef = mk_undef();
@@ -903,8 +899,8 @@ recursive fn array_sort(a: Args) -> i64 {
     let n = vals[out].n;
     for i in 1..n {
         let x = items[base + i];
-        let kx = if kind(attribute) == K_UNDEF { x } else { get_attribute(x, attribute, undef) };
-        let k0 = if kind(attribute) == K_UNDEF { items[base] } else { get_attribute(items[base], attribute, undef) };
+        let kx = if kind(attribute) == ValKind.Undef { x } else { get_attribute(x, attribute, undef) };
+        let k0 = if kind(attribute) == ValKind.Undef { items[base] } else { get_attribute(items[base], attribute, undef) };
         if compare(kx, k0, op) {
             var j = i;
             while j > 0 { items[base + j] = items[base + j - 1]; j--; }
@@ -913,7 +909,7 @@ recursive fn array_sort(a: Args) -> i64 {
             var j = i;
             while j > 0 {
                 let p = items[base + j - 1];
-                let kp = if kind(attribute) == K_UNDEF { p } else { get_attribute(p, attribute, undef) };
+                let kp = if kind(attribute) == ValKind.Undef { p } else { get_attribute(p, attribute, undef) };
                 if !compare(kx, kp, op) { break; }
                 items[base + j] = p;
                 j--;
@@ -932,7 +928,7 @@ recursive fn array_pick(id: i64, a: Args) -> i64 {
     get_kwarg_or_pos(a, "case_sensitive", 1);
     let attribute = get_kwarg_or_pos(a, "attribute", 2);
     let undef = mk_undef();
-    let by_attr = kind(attribute) != K_UNDEF;
+    let by_attr = kind(attribute) != ValKind.Undef;
     if id == B_ARR_UNIQUE {
         let out = mk_array();
         let seen = mk_array();
@@ -940,14 +936,14 @@ recursive fn array_pick(id: i64, a: Args) -> i64 {
             let item = arr_at(v, i);
             let key = if by_attr { get_attribute(item, attribute, undef) } else { item };
             var dup = false;
-            for k in arr_len(seen) { if compare(arr_at(seen, k), key, CMP_EQ) { dup = true; break; } }
+            for k in arr_len(seen) { if compare(arr_at(seen, k), key, Cmp.Eq) { dup = true; break; } }
             if !dup { arr_push(seen, key); arr_push(out, item); }
         }
         return out;
     }
     if arr_len(v) == 0 { return undef; }
     var result = arr_at(v, 0);
-    let op = if id == B_ARR_MIN { CMP_LT } else { CMP_GT };
+    let op = if id == B_ARR_MIN { Cmp.Lt } else { Cmp.Gt };
     for i in arr_len(v) {
         let item = arr_at(v, i);
         let x = if by_attr { get_attribute(item, attribute, undef) } else { item };
@@ -963,12 +959,12 @@ recursive fn object_dictsort(a: Args) -> i64 {
     get_kwarg_or_pos(a, "case_sensitive", 1);
     let by = get_kwarg_or_pos(a, "by", 2);
     let reverse = truthy(get_kwarg_or_pos(a, "reverse", 3));
-    let by_value = kind(by) == K_STRING && sbytes(by) == "value";
+    let by_value = kind(by) == ValKind.String && sbytes(by) == "value";
     let out = mk_object();
-    if kind(input) == K_OBJECT {
+    if kind(input) == ValKind.Object {
         for k in obj_len(input) { obj_append(out, obj_key(input, k), obj_value(input, k)); }
     }
-    let op = if reverse { CMP_GT } else { CMP_LT };
+    let op = if reverse { Cmp.Gt } else { Cmp.Lt };
     let base = vals[out].a;
     let n = vals[out].n;
     let w = if by_value { 1 } else { 0 };
@@ -1061,17 +1057,17 @@ fn array_sum(a: Args) -> i64 {
     let undef = mk_undef();
     let attribute = get_kwarg_or_pos(a, "attribute", 1);
     let start = get_kwarg_or_pos(a, "start", 2);
-    var is_float = kind(start) == K_FLOAT;
-    var sum = if kind(start) == K_UNDEF { 0.0 } else { as_float(start) };
+    var is_float = kind(start) == ValKind.Float;
+    var sum = if kind(start) == ValKind.Undef { 0.0 } else { as_float(start) };
     let v = get_pos(a, 0);
     for i in arr_len(v) {
         let item = arr_at(v, i);
-        let x = if kind(attribute) == K_UNDEF { item } else { get_attribute(item, attribute, undef) };
-        if kind(x) == K_UNDEF && kind(attribute) != K_UNDEF {
+        let x = if kind(attribute) == ValKind.Undef { item } else { get_attribute(item, attribute, undef) };
+        if kind(x) == ValKind.Undef && kind(attribute) != ValKind.Undef {
             fail(str("sum: ", tname(item), " has no attribute '", sbytes(as_string(attribute)), "'"));
         }
-        if kind(x) != K_INT && kind(x) != K_FLOAT { fail(str("sum: unsupported operand type ", tname(x))); }
-        is_float = is_float || kind(x) == K_FLOAT;
+        if kind(x) != ValKind.Int && kind(x) != ValKind.Float { fail(str("sum: unsupported operand type ", tname(x))); }
+        is_float = is_float || kind(x) == ValKind.Float;
         sum += as_float(x);
     }
     return if is_float { mk_float(sum) } else { mk_int(float_to_int(sum)) };
@@ -1086,14 +1082,14 @@ fn array_join(a: Args) -> i64 {
     let attribute = get_kwarg_or_pos(a, "attribute", 2);
     let undef = mk_undef();
     var delim: u8[>..] = [];
-    if kind(delim_v) != K_UNDEF { delim.append(sbytes(as_string(delim_v))); }
+    if kind(delim_v) != ValKind.Undef { delim.append(sbytes(as_string(delim_v))); }
     var out: u8[>..] = [];
     let n = arr_len(v);
     for i in n {
         var item = arr_at(v, i);
-        if kind(attribute) != K_UNDEF { item = get_attribute(item, attribute, undef); }
+        if kind(attribute) != ValKind.Undef { item = get_attribute(item, attribute, undef); }
         let k = kind(item);
-        if k != K_STRING && k != K_INT && k != K_FLOAT { fail("join() can only join arrays of strings or numerics"); }
+        if k != ValKind.String && k != ValKind.Int && k != ValKind.Float { fail("join() can only join arrays of strings or numerics"); }
         out.append(sbytes(as_string(item)));
         if i < n - 1 { out.append(delim); }
     }
@@ -1114,7 +1110,7 @@ fn call_string(id: i64, a: Args) -> i64 {
     if id == B_STR_STRIP {
         ensure_kwargs(a, "chars", "");
         ensure_count(a, 1, 2);
-        if kind(get_pos(a, 0)) != K_STRING { fail("strip() first argument must be a string"); }
+        if kind(get_pos(a, 0)) != ValKind.String { fail("strip() first argument must be a string"); }
         return strip(arg(a, 0), true, true, get_kwarg_or_pos(a, "chars", 1));
     }
     if id == B_STR_RSTRIP || id == B_STR_LSTRIP {
@@ -1135,13 +1131,13 @@ fn call_string(id: i64, a: Args) -> i64 {
         let input = get_pos(a, 0);
         let d = get_kwarg_or_pos(a, "default", 1);
         let base_v = get_kwarg_or_pos(a, "base", 2);
-        let base = if kind(base_v) == K_UNDEF { 10 } else { as_int(base_v) };
+        let base = if kind(base_v) == ValKind.Undef { 10 } else { as_int(base_v) };
         if base != 0 && (base < 2 || base > 36) { fail("int() base must be 0 or between 2 and 36"); }
-        if kind(input) != K_STRING { fail("int() first argument must be a string"); }
+        if kind(input) != ValKind.String { fail("int() first argument must be a string"); }
         var ok = 0;
         let v = number::c_stoi(sbytes(input), base, ok);
         if ok != 0 { return mk_int(v); }
-        return mk_int(if kind(d) == K_UNDEF { 0 } else { as_int(d) });
+        return mk_int(if kind(d) == ValKind.Undef { 0 } else { as_int(d) });
     }
     if id == B_STR_FLOAT {
         ensure_vals(a, "S", 1);
@@ -1149,7 +1145,7 @@ fn call_string(id: i64, a: Args) -> i64 {
         var used = 0;
         let v = number::c_strtod(sbytes(arg(a, 0)), used);
         if used > 0 { return mk_float(v); }
-        return mk_float(if kind(d) == K_UNDEF { 0.0 } else { as_float(d) });
+        return mk_float(if kind(d) == ValKind.Undef { 0.0 } else { as_float(d) });
     }
     if id == B_STR_STRING { ensure_vals(a, "S", 1); return copy_string(arg(a, 0)); }
     if id == B_STR_SLICE {
@@ -1203,7 +1199,7 @@ fn transform(s: i64, id: i64) -> i64 {
 
 // Whether c is one of chars (a string), or white space when chars is undefined.
 fn strip_match(c: u8, chars: i64) -> bool {
-    if kind(chars) == K_UNDEF { return c == ' ' || (c >= 9 && c <= 13); }
+    if kind(chars) == ValKind.Undef { return c == ' ' || (c >= 9 && c <= 13); }
     for x in sbytes(chars) { if x == c { return true; } }
     return false;
 }
@@ -1211,7 +1207,7 @@ fn strip_match(c: u8, chars: i64) -> bool {
 // string::strip: the parts at the ends lose what matches, and go when
 // that empties them.
 fn strip(s: i64, left: bool, right: bool, chars_v: i64) -> i64 {
-    let chars = if kind(chars_v) == K_UNDEF { chars_v } else { as_string(chars_v) };
+    let chars = if kind(chars_v) == ValKind.Undef { chars_v } else { as_string(chars_v) };
     let first = parts.len;
     push_parts(s);
     var lo = first;
@@ -1244,7 +1240,7 @@ fn strip(s: i64, left: bool, right: bool, chars_v: i64) -> i64 {
 fn split(a: Args, from_right: bool) -> i64 {
     ensure_count(a, 1, 3);
     let input = get_pos(a, 0);
-    if kind(input) != K_STRING { fail(if from_right { "rsplit() first argument must be a string" } else { "split() first argument must be a string" }); }
+    if kind(input) != ValKind.String { fail(if from_right { "rsplit() first argument must be a string" } else { "split() first argument must be a string" }); }
     var delim: u8[>..] = [];
     if a.n > 1 { delim.append(sbytes(as_string(arg(a, 1)))); } else { delim.push(' '); }
     if delim.len == 0 { fail("empty separator"); }
@@ -1319,7 +1315,7 @@ fn replace(a: Args) -> i64 {
 // 'a {} b'.format(x): only {} placeholders, filled in turn.
 fn format_string(a: Args) -> i64 {
     let fmt = get_pos(a, 0);
-    if kind(fmt) != K_STRING { fail("format() first argument must be a string"); }
+    if kind(fmt) != ValKind.String { fail("format() first argument must be a string"); }
     let fmt_input = all_input(fmt);
     let s = sbytes(fmt);
     // the parts are gathered aside, as the arguments' text makes parts too
@@ -1357,10 +1353,10 @@ fn indent(a: Args) -> i64 {
     let width = get_kwarg_or_pos(a, "width", 1);
     let first = truthy(get_kwarg_or_pos(a, "first", 2));
     let blank = truthy(get_kwarg_or_pos(a, "blank", 3));
-    if kind(input) != K_STRING { fail("indent() first argument must be a string"); }
+    if kind(input) != ValKind.String { fail("indent() first argument must be a string"); }
     var ind: u8[>..] = [];
-    if kind(width) == K_INT { for i in vals[width].i { ind.push(' '); } }
-    else if kind(width) == K_STRING { ind.append(sbytes(width)); }
+    if kind(width) == ValKind.Int { for i in vals[width].i { ind.push(' '); } }
+    else if kind(width) == ValKind.String { ind.append(sbytes(width)); }
     else { ind.append("    "); }
     let s = sbytes(input);
     var out: u8[>..] = [];

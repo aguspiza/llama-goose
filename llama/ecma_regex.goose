@@ -9,45 +9,31 @@ import std;
 namespace ecma;
 
 // A class member: a range, or one of the class escapes.
-struct Item { lo: u32, hi: u32, kind: u8 }
-let RANGE = 0;
-let DIGIT = 1;
-let NOT_DIGIT = 2;
-let SPACE = 3;
-let NOT_SPACE = 4;
-let WORD = 5;
-let NOT_WORD = 6;
+struct Item { lo: u32, hi: u32, kind: Escape }
+enum Escape { Range, Digit, NotDigit, Space, NotSpace, Word, NotWord }
 
 struct Class { first: i64, count: i64, negated: bool }
 
-// The program. SPLIT tries x first, then y.
-struct Inst { op: u8, x: i64, y: i64 }
-let CHAR = 0;
-let ANY = 1;
-let CLASS = 2;
-let SPLIT = 3;
-let JMP = 4;
-let BOL = 5;
-let EOL = 6;
-let WORDB = 7;      // y = 1 for \B
-let LOOK = 8;       // the lookahead's program follows; x = where to go after it, y = 1 if negative
-let MATCH = 9;
+// The program. Op.Split tries x first, then y.
+struct Inst { op: Op, x: i64, y: i64 }
+enum Op {
+    Char, Any, Class, Split, Jmp, Bol, Eol,
+    Wordb,      // y = 1 for \B
+    Look,       // the lookahead's program follows; x = where to go after it, y = 1 if negative
+    Match,
+}
 
 struct Prog { insts: const Inst[:], items: const Item[:], classes: const Class[:] }
 
 // The parse tree, children linked through `next`.
-struct Node { kind: u8, a: i64, b: i64, greedy: bool, child: i64, next: i64 }
-let N_EMPTY = 0;
-let N_CHAR = 1;
-let N_ANY = 2;
-let N_CLASS = 3;
-let N_SEQ = 4;
-let N_ALT = 5;
-let N_REPEAT = 6;   // a = min, b = max or -1
-let N_LOOK = 7;     // a = 1 if negative
-let N_BOL = 8;
-let N_EOL = 9;
-let N_WORDB = 10;   // a = 1 for \B
+struct Node { kind: NodeKind, a: i64, b: i64, greedy: bool, child: i64, next: i64 }
+enum NodeKind {
+    Empty, Char, Any, Class, Seq, Alt,
+    Repeat,     // a = min, b = max or -1
+    Look,       // a = 1 if negative
+    Bol, Eol,
+    Wordb,      // a = 1 for \B
+}
 
 let END = 0xFFFFFFFF;
 
@@ -66,12 +52,12 @@ fn is_space_char(c: u32) -> bool { c == ' ' || (c >= 0x09 && c <= 0x0D) }
 
 fn item_matches(it: Item, c: u32) -> bool {
     match it.kind {
-        RANGE => it.lo <= c && c <= it.hi,
-        DIGIT => c >= '0' && c <= '9',
-        NOT_DIGIT => !(c >= '0' && c <= '9'),
-        SPACE => is_space_char(c),
-        NOT_SPACE => !is_space_char(c),
-        WORD => is_word_char(c),
+        Range => it.lo <= c && c <= it.hi,
+        Digit => c >= '0' && c <= '9',
+        NotDigit => !(c >= '0' && c <= '9'),
+        Space => is_space_char(c),
+        NotSpace => !is_space_char(c),
+        Word => is_word_char(c),
         _ => !is_word_char(c),
     }
 }
@@ -97,14 +83,14 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
     }
     fn peek() -> u32 { if pos < pattern.len { pattern[pos] } else { END } }
     fn peek_at(k: i64) -> u32 { if pos + k < pattern.len { pattern[pos + k] } else { END } }
-    fn node(kind: u8, a: i64 = 0, b: i64 = 0) -> i64 {
+    fn node(kind: NodeKind, a: i64 = 0, b: i64 = 0) -> i64 {
         nodes.push(Node { kind: kind, a: a, b: b, greedy: true, child: -1, next: -1 });
         return nodes.len - 1;
     }
-    fn class_of(kind: u8) -> i64 {
+    fn class_of(kind: Escape) -> i64 {
         classes.push(Class { first: items.len, count: 1, negated: false });
         items.push(Item { lo: 0, hi: 0, kind: kind });
-        return node(N_CLASS, classes.len - 1);
+        return node(NodeKind.Class, classes.len - 1);
     }
 
     // A decimal number at pos; -1 if there is none.
@@ -118,24 +104,24 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
     }
 
     // The character an escape stands for, after the backslash; `kind` is
-    // RANGE for a character, or the class escape it is.
-    fn escape(in_class: bool) -> u32, u8 {
+    // Escape.Range for a character, or the class escape it is.
+    fn escape(in_class: bool) -> u32, Escape {
         let c = peek();
         guard c != END else { fail("trailing backslash"); }
         pos += 1;
         match c {
-            'd' => { return 0, DIGIT; },
-            'D' => { return 0, NOT_DIGIT; },
-            's' => { return 0, SPACE; },
-            'S' => { return 0, NOT_SPACE; },
-            'w' => { return 0, WORD; },
-            'W' => { return 0, NOT_WORD; },
-            'r' => { return '\r', RANGE; },
-            'n' => { return '\n', RANGE; },
-            't' => { return '\t', RANGE; },
-            'v' => { return 0x0B, RANGE; },
-            'f' => { return 0x0C, RANGE; },
-            '0' => { return 0, RANGE; },
+            'd' => { return 0, Escape.Digit; },
+            'D' => { return 0, Escape.NotDigit; },
+            's' => { return 0, Escape.Space; },
+            'S' => { return 0, Escape.NotSpace; },
+            'w' => { return 0, Escape.Word; },
+            'W' => { return 0, Escape.NotWord; },
+            'r' => { return '\r', Escape.Range; },
+            'n' => { return '\n', Escape.Range; },
+            't' => { return '\t', Escape.Range; },
+            'v' => { return 0x0B, Escape.Range; },
+            'f' => { return 0x0C, Escape.Range; },
+            '0' => { return 0, Escape.Range; },
             'x', 'u' => {
                 let digits = if c == 'x' { 2 } else { 4 };
                 var v: u32 = 0;
@@ -145,36 +131,36 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
                     v = v * 16 + h as u32;
                     pos += 1;
                 }
-                return v, RANGE;
+                return v, Escape.Range;
             },
             _ => {},
         }
-        if in_class && c == 'b' { return 0x08, RANGE; }
-        return c, RANGE;
+        if in_class && c == 'b' { return 0x08, Escape.Range; }
+        return c, Escape.Range;
     }
 
     // [...] after the '['.
     fn parse_class() -> i64 {
         var cl = Class { first: items.len, count: 0, negated: false };
         if peek() == '^' { cl.negated = true; pos += 1; }
-        fn member() -> u32, u8 {
+        fn member() -> u32, Escape {
             let c = peek();
             pos += 1;
             if c == '\\' { return escape(true); }
-            return c, RANGE;
+            return c, Escape.Range;
         }
         while peek() != ']' {
             guard peek() != END else { fail("unterminated class"); }
             let lo, kind = member();
-            if kind == RANGE && peek() == '-' && peek_at(1) != ']' && peek_at(1) != END {
+            if kind == Escape.Range && peek() == '-' && peek_at(1) != ']' && peek_at(1) != END {
                 pos += 1;
                 let hi, kind2 = member();
-                if kind2 == RANGE {
+                if kind2 == Escape.Range {
                     guard lo <= hi else { fail("bad class range"); }
-                    items.push(Item { lo: lo, hi: hi, kind: RANGE });
+                    items.push(Item { lo: lo, hi: hi, kind: Escape.Range });
                 } else {
-                    items.push(Item { lo: lo, hi: lo, kind: RANGE });
-                    items.push(Item { lo: '-', hi: '-', kind: RANGE });
+                    items.push(Item { lo: lo, hi: lo, kind: Escape.Range });
+                    items.push(Item { lo: '-', hi: '-', kind: Escape.Range });
                     items.push(Item { lo: 0, hi: 0, kind: kind2 });
                 }
             } else {
@@ -184,14 +170,14 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
         pos += 1;
         cl.count = items.len - cl.first;
         classes.push(cl);
-        return node(N_CLASS, classes.len - 1);
+        return node(NodeKind.Class, classes.len - 1);
     }
 
     // alt := seq ('|' seq)*
     recursive fn parse_alt() -> i64 {
         let first = parse_seq();
         guard peek() == '|' else { return first; }
-        let alt = node(N_ALT);
+        let alt = node(NodeKind.Alt);
         nodes[alt].child = first;
         var last = first;
         while peek() == '|' {
@@ -205,7 +191,7 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
 
     // seq := term*
     recursive fn parse_seq() -> i64 {
-        let seq = node(N_SEQ);
+        let seq = node(NodeKind.Seq);
         var last = -1;
         while peek() != END && peek() != '|' && peek() != ')' {
             let t = parse_term();
@@ -218,11 +204,11 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
     // term := assertion | atom quantifier?
     recursive fn parse_term() -> i64 {
         let c = peek();
-        if c == '^' { pos += 1; return node(N_BOL); }
-        if c == '$' { pos += 1; return node(N_EOL); }
+        if c == '^' { pos += 1; return node(NodeKind.Bol); }
+        if c == '$' { pos += 1; return node(NodeKind.Eol); }
         if c == '\\' && (peek_at(1) == 'b' || peek_at(1) == 'B') {
             pos += 2;
-            return node(N_WORDB, if pattern[pos - 1] == 'B' { 1 } else { 0 });
+            return node(NodeKind.Wordb, if pattern[pos - 1] == 'B' { 1 } else { 0 });
         }
         if c == '(' && peek_at(1) == '?' && (peek_at(2) == '=' || peek_at(2) == '!') {
             let negative = peek_at(2) == '!';
@@ -230,7 +216,7 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
             let inner = parse_alt();
             guard peek() == ')' else { fail("missing )"); }
             pos += 1;
-            let look = node(N_LOOK, if negative { 1 } else { 0 });
+            let look = node(NodeKind.Look, if negative { 1 } else { 0 });
             nodes[look].child = inner;
             return look;
         }
@@ -251,7 +237,7 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
             pos += 1;
         }
         guard min >= 0 else { return atom; }
-        let rep = node(N_REPEAT, min, max);
+        let rep = node(NodeKind.Repeat, min, max);
         nodes[rep].child = atom;
         if peek() == '?' { nodes[rep].greedy = false; pos += 1; }
         return rep;
@@ -272,19 +258,19 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
             return inner;
         }
         if c == '[' { pos += 1; return parse_class(); }
-        if c == '.' { pos += 1; return node(N_ANY); }
+        if c == '.' { pos += 1; return node(NodeKind.Any); }
         if c == '\\' {
             pos += 1;
             let ch, kind = escape(false);
-            if kind != RANGE { return class_of(kind); }
-            return node(N_CHAR, ch);
+            if kind != Escape.Range { return class_of(kind); }
+            return node(NodeKind.Char, ch);
         }
         guard c != '*' && c != '+' && c != '?' && c != '{' && c != ')' else { fail("nothing to repeat"); }
         pos += 1;
-        return node(N_CHAR, c);
+        return node(NodeKind.Char, c);
     }
 
-    fn push(op: u8, x: i64 = 0, y: i64 = 0) -> i64 {
+    fn push(op: Op, x: i64 = 0, y: i64 = 0) -> i64 {
         insts.push(Inst { op: op, x: x, y: y });
         return insts.len - 1;
     }
@@ -293,27 +279,27 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
     recursive fn emit(n: i64) {
         let nd = nodes[n];
         match nd.kind {
-            N_EMPTY => {},
-            N_CHAR => { push(CHAR, nd.a); },
-            N_ANY => { push(ANY); },
-            N_CLASS => { push(CLASS, nd.a); },
-            N_BOL => { push(BOL); },
-            N_EOL => { push(EOL); },
-            N_WORDB => { push(WORDB, 0, nd.a); },
-            N_SEQ => {
+            Empty => {},
+            Char => { push(Op.Char, nd.a); },
+            Any => { push(Op.Any); },
+            Class => { push(Op.Class, nd.a); },
+            Bol => { push(Op.Bol); },
+            Eol => { push(Op.Eol); },
+            Wordb => { push(Op.Wordb, 0, nd.a); },
+            Seq => {
                 var k = nd.child;
                 while k >= 0 { emit(k); k = nodes[k].next; }
             },
-            N_ALT => {
-                // Each branch but the last: SPLIT this, next; branch; JMP end.
+            Alt => {
+                // Each branch but the last: Op.Split this, next; branch; Op.Jmp end.
                 // The JMPs to patch are chained through their x.
                 var chain = -1;
                 var k = nd.child;
                 while nodes[k].next >= 0 {
-                    let split = push(SPLIT);
+                    let split = push(Op.Split);
                     insts[split].x = split + 1;
                     emit(k);
-                    chain = push(JMP, chain);
+                    chain = push(Op.Jmp, chain);
                     insts[split].y = insts.len;
                     k = nodes[k].next;
                 }
@@ -324,19 +310,19 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
                     chain = prev;
                 }
             },
-            N_REPEAT => {
+            Repeat => {
                 for i in nd.a { emit(nd.child); }
                 if nd.b < 0 {
-                    let split = push(SPLIT);
+                    let split = push(Op.Split);
                     emit(nd.child);
-                    push(JMP, split);
+                    push(Op.Jmp, split);
                     if nd.greedy { insts[split].x = split + 1; insts[split].y = insts.len; }
                     else { insts[split].x = insts.len; insts[split].y = split + 1; }
                 } else {
                     // Each optional copy skips to the end; the skips are chained through y.
                     var chain = -1;
                     for i in nd.b - nd.a {
-                        let split = push(SPLIT, 0, chain);
+                        let split = push(Op.Split, 0, chain);
                         chain = split;
                         emit(nd.child);
                     }
@@ -349,10 +335,10 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
                     }
                 }
             },
-            _ => {     // N_LOOK
-                let look = push(LOOK, 0, nd.a);
+            Look => {
+                let look = push(Op.Look, 0, nd.a);
                 emit(nd.child);
-                push(MATCH);
+                push(Op.Match);
                 insts[look].x = insts.len;
             },
         }
@@ -361,7 +347,7 @@ fn compile(pattern: const u32[:], insts: Inst[>..]&, items: Item[>..]&, classes:
     let root = parse_alt();
     guard pos == pattern.len else { fail("unmatched )"); }
     emit(root);
-    push(MATCH);
+    push(Op.Match);
 }
 
 struct Frame { pc: i64, pos: i64 }
@@ -378,28 +364,28 @@ recursive fn run(prog: Prog&, text: const u32[:], lo: i64, hi: i64, pc0: i64, po
         let ins = prog.insts[pc];
         var ok = true;
         match ins.op {
-            CHAR => { ok = pos < hi && text[pos] == ins.x; if ok { pc += 1; pos += 1; } },
-            ANY => {
+            Char => { ok = pos < hi && text[pos] == ins.x; if ok { pc += 1; pos += 1; } },
+            Any => {
                 ok = pos < hi && text[pos] != '\n' && text[pos] != '\r' && text[pos] != 0x2028 && text[pos] != 0x2029;
                 if ok { pc += 1; pos += 1; }
             },
-            CLASS => { ok = pos < hi && class_matches(prog, ins.x, text[pos]); if ok { pc += 1; pos += 1; } },
-            SPLIT => { stack.push(Frame { pc: ins.y, pos: pos }); pc = ins.x; },
-            JMP => { pc = ins.x; },
-            BOL => { ok = pos == lo; pc += 1; },
-            EOL => { ok = pos == hi; pc += 1; },
-            WORDB => {
+            Class => { ok = pos < hi && class_matches(prog, ins.x, text[pos]); if ok { pc += 1; pos += 1; } },
+            Split => { stack.push(Frame { pc: ins.y, pos: pos }); pc = ins.x; },
+            Jmp => { pc = ins.x; },
+            Bol => { ok = pos == lo; pc += 1; },
+            Eol => { ok = pos == hi; pc += 1; },
+            Wordb => {
                 let before = pos > lo && is_word_char(text[pos - 1]);
                 let after = pos < hi && is_word_char(text[pos]);
                 ok = (before != after) != (ins.y == 1);
                 pc += 1;
             },
-            LOOK => {
+            Look => {
                 let r = run(prog, text, lo, hi, pc + 1, pos, -1, stack);
                 ok = (r >= 0) != (ins.y == 1);
                 pc = ins.x;
             },
-            _ => {     // MATCH
+            Match => {
                 if pos != not_null_at { stack.resize(mark); return pos; }
                 ok = false;
             },

@@ -46,28 +46,26 @@ fn fail(msg: const u8[:]) { json_schema::fail(msg); }
 // UTF-8 (common_parse_utf8_codepoint)
 //
 
-let UTF8_SUCCESS = 0;
-let UTF8_INCOMPLETE = 1;
-let UTF8_INVALID = 2;
+enum Utf8Status { Success, Incomplete, Invalid }
 
 // The status, code point and bytes of the sequence at s[at].
-fn utf8_at(s: const u8[:], at: i64) -> i32, u32, i64 {
-    if at >= s.len { return UTF8_INCOMPLETE, 0, 0; }
+fn utf8_at(s: const u8[:], at: i64) -> Utf8Status, u32, i64 {
+    if at >= s.len { return Utf8Status.Incomplete, 0, 0; }
     let c = s[at];
-    if (c & 0x80) == 0 { return UTF8_SUCCESS, c, 1; }
-    if (c & 0x40) == 0 { return UTF8_INVALID, 0, 1; }
+    if (c & 0x80) == 0 { return Utf8Status.Success, c, 1; }
+    if (c & 0x40) == 0 { return Utf8Status.Invalid, 0, 1; }
     var n = 0;
     var cp: u32 = 0;
     if (c & 0x20) == 0 { n = 2; cp = c & 0x1F; }
     else if (c & 0x10) == 0 { n = 3; cp = c & 0x0F; }
     else if (c & 0x08) == 0 { n = 4; cp = c & 0x07; }
-    else { return UTF8_INVALID, 0, 1; }
+    else { return Utf8Status.Invalid, 0, 1; }
     for i in 1..n {
-        if at + i >= s.len { return UTF8_INCOMPLETE, 0, if n == 2 { 1 } else { i }; }
-        if (s[at + i] & 0xC0) != 0x80 { return UTF8_INVALID, 0, if n == 2 { 1 } else { i }; }
+        if at + i >= s.len { return Utf8Status.Incomplete, 0, if n == 2 { 1 } else { i }; }
+        if (s[at + i] & 0xC0) != 0x80 { return Utf8Status.Invalid, 0, if n == 2 { 1 } else { i }; }
         cp = (cp << 6) | (s[at + i] & 0x3F);
     }
-    return UTF8_SUCCESS, cp, n;
+    return Utf8Status.Success, cp, n;
 }
 
 fn put_utf8(out: u8[>..]&, cp: u32) {
@@ -157,20 +155,18 @@ fn trie_mark(node: i64, value: i32) -> i32 {
     return tn[node].pattern;
 }
 
-let NO_MATCH = 0;
-let PARTIAL_MATCH = 1;
-let COMPLETE_MATCH = 2;
+enum MatchKind { NoMatch, PartialMatch, CompleteMatch }
 
 // The symbol at input[pos] (next): the token there if a pattern uses it,
 // with its bytes up to the next token; else a code point. Its status,
 // symbol and length.
-fn trie_next(pos: i64) -> i32, u64, i64 {
+fn trie_next(pos: i64) -> Utf8Status, u64, i64 {
     if trie_tokens.len > 0 && pos < itok.len {
         let id: i64 = itok[pos];
         if id >= 0 && has_trie_token(id) {
             var end = pos + 1;
             while end < itok.len && itok[end] < 0 { end++; }
-            return UTF8_SUCCESS, sym_tok(id), end - pos;
+            return Utf8Status.Success, sym_tok(id), end - pos;
         }
     }
     let st, cp, n = utf8_at(input, pos);
@@ -178,19 +174,19 @@ fn trie_next(pos: i64) -> i32, u64, i64 {
 }
 
 // Whether a pattern starts at input[start] (check_at).
-fn trie_check_at(start: i64) -> i32 {
+fn trie_check_at(start: i64) -> MatchKind {
     var cur_node = 0;
     var pos = start;
     while pos < input.len {
         let st, x, n = trie_next(pos);
-        if st != UTF8_SUCCESS { break; }
+        if st != Utf8Status.Success { break; }
         let c = trie_find(cur_node, x);
-        if c < 0 { return NO_MATCH; }
+        if c < 0 { return MatchKind.NoMatch; }
         cur_node = c;
         pos += n;
-        if tn[cur_node].pattern >= 0 { return COMPLETE_MATCH; }
+        if tn[cur_node].pattern >= 0 { return MatchKind.CompleteMatch; }
     }
-    return if cur_node != 0 { PARTIAL_MATCH } else { NO_MATCH };
+    return if cur_node != 0 { MatchKind.PartialMatch } else { MatchKind.NoMatch };
 }
 
 // The Aho-Corasick automaton of the trie: failure links, longest match per
@@ -246,28 +242,30 @@ fn ac_next(state: i64, x: u64) -> i64 {
 // parsers
 //
 
-let P_EPSILON = 0;
-let P_START = 1;
-let P_END = 2;
-let P_LITERAL = 3;
-let P_SEQUENCE = 4;
-let P_CHOICE = 5;
-let P_REPETITION = 6;
-let P_AND = 7;
-let P_NOT = 8;
-let P_ANY = 9;
-let P_SPACE = 10;
-let P_CHARS = 11;
-let P_STRING = 12;
-let P_UNTIL = 13;
-let P_SCHEMA = 14;
-let P_RULE = 15;
-let P_REF = 16;
-let P_ATOMIC = 17;
-let P_TAG = 18;
-let P_GBNF = 19;
-let P_TOKEN = 20;        // lo: the token id, s: its piece
-let P_TOKEN_NOT = 21;    // one token not among kids[kids_at..kids_at + kids_n] (ids)
+enum Parser {
+    Epsilon,
+    Start,
+    End,
+    Literal,
+    Sequence,
+    Choice,
+    Repetition,
+    And,
+    Not,
+    Any,
+    Space,
+    Chars,
+    String,
+    Until,
+    Schema,
+    Rule,
+    Ref,
+    Atomic,
+    Tag,
+    Gbnf,
+    Token,       // lo: the token id, s: its piece
+    TokenNot,    // one token not among kids[kids_at..kids_at + kids_n] (ids)
+}
 
 // A parser. child: its one child (an until's content, with incl). kids_at,
 // kids_n: a sequence's or choice's children (in kids), an until's branches
@@ -278,7 +276,7 @@ let P_TOKEN_NOT = 21;    // one token not among kids[kids_at..kids_at + kids_n] 
 // (through); opt: then the input may end before a delimiter. start_p,
 // rest_p: a trigger rule's start and rest.
 struct P {
-    kind: u8,
+    kind: Parser,
     child: i64 = -1,
     kids_at: i64 = 0,
     kids_n: i64 = 0,
@@ -343,27 +341,27 @@ fn set_rule(name: S, id: i64) {
 
 fn has_rule(name: const u8[:]) -> bool { find_rule(cur, name) >= 0 }
 
-fn eps() -> i64 { add(P { kind: P_EPSILON, .. }) }
-fn start() -> i64 { add(P { kind: P_START, .. }) }
-fn end() -> i64 { add(P { kind: P_END, .. }) }
-fn literal(s: const u8[:]) -> i64 { let x = lit(s); return add(P { kind: P_LITERAL, s: x, .. }); }
-fn any() -> i64 { add(P { kind: P_ANY, .. }) }
-fn space() -> i64 { add(P { kind: P_SPACE, .. }) }
-fn repeat(p: i64, lo: i64, hi: i64) -> i64 { add(P { kind: P_REPETITION, child: p, lo: lo, hi: hi, .. }) }
+fn eps() -> i64 { add(P { kind: Parser.Epsilon, .. }) }
+fn start() -> i64 { add(P { kind: Parser.Start, .. }) }
+fn end() -> i64 { add(P { kind: Parser.End, .. }) }
+fn literal(s: const u8[:]) -> i64 { let x = lit(s); return add(P { kind: Parser.Literal, s: x, .. }); }
+fn any() -> i64 { add(P { kind: Parser.Any, .. }) }
+fn space() -> i64 { add(P { kind: Parser.Space, .. }) }
+fn repeat(p: i64, lo: i64, hi: i64) -> i64 { add(P { kind: Parser.Repetition, child: p, lo: lo, hi: hi, .. }) }
 fn one_or_more(p: i64) -> i64 { repeat(p, 1, -1) }
 fn zero_or_more(p: i64) -> i64 { repeat(p, 0, -1) }
 fn optional(p: i64) -> i64 { repeat(p, 0, 1) }
-fn peek(p: i64) -> i64 { add(P { kind: P_AND, child: p, .. }) }
-fn negate(p: i64) -> i64 { add(P { kind: P_NOT, child: p, .. }) }
-fn atomic(p: i64) -> i64 { add(P { kind: P_ATOMIC, child: p, .. }) }
-fn tag(name: const u8[:], p: i64) -> i64 { let x = lit(name); return add(P { kind: P_TAG, child: p, s: x, .. }); }
-fn gbnf(p: i64, grammar: const u8[:]) -> i64 { let x = lit(grammar); return add(P { kind: P_GBNF, child: p, s: x, .. }); }
-fn string_content(delimiter: u8) -> i64 { add(P { kind: P_STRING, delim: delimiter, .. }) }
-fn ref(name: const u8[:]) -> i64 { let x = lit(name); return add(P { kind: P_REF, s: x, .. }); }
+fn peek(p: i64) -> i64 { add(P { kind: Parser.And, child: p, .. }) }
+fn negate(p: i64) -> i64 { add(P { kind: Parser.Not, child: p, .. }) }
+fn atomic(p: i64) -> i64 { add(P { kind: Parser.Atomic, child: p, .. }) }
+fn tag(name: const u8[:], p: i64) -> i64 { let x = lit(name); return add(P { kind: Parser.Tag, child: p, s: x, .. }); }
+fn gbnf(p: i64, grammar: const u8[:]) -> i64 { let x = lit(grammar); return add(P { kind: Parser.Gbnf, child: p, s: x, .. }); }
+fn string_content(delimiter: u8) -> i64 { add(P { kind: Parser.String, delim: delimiter, .. }) }
+fn ref(name: const u8[:]) -> i64 { let x = lit(name); return add(P { kind: Parser.Ref, s: x, .. }); }
 
 // A sequence (choice) of the parsers, those that are sequences (choices)
 // themselves flattened into it.
-fn flat(kind: u8, items: const i64[:]) -> i64 {
+fn flat(kind: Parser, items: const i64[:]) -> i64 {
     let at0 = kids.len;
     for id in items {
         if ps[id].kind == kind {
@@ -376,8 +374,8 @@ fn flat(kind: u8, items: const i64[:]) -> i64 {
     return add(P { kind: kind, kids_at: at0, kids_n: kids.len - at0, .. });
 }
 
-fn seq(items: const i64[:]) -> i64 { flat(P_SEQUENCE, items) }
-fn choice(items: const i64[:]) -> i64 { flat(P_CHOICE, items) }
+fn seq(items: const i64[:]) -> i64 { flat(Parser.Sequence, items) }
+fn choice(items: const i64[:]) -> i64 { flat(Parser.Choice, items) }
 fn seq2(a: i64, b: i64) -> i64 { seq([a, b]) }
 fn choice2(a: i64, b: i64) -> i64 { choice([a, b]) }
 // a << b: a, spaces, b
@@ -391,11 +389,11 @@ fn until_one_of(ds: const u8[:][:]) -> i64 {
         let l = literal(d);
         kids[at0 + 2 * i] = l;
     }
-    return add(P { kind: P_UNTIL, kids_at: at0, kids_n: ds.len, .. });
+    return add(P { kind: Parser.Until, kids_at: at0, kids_n: ds.len, .. });
 }
 fn until(d: const u8[:]) -> i64 { until_one_of([d]) }
 // Everything.
-fn rest() -> i64 { add(P { kind: P_UNTIL, kids_at: kids.len, kids_n: 0, .. }) }
+fn rest() -> i64 { add(P { kind: Parser.Until, kids_at: kids.len, kids_n: 0, .. }) }
 
 // Everything up to the delimiter, a sequence of literals and tokens, or of
 // choices of them (until(parser)).
@@ -403,7 +401,7 @@ fn until_p(delimiter: i64) -> i64 {
     let at0 = kids.len;
     kids.push(delimiter);
     kids.push(-1);
-    return add(P { kind: P_UNTIL, kids_at: at0, kids_n: 1, .. });
+    return add(P { kind: Parser.Until, kids_at: at0, kids_n: 1, .. });
 }
 
 // A delimiter of through, and the parser that follows it once it is consumed.
@@ -415,7 +413,7 @@ fn through_b(content: i64, branches: const Branch[:], optional: bool) -> i64 {
     if branches.len == 0 { abort("through requires at least one branch"); }
     let at0 = kids.len;
     for b in branches { kids.push(b.delim); kids.push(b.rest); }
-    return add(P { kind: P_UNTIL, child: content, kids_at: at0, kids_n: branches.len, incl: true, opt: optional, .. });
+    return add(P { kind: Parser.Until, child: content, kids_at: at0, kids_n: branches.len, incl: true, opt: optional, .. });
 }
 fn through(content: i64, delimiter: i64) -> i64 { through_b(content, [Branch { delim: delimiter }], false) }
 fn through_s(content: i64, delimiter: const u8[:]) -> i64 { let l = literal(delimiter); return through(content, l); }
@@ -460,7 +458,7 @@ fn token(piece: const u8[:]) -> i64 {
     let id = token_id(piece);
     if id < 0 { return literal(piece); }
     let x = lit(piece);
-    return add(P { kind: P_TOKEN, lo: id, s: x, .. });
+    return add(P { kind: Parser.Token, lo: id, s: x, .. });
 }
 
 // One of the tokens; negate_it: one token that is none of them (each must be known).
@@ -476,7 +474,7 @@ fn tokens(pieces: const u8[:][:], negate_it: bool) -> i64 {
         if id < 0 { abort(str("token is not registered with the builder: ", pc)); }
         kids.push(id);
     }
-    return add(P { kind: P_TOKEN_NOT, kids_at: at0, kids_n: pieces.len, .. });
+    return add(P { kind: Parser.TokenNot, kids_at: at0, kids_n: pieces.len, .. });
 }
 
 fn is_hex_digit(c: u8) -> bool { (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') }
@@ -535,7 +533,7 @@ fn chars(classes: const u8[:], lo: i64, hi: i64) -> i64 {
         }
     }
     let x = lit(classes);
-    return add(P { kind: P_CHARS, kids_at: at0, kids_n: ranges.len - at0, lo: lo, hi: hi, s: x, negated: negated, .. });
+    return add(P { kind: Parser.Chars, kids_at: at0, kids_n: ranges.len - at0, lo: lo, hi: hi, s: x, negated: negated, .. });
 }
 
 // gbnf_format_rule_name
@@ -557,9 +555,9 @@ fn clean_name(name: const u8[:]) -> S {
 // A named rule of p; a ref to it.
 fn rule(name: const u8[:], p: i64, trigger: bool) -> i64 {
     let nm = clean_name(name);
-    let id = add(P { kind: P_RULE, child: p, s: nm, trigger: trigger, .. });
+    let id = add(P { kind: Parser.Rule, child: p, s: nm, trigger: trigger, .. });
     set_rule(nm, id);
-    return add(P { kind: P_REF, s: nm, .. });
+    return add(P { kind: Parser.Ref, s: nm, .. });
 }
 
 // The builder-function form of rule: rule_open, then the parser built, then
@@ -568,18 +566,18 @@ fn rule(name: const u8[:], p: i64, trigger: bool) -> i64 {
 // the parser refer to the rule.
 fn rule_open(name: const u8[:], trigger: bool) -> i64 {
     let nm = clean_name(name);
-    if has_rule(t(nm)) { return add(P { kind: P_REF, s: nm, .. }); }
+    if has_rule(t(nm)) { return add(P { kind: Parser.Ref, s: nm, .. }); }
     let placeholder = any();
-    let id = add(P { kind: P_RULE, child: placeholder, s: nm, trigger: trigger, .. });
+    let id = add(P { kind: Parser.Rule, child: placeholder, s: nm, trigger: trigger, .. });
     set_rule(nm, id);
     return -1;
 }
 
 fn rule_close(name: const u8[:], p: i64, trigger: bool) -> i64 {
     let nm = clean_name(name);
-    let id = add(P { kind: P_RULE, child: p, s: nm, trigger: trigger, .. });
+    let id = add(P { kind: Parser.Rule, child: p, s: nm, trigger: trigger, .. });
     set_rule(nm, id);
-    return add(P { kind: P_REF, s: nm, .. });
+    return add(P { kind: Parser.Ref, s: nm, .. });
 }
 
 fn trigger_rule(name: const u8[:], p: i64) -> i64 { rule(name, p, true) }
@@ -590,15 +588,15 @@ fn trigger_rule(name: const u8[:], p: i64) -> i64 { rule(name, p, true) }
 fn trigger_rule_sr(name: const u8[:], start_p: i64, rest_p: i64) -> i64 {
     let nm = clean_name(name);
     let sq = seq2(start_p, rest_p);
-    let id = add(P { kind: P_RULE, child: sq, s: nm, trigger: true, start_p: start_p, rest_p: rest_p, .. });
+    let id = add(P { kind: Parser.Rule, child: sq, s: nm, trigger: true, start_p: start_p, rest_p: rest_p, .. });
     set_rule(nm, id);
-    return add(P { kind: P_REF, s: nm, .. });
+    return add(P { kind: Parser.Ref, s: nm, .. });
 }
 
 // A parser with the schema node its GBNF comes from.
 fn schema(p: i64, name: const u8[:], node: i64, raw: bool) -> i64 {
     let x = lit(name);
-    return add(P { kind: P_SCHEMA, child: p, s: x, node: node, raw: raw, .. });
+    return add(P { kind: Parser.Schema, child: p, s: x, node: node, raw: raw, .. });
 }
 
 // Ends the arena: its refs resolved to their rules, and its root.
@@ -606,22 +604,22 @@ fn build(root: i64) -> i64 {
     let a = cur;
     let base = arenas[a].base;
     fn resolve(id: i64) -> i64 {
-        guard id >= 0 && ps[id].kind == P_REF else { return id; }
+        guard id >= 0 && ps[id].kind == Parser.Ref else { return id; }
         let k = find_rule(a, t(ps[id].s));
         if k < 0 { abort(str("Rule not found: ", t(ps[id].s))); }
         return rules[k].id;
     }
     for id in base..ps.len {
         let k = ps[id].kind;
-        if k == P_SEQUENCE || k == P_CHOICE {
+        if k == Parser.Sequence || k == Parser.Choice {
             for j in ps[id].kids_n { kids[ps[id].kids_at + j] = resolve(kids[ps[id].kids_at + j]); }
-        } else if k == P_UNTIL {
+        } else if k == Parser.Until {
             for j in 2 * ps[id].kids_n { kids[ps[id].kids_at + j] = resolve(kids[ps[id].kids_at + j]); }
             ps[id].child = resolve(ps[id].child);
         } else if ps[id].child >= 0 {
             ps[id].child = resolve(ps[id].child);
         }
-        if k == P_RULE && ps[id].start_p >= 0 {
+        if k == Parser.Rule && ps[id].start_p >= 0 {
             ps[id].start_p = resolve(ps[id].start_p);
             ps[id].rest_p = resolve(ps[id].rest_p);
         }
@@ -837,15 +835,13 @@ fn json_member(key: const u8[:], p: i64) -> i64 {
 // parsing
 //
 
-let FAIL = 0;
-let SUCCESS = 1;
-let NEED_MORE_INPUT = 2;
+enum ResultKind { Fail, Success, NeedMoreInput }
 
 let FLAG_LENIENT = 1;
 let FLAG_DEBUG = 2;
 let FLAG_COMPLETE = 4;
 
-struct Res { kind: i32, start: i64, end: i64 }
+struct Res { kind: ResultKind, start: i64, end: i64 }
 
 struct Invalid { pos: i64, len: i64 }
 
@@ -879,7 +875,7 @@ var pbase = 0;
 fn lenient() -> bool { (flags & FLAG_LENIENT) != 0 }
 fn complete() -> bool { (flags & FLAG_COMPLETE) != 0 }
 
-fn res(kind: i32, start: i64, end: i64) -> Res { Res { kind: kind, start: start, end: end } }
+fn res(kind: ResultKind, start: i64, end: i64) -> Res { Res { kind: kind, start: start, end: end } }
 
 fn drop_to(nmark: i64, imark: i64) { rn.resize(nmark); ri.resize(imark); }
 
@@ -891,7 +887,7 @@ fn add_node(rule: S, tag: S, r: Res, nmark: i64, imark: i64) {
     nodes.push(Node {
         rule: rule, tag: tag, start: r.start, end: r.end,
         kids_at: at0, kids_n: rn.len - nmark,
-        partial: r.kind == NEED_MORE_INPUT,
+        partial: r.kind == ResultKind.NeedMoreInput,
         inv_at: i0, inv_n: ri.len - imark,
     });
     rn.resize(nmark);
@@ -901,26 +897,26 @@ fn add_node(rule: S, tag: S, r: Res, nmark: i64, imark: i64) {
 fn escape_sequence(start: i64, pos0: i64, delimiter: u8) -> Res {
     var pos = pos0 + 1;
     if pos >= input.len {
-        if !lenient() { return res(FAIL, start, start); }
-        return res(NEED_MORE_INPUT, start, pos0);
+        if !lenient() { return res(ResultKind.Fail, start, start); }
+        return res(ResultKind.NeedMoreInput, start, pos0);
     }
     let c = input[pos];
     if c == delimiter || c == '\\' || c == '/' || c == 'b' || c == 'f' || c == 'n' || c == 'r' || c == 't' {
-        return res(SUCCESS, start, pos + 1);
+        return res(ResultKind.Success, start, pos + 1);
     }
     if c == 'u' {
         pos++;
         for i in 4 {
             if pos >= input.len {
-                if !lenient() { return res(FAIL, start, start); }
-                return res(NEED_MORE_INPUT, start, pos0);
+                if !lenient() { return res(ResultKind.Fail, start, start); }
+                return res(ResultKind.NeedMoreInput, start, pos0);
             }
-            if !is_hex_digit(input[pos]) { return res(FAIL, start, start); }
+            if !is_hex_digit(input[pos]) { return res(ResultKind.Fail, start, start); }
             pos++;
         }
-        return res(SUCCESS, start, pos);
+        return res(ResultKind.Success, start, pos);
     }
-    return res(FAIL, start, start);
+    return res(ResultKind.Fail, start, start);
 }
 
 // Node sets of insert_delimiter, a run each, sorted.
@@ -941,19 +937,19 @@ fn dset_add(run_at: i64, node: i64) {
 recursive fn insert_delimiter(id: i64, at: i64, n: i64) -> i64, i64 {
     let p = ps[id];
     let k = p.kind;
-    if k == P_TAG || k == P_ATOMIC { return insert_delimiter(p.child, at, n); }
-    if k == P_LITERAL || k == P_TOKEN {
+    if k == Parser.Tag || k == Parser.Atomic { return insert_delimiter(p.child, at, n); }
+    if k == Parser.Literal || k == Parser.Token {
         let out = dset.len;
         for i in n {
             var node = dset[at + i];
-            if k == P_TOKEN {
+            if k == Parser.Token {
                 node = trie_child(node, sym_tok(p.lo));
             } else {
                 let lt = t(p.s);
                 var pos = 0;
                 while pos < lt.len {
                     let st, cp, m = utf8_at(lt, pos);
-                    if st != UTF8_SUCCESS { break; }
+                    if st != Utf8Status.Success { break; }
                     node = trie_child(node, sym_cp(cp));
                     pos += m;
                 }
@@ -962,7 +958,7 @@ recursive fn insert_delimiter(id: i64, at: i64, n: i64) -> i64, i64 {
         }
         return out, dset.len - out;
     }
-    if k == P_CHOICE {
+    if k == Parser.Choice {
         let rmark = druns.len;
         for j in p.kids_n {
             let a2, n2 = insert_delimiter(kids[p.kids_at + j], at, n);
@@ -976,7 +972,7 @@ recursive fn insert_delimiter(id: i64, at: i64, n: i64) -> i64, i64 {
         druns.resize(rmark);
         return out, dset.len - out;
     }
-    if k == P_SEQUENCE {
+    if k == Parser.Sequence {
         var fa = at;
         var fnn = n;
         for j in p.kids_n {
@@ -1018,8 +1014,8 @@ recursive fn exec_until(p: P, start: i64) -> Res {
     var last_valid = start;
     while pos < input.len {
         let st, x, n = trie_next(pos);
-        if st == UTF8_INCOMPLETE && lenient() { return res(NEED_MORE_INPUT, start, last_valid); }
-        if st != UTF8_SUCCESS {
+        if st == Utf8Status.Incomplete && lenient() { return res(ResultKind.NeedMoreInput, start, last_valid); }
+        if st != Utf8Status.Success {
             // a delimiter cannot start inside bytes that fail to decode
             ri.push(Invalid { pos: pos, len: n });
             pos += n;
@@ -1027,13 +1023,13 @@ recursive fn exec_until(p: P, start: i64) -> Res {
             continue;
         }
         let m = trie_check_at(pos);
-        if m == COMPLETE_MATCH { return res(SUCCESS, start, pos); }
-        if m == PARTIAL_MATCH && !complete() { return res(SUCCESS, start, pos); }
+        if m == MatchKind.CompleteMatch { return res(ResultKind.Success, start, pos); }
+        if m == MatchKind.PartialMatch && !complete() { return res(ResultKind.Success, start, pos); }
         pos += n;
         last_valid = pos;
     }
-    if last_valid == input.len && lenient() { return res(NEED_MORE_INPUT, start, last_valid); }
-    return res(SUCCESS, start, last_valid);
+    if last_valid == input.len && lenient() { return res(ResultKind.NeedMoreInput, start, last_valid); }
+    return res(ResultKind.Success, start, last_valid);
 }
 
 // The content, then the first branch whose delimiter and rest follow it,
@@ -1042,7 +1038,7 @@ recursive fn exec_through(p: P, start: i64) -> Res {
     let nmark = rn.len;
     let imark = ri.len;
     let content = exec(p.child, start);
-    if content.kind != SUCCESS { return content; }
+    if content.kind != ResultKind.Success { return content; }
     let pos = content.end;
     let cm = rn.len;
     let cim = ri.len;
@@ -1053,18 +1049,18 @@ recursive fn exec_through(p: P, start: i64) -> Res {
             let id = kids[p.kids_at + 2 * b + which];
             guard id >= 0 else { continue; }
             let r = exec(id, end);
-            if r.kind == FAIL { matched = false; break; }
+            if r.kind == ResultKind.Fail { matched = false; break; }
             end = r.end;
-            if r.kind == NEED_MORE_INPUT { return res(NEED_MORE_INPUT, start, end); }
+            if r.kind == ResultKind.NeedMoreInput { return res(ResultKind.NeedMoreInput, start, end); }
         }
-        if matched { return res(SUCCESS, start, end); }
+        if matched { return res(ResultKind.Success, start, end); }
         drop_to(cm, cim);
     }
     if p.opt && pos == input.len {
-        return res(if lenient() { NEED_MORE_INPUT } else { SUCCESS }, start, pos);
+        return res(if lenient() { ResultKind.NeedMoreInput } else { ResultKind.Success }, start, pos);
     }
     drop_to(nmark, imark);
-    return res(FAIL, start, pos);
+    return res(ResultKind.Fail, start, pos);
 }
 
 fn exec_chars(p: P, start: i64) -> Res {
@@ -1072,14 +1068,14 @@ fn exec_chars(p: P, start: i64) -> Res {
     var count = 0;
     while p.hi == -1 || count < p.hi {
         let st, cp, n = utf8_at(input, pos);
-        if st == UTF8_INCOMPLETE {
-            if count >= p.lo { return res(SUCCESS, start, pos); }
-            if !lenient() { return res(FAIL, start, start); }
-            return res(NEED_MORE_INPUT, start, pos);
+        if st == Utf8Status.Incomplete {
+            if count >= p.lo { return res(ResultKind.Success, start, pos); }
+            if !lenient() { return res(ResultKind.Fail, start, start); }
+            return res(ResultKind.NeedMoreInput, start, pos);
         }
-        if st == UTF8_INVALID {
-            if count >= p.lo { return res(SUCCESS, start, pos); }
-            return res(FAIL, start, start);
+        if st == Utf8Status.Invalid {
+            if count >= p.lo { return res(ResultKind.Success, start, pos); }
+            return res(ResultKind.Fail, start, start);
         }
         var matches = false;
         for k in p.kids_n {
@@ -1092,33 +1088,33 @@ fn exec_chars(p: P, start: i64) -> Res {
         count++;
     }
     if count < p.lo {
-        if pos >= input.len && lenient() { return res(NEED_MORE_INPUT, start, pos); }
-        return res(FAIL, start, pos);
+        if pos >= input.len && lenient() { return res(ResultKind.NeedMoreInput, start, pos); }
+        return res(ResultKind.Fail, start, pos);
     }
-    return res(SUCCESS, start, pos);
+    return res(ResultKind.Success, start, pos);
 }
 
 fn exec_string(p: P, start: i64) -> Res {
     var pos = start;
     while pos < input.len {
         let c = input[pos];
-        if c == p.delim { return res(SUCCESS, start, pos); }
+        if c == p.delim { return res(ResultKind.Success, start, pos); }
         if c == '\\' {
             let r = escape_sequence(start, pos, p.delim);
-            if r.kind != SUCCESS { return r; }
+            if r.kind != ResultKind.Success { return r; }
             pos = r.end;
         } else {
             let st, cp, n = utf8_at(input, pos);
-            if st == UTF8_INCOMPLETE {
-                if !lenient() { return res(FAIL, start, start); }
-                return res(NEED_MORE_INPUT, start, pos);
+            if st == Utf8Status.Incomplete {
+                if !lenient() { return res(ResultKind.Fail, start, start); }
+                return res(ResultKind.NeedMoreInput, start, pos);
             }
-            if st == UTF8_INVALID { return res(FAIL, start, start); }
+            if st == Utf8Status.Invalid { return res(ResultKind.Fail, start, start); }
             pos += n;
         }
     }
-    if !lenient() { return res(FAIL, start, pos); }
-    return res(NEED_MORE_INPUT, start, pos);
+    if !lenient() { return res(ResultKind.Fail, start, pos); }
+    return res(ResultKind.NeedMoreInput, start, pos);
 }
 
 // The parser id at pos: its result, its nodes and invalid runs pushed onto
@@ -1128,59 +1124,59 @@ recursive fn exec(id: i64, pos: i64) -> Res {
     let k = p.kind;
     let nmark = rn.len;
     let imark = ri.len;
-    if k == P_EPSILON { return res(SUCCESS, pos, pos); }
-    if k == P_START { return res(if pos == 0 { SUCCESS } else { FAIL }, pos, pos); }
-    if k == P_END { return res(if pos >= input.len { SUCCESS } else { FAIL }, pos, pos); }
-    if k == P_LITERAL {
+    if k == Parser.Epsilon { return res(ResultKind.Success, pos, pos); }
+    if k == Parser.Start { return res(if pos == 0 { ResultKind.Success } else { ResultKind.Fail }, pos, pos); }
+    if k == Parser.End { return res(if pos >= input.len { ResultKind.Success } else { ResultKind.Fail }, pos, pos); }
+    if k == Parser.Literal {
         let s = t(p.s);
         var q = pos;
         for c in s {
             if q >= input.len {
-                if !lenient() { return res(FAIL, pos, pos); }
-                return res(NEED_MORE_INPUT, pos, q);
+                if !lenient() { return res(ResultKind.Fail, pos, pos); }
+                return res(ResultKind.NeedMoreInput, pos, q);
             }
-            if input[q] != c { return res(FAIL, pos, pos); }
+            if input[q] != c { return res(ResultKind.Fail, pos, pos); }
             q++;
         }
-        return res(SUCCESS, pos, q);
+        return res(ResultKind.Success, pos, q);
     }
-    if k == P_TOKEN || k == P_TOKEN_NOT {
+    if k == Parser.Token || k == Parser.TokenNot {
         if pos >= input.len {
-            if !lenient() { return res(FAIL, pos, pos); }
-            return res(NEED_MORE_INPUT, pos, pos);
+            if !lenient() { return res(ResultKind.Fail, pos, pos); }
+            return res(ResultKind.NeedMoreInput, pos, pos);
         }
         let id: i64 = if pos < itok.len { itok[pos] } else { -1 };
         var ok = false;
-        if k == P_TOKEN {
+        if k == Parser.Token {
             ok = id == p.lo;
         } else {
             ok = id >= 0;
             for j in p.kids_n { if kids[p.kids_at + j] == id { ok = false; } }
         }
-        if !ok { return res(FAIL, pos, pos); }
+        if !ok { return res(ResultKind.Fail, pos, pos); }
         // the rest of the piece, up to the next token or the end
         var q = pos + 1;
         while q < input.len && itok[q] < 0 { q++; }
-        return res(SUCCESS, pos, q);
+        return res(ResultKind.Success, pos, q);
     }
-    if k == P_SEQUENCE {
+    if k == Parser.Sequence {
         var q = pos;
         for j in p.kids_n {
             let r = exec(kids[p.kids_at + j], q);
-            if r.kind == FAIL { drop_to(nmark, imark); return res(FAIL, pos, r.end); }
-            if r.kind == NEED_MORE_INPUT { return res(NEED_MORE_INPUT, pos, r.end); }
+            if r.kind == ResultKind.Fail { drop_to(nmark, imark); return res(ResultKind.Fail, pos, r.end); }
+            if r.kind == ResultKind.NeedMoreInput { return res(ResultKind.NeedMoreInput, pos, r.end); }
             q = r.end;
         }
-        return res(SUCCESS, pos, q);
+        return res(ResultKind.Success, pos, q);
     }
-    if k == P_CHOICE {
+    if k == Parser.Choice {
         for j in p.kids_n {
             let r = exec(kids[p.kids_at + j], pos);
-            if r.kind != FAIL { return r; }
+            if r.kind != ResultKind.Fail { return r; }
         }
-        return res(FAIL, pos, pos);
+        return res(ResultKind.Fail, pos, pos);
     }
-    if k == P_REPETITION {
+    if k == Parser.Repetition {
         var q = pos;
         var count = 0;
         while p.hi == -1 || count < p.hi {
@@ -1188,53 +1184,53 @@ recursive fn exec(id: i64, pos: i64) -> Res {
             let cm = rn.len;
             let ci = ri.len;
             let r = exec(p.child, q);
-            if r.kind == SUCCESS {
+            if r.kind == ResultKind.Success {
                 // an empty match ends it
                 if r.end == q { drop_to(cm, ci); break; }
                 q = r.end;
                 count++;
                 continue;
             }
-            if r.kind == NEED_MORE_INPUT { return res(NEED_MORE_INPUT, pos, r.end); }
+            if r.kind == ResultKind.NeedMoreInput { return res(ResultKind.NeedMoreInput, pos, r.end); }
             break;
         }
         if p.lo > 0 && count < p.lo {
-            if q >= input.len && lenient() { return res(NEED_MORE_INPUT, pos, q); }
+            if q >= input.len && lenient() { return res(ResultKind.NeedMoreInput, pos, q); }
             drop_to(nmark, imark);
-            return res(FAIL, pos, q);
+            return res(ResultKind.Fail, pos, q);
         }
-        return res(SUCCESS, pos, q);
+        return res(ResultKind.Success, pos, q);
     }
-    if k == P_AND {
+    if k == Parser.And {
         let r = exec(p.child, pos);
         drop_to(nmark, imark);
         return res(r.kind, pos, pos);
     }
-    if k == P_NOT {
+    if k == Parser.Not {
         let r = exec(p.child, pos);
         drop_to(nmark, imark);
-        if r.kind == SUCCESS { return res(FAIL, pos, pos); }
-        if r.kind == NEED_MORE_INPUT { return res(NEED_MORE_INPUT, pos, pos); }
-        return res(SUCCESS, pos, pos);
+        if r.kind == ResultKind.Success { return res(ResultKind.Fail, pos, pos); }
+        if r.kind == ResultKind.NeedMoreInput { return res(ResultKind.NeedMoreInput, pos, pos); }
+        return res(ResultKind.Success, pos, pos);
     }
-    if k == P_ANY {
+    if k == Parser.Any {
         let st, cp, n = utf8_at(input, pos);
-        if st == UTF8_INCOMPLETE {
-            if !lenient() { return res(FAIL, pos, pos); }
-            return res(NEED_MORE_INPUT, pos, pos);
+        if st == Utf8Status.Incomplete {
+            if !lenient() { return res(ResultKind.Fail, pos, pos); }
+            return res(ResultKind.NeedMoreInput, pos, pos);
         }
-        if st == UTF8_INVALID { return res(FAIL, pos, pos); }
-        return res(SUCCESS, pos, pos + n);
+        if st == Utf8Status.Invalid { return res(ResultKind.Fail, pos, pos); }
+        return res(ResultKind.Success, pos, pos + n);
     }
-    if k == P_SPACE {
+    if k == Parser.Space {
         var q = pos;
         while q < input.len && is_space(input[q]) { q++; }
-        return res(SUCCESS, pos, q);
+        return res(ResultKind.Success, pos, q);
     }
-    if k == P_CHARS { return exec_chars(p, pos); }
-    if k == P_STRING { return exec_string(p, pos); }
-    if k == P_UNTIL { return exec_until(p, pos); }
-    if k == P_RULE {
+    if k == Parser.Chars { return exec_chars(p, pos); }
+    if k == Parser.String { return exec_string(p, pos); }
+    if k == Parser.Until { return exec_until(p, pos); }
+    if k == Parser.Rule {
         // only rules recurse, a recursive rule is entered once per input level
         if rule_depth[p.child - pbase] >= RULE_RECURSIVE_LIMIT {
             fail(str("input is nested more than ", RULE_RECURSIVE_LIMIT, " levels deep"));
@@ -1242,22 +1238,22 @@ recursive fn exec(id: i64, pos: i64) -> Res {
         rule_depth[p.child - pbase] += 1;
         let r = exec(p.child, pos);
         rule_depth[p.child - pbase] -= 1;
-        if r.kind != FAIL { add_node(p.s, S { .. }, r, nmark, imark); }
+        if r.kind != ResultKind.Fail { add_node(p.s, S { .. }, r, nmark, imark); }
         return r;
     }
-    if k == P_TAG {
+    if k == Parser.Tag {
         let r = exec(p.child, pos);
-        if r.kind != FAIL { add_node(S { .. }, p.s, r, nmark, imark); }
+        if r.kind != ResultKind.Fail { add_node(S { .. }, p.s, r, nmark, imark); }
         return r;
     }
-    if k == P_REF {
+    if k == Parser.Ref {
         let rk = find_rule(cur_parse, t(p.s));
         if rk < 0 { fail(str("Rule not found: ", t(p.s))); }
         return exec(rules[rk].id, pos);
     }
-    if k == P_ATOMIC {
+    if k == Parser.Atomic {
         let r = exec(p.child, pos);
-        if r.kind == NEED_MORE_INPUT { rn.resize(nmark); }
+        if r.kind == ResultKind.NeedMoreInput { rn.resize(nmark); }
         return r;
     }
     // schema, gbnf: their child parses
@@ -1306,7 +1302,7 @@ fn parse_input(a: i64, parse_flags: i64, start_pos: i64) -> Res, bool {
     rule_depth.clear();
     let n = if a + 1 < arenas.len { arenas[a + 1].base } else { ps.len };
     for i in pbase..n { rule_depth.push(0); }
-    var r = res(FAIL, start_pos, start_pos);
+    var r = res(ResultKind.Fail, start_pos, start_pos);
     var ok = false;
     fn body() {
         r = exec(arenas[a].root, start_pos);
@@ -1625,17 +1621,17 @@ fn ac_grammar(prefix: const u8[:], including: bool, optional: bool, rests: const
 fn schema_delegates(p: P) -> bool { p.node < 0 || (p.raw && json_schema::may_be_string(p.node)) }
 
 // The parser itself, past tags, atomics and schemas that delegate.
-fn effective(id: i64) -> u8 {
+fn effective(id: i64) -> Parser {
     var i = id;
     loop {
         let p = ps[i];
-        if p.kind == P_TAG || p.kind == P_ATOMIC { i = p.child; continue; }
-        if p.kind == P_SCHEMA && schema_delegates(p) { i = p.child; continue; }
+        if p.kind == Parser.Tag || p.kind == Parser.Atomic { i = p.child; continue; }
+        if p.kind == Parser.Schema && schema_delegates(p) { i = p.child; continue; }
         return p.kind;
     }
 }
 
-fn is_group(id: i64) -> bool { let k = effective(id); return k == P_CHOICE || k == P_SEQUENCE; }
+fn is_group(id: i64) -> bool { let k = effective(id); return k == Parser.Choice || k == Parser.Sequence; }
 
 fn repetition_suffix(out: u8[>..]&, lo: i64, hi: i64) {
     if lo == 0 && hi == 1 { out.push('?'); return; }
@@ -1658,15 +1654,15 @@ var gbase = 0;
 recursive fn to_gbnf(id: i64) -> json_schema::Str {
     let p = ps[id];
     let k = p.kind;
-    if k == P_EPSILON || k == P_START || k == P_END || k == P_AND || k == P_NOT { return jlit(""); }
-    if k == P_LITERAL { return json_schema::format_literal(jlit(t(p.s))); }
-    if k == P_TOKEN { return jlit(str("<[", p.lo, "]>")); }
-    if k == P_TOKEN_NOT {
+    if k == Parser.Epsilon || k == Parser.Start || k == Parser.End || k == Parser.And || k == Parser.Not { return jlit(""); }
+    if k == Parser.Literal { return json_schema::format_literal(jlit(t(p.s))); }
+    if k == Parser.Token { return jlit(str("<[", p.lo, "]>")); }
+    if k == Parser.TokenNot {
         var out: u8[>..] = [];
         token_set(out, kids[p.kids_at..p.kids_at + p.kids_n], true);
         return jlit(out);
     }
-    if k == P_SEQUENCE || k == P_CHOICE {
+    if k == Parser.Sequence || k == Parser.Choice {
         let mark = gstack.len;
         for j in p.kids_n {
             let g = to_gbnf(kids[p.kids_at + j]);
@@ -1676,34 +1672,34 @@ recursive fn to_gbnf(id: i64) -> json_schema::Str {
         for j in p.kids_n {
             let child = kids[p.kids_at + j];
             let g = jt(gstack[mark + j]);
-            if k == P_SEQUENCE {
+            if k == Parser.Sequence {
                 if g.len == 0 { continue; }
                 if out.len > 0 { out.push(' '); }
                 if is_group(child) { out.push('('); out.append(g); out.push(')'); } else { out.append(g); }
             } else {
                 if j > 0 { out.append(" | "); }
-                if effective(child) == P_CHOICE { out.push('('); out.append(g); out.push(')'); } else { out.append(g); }
+                if effective(child) == Parser.Choice { out.push('('); out.append(g); out.push(')'); } else { out.append(g); }
             }
         }
         gstack.resize(mark);
         return jlit(out);
     }
-    if k == P_REPETITION {
+    if k == Parser.Repetition {
         let g = to_gbnf(p.child);
         var out: u8[>..] = [];
         if is_group(p.child) { out.push('('); out.append(jt(g)); out.push(')'); } else { out.append(jt(g)); }
         repetition_suffix(out, p.lo, p.hi);
         return jlit(out);
     }
-    if k == P_ANY { return jlit("."); }
-    if k == P_SPACE { return jlit("space"); }
-    if k == P_CHARS {
+    if k == Parser.Any { return jlit("."); }
+    if k == Parser.Space { return jlit("space"); }
+    if k == Parser.Chars {
         var out: u8[>..] = [];
         out.append(t(p.s));
         repetition_suffix(out, p.lo, p.hi);
         return jlit(out);
     }
-    if k == P_STRING {
+    if k == Parser.String {
         var out: u8[>..] = [];
         out.append("( [^");
         out.push(p.delim);
@@ -1712,7 +1708,7 @@ recursive fn to_gbnf(id: i64) -> json_schema::Str {
         out.append("\\\\/ bfnrt] | \"u\" [0-9a-fA-F]{4} ) )*");
         return jlit(out);
     }
-    if k == P_UNTIL {
+    if k == Parser.Until {
         if !p.incl {
             if p.kids_n == 0 { return jlit(".*"); }
             build_matcher(p);
@@ -1737,12 +1733,12 @@ recursive fn to_gbnf(id: i64) -> json_schema::Str {
         build_matcher(p);
         return ac_grammar(str("until-", id - gbase), true, p.opt, rs);
     }
-    if k == P_SCHEMA {
+    if k == Parser.Schema {
         if schema_delegates(p) { return to_gbnf(p.child); }
         return json_schema::add_schema(jlit(t(p.s)), p.node);
     }
-    if k == P_RULE || k == P_REF { return jlit(t(p.s)); }
-    if k == P_GBNF { return jlit(t(p.s)); }
+    if k == Parser.Rule || k == Parser.Ref { return jlit(t(p.s)); }
+    if k == Parser.Gbnf { return jlit(t(p.s)); }
     // tag, atomic
     return to_gbnf(p.child);
 }
@@ -1764,25 +1760,25 @@ fn reach_token(id: i64) {
 recursive fn collect(a: i64, id: i64) {
     let p = ps[id];
     let k = p.kind;
-    if k == P_SEQUENCE || k == P_CHOICE {
+    if k == Parser.Sequence || k == Parser.Choice {
         for j in p.kids_n { collect(a, kids[p.kids_at + j]); }
-    } else if k == P_TOKEN {
+    } else if k == Parser.Token {
         reach_token(p.lo);
-    } else if k == P_TOKEN_NOT {
+    } else if k == Parser.TokenNot {
         for j in p.kids_n { reach_token(kids[p.kids_at + j]); }
-    } else if k == P_UNTIL {
+    } else if k == Parser.Until {
         // the delimiters name their tokens in the grammar
         if p.child >= 0 { collect(a, p.child); }
         for b in p.kids_n {
             collect(a, kids[p.kids_at + 2 * b]);
             if kids[p.kids_at + 2 * b + 1] >= 0 { collect(a, kids[p.kids_at + 2 * b + 1]); }
         }
-    } else if k == P_RULE {
+    } else if k == Parser.Rule {
         if !reached(t(p.s)) {
             reach.push(p.s);
             collect(a, p.child);
         }
-    } else if k == P_REF {
+    } else if k == Parser.Ref {
         let rk = find_rule(a, t(p.s));
         if rk < 0 { fail(str("Rule not found: ", t(p.s))); }
         collect(a, rules[rk].id);
@@ -1802,7 +1798,7 @@ fn build_grammar(a: i64, lazy: bool) {
     // the trigger rules, by name
     var triggers: i64[>..] = [];
     for r in rules {
-        guard r.arena == a && ps[r.id].kind == P_RULE && ps[r.id].trigger else { continue; }
+        guard r.arena == a && ps[r.id].kind == Parser.Rule && ps[r.id].trigger else { continue; }
         triggers.push(r.id);
     }
     stable_sort(triggers) { x, y => json_schema::cmp_bytes(t(ps[x].s), t(ps[y].s)) < 0 };
@@ -1830,7 +1826,7 @@ fn build_grammar(a: i64, lazy: bool) {
     for r in rules {
         guard r.arena == a && reached(t(r.name)) else { continue; }
         let p = ps[r.id];
-        guard p.kind == P_RULE else { continue; }
+        guard p.kind == Parser.Rule else { continue; }
         let g = to_gbnf(p.child);
         json_schema::add_rule(jlit(t(p.s)), g);
     }

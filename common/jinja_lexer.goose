@@ -7,34 +7,36 @@ import .jinja;
 
 namespace jinja;
 
-let T_EOF = 0;
-let T_TEXT = 1;          // the text between statements and expressions
-let T_NUMBER = 2;        // 123, 1.0
-let T_STRING = 3;        // 'string'
-let T_IDENT = 4;         // variables, functions, statement names, booleans
-let T_EQUALS = 5;        // =
-let T_OPEN_PAREN = 6;
-let T_CLOSE_PAREN = 7;
-let T_OPEN_STMT = 8;     // {%
-let T_CLOSE_STMT = 9;    // %}
-let T_OPEN_EXPR = 10;    // {{
-let T_CLOSE_EXPR = 11;   // }}
-let T_OPEN_SQUARE = 12;
-let T_CLOSE_SQUARE = 13;
-let T_OPEN_CURLY = 14;
-let T_CLOSE_CURLY = 15;
-let T_COMMA = 16;
-let T_DOT = 17;
-let T_COLON = 18;
-let T_PIPE = 19;
-let T_ADDITIVE = 21;     // + - ~
-let T_MULTIPLICATIVE = 22;   // * // / %
-let T_POWER = 23;        // **
-let T_COMPARISON = 24;   // < > <= >= == !=
-let T_COMMENT = 25;      // {# ... #}
+enum TokType {
+    Eof,
+    Text,            // the text between statements and expressions
+    Number,          // 123, 1.0
+    String,          // 'string'
+    Ident,           // variables, functions, statement names, booleans
+    Equals,          // =
+    OpenParen,
+    CloseParen,
+    OpenStmt,        // {%
+    CloseStmt,       // %}
+    OpenExpr,        // {{
+    CloseExpr,       // }}
+    OpenSquare,
+    CloseSquare,
+    OpenCurly,
+    CloseCurly,
+    Comma,
+    Dot,
+    Colon,
+    Pipe,
+    Additive,        // + - ~
+    Multiplicative,  // * // / %
+    Power,           // **
+    Comparison,      // < > <= >= == !=
+    Comment,         // {# ... #}
+}
 
 // A token: its type, its value (atext[s..s + n]) and where it starts.
-struct Tok { t: u8, s: i64, n: i64, pos: i64 }
+struct Tok { t: TokType, s: i64, n: i64, pos: i64 }
 
 var toks: Tok[>..<] = [];
 // The normalized sources of the templates parsed so far.
@@ -44,24 +46,24 @@ var atext: u8[>..] = [];
 
 fn tok_text(t: Tok) -> const u8[:] { atext[t.s..t.s + t.n] }
 
-struct Seq { s: const u8[:], t: u8 }
+struct Seq { s: const u8[:], t: TokType }
 
 // In the order they are tried.
 let SEQUENCES: Seq[33] = [
-    Seq { "{%-", T_OPEN_STMT }, Seq { "-%}", T_CLOSE_STMT },
-    Seq { "{{-", T_OPEN_EXPR }, Seq { "-}}", T_CLOSE_EXPR },
-    Seq { "{%", T_OPEN_STMT }, Seq { "%}", T_CLOSE_STMT },
-    Seq { "{{", T_OPEN_EXPR }, Seq { "}}", T_CLOSE_EXPR },
-    Seq { "(", T_OPEN_PAREN }, Seq { ")", T_CLOSE_PAREN },
-    Seq { "{", T_OPEN_CURLY }, Seq { "}", T_CLOSE_CURLY },
-    Seq { "[", T_OPEN_SQUARE }, Seq { "]", T_CLOSE_SQUARE },
-    Seq { ",", T_COMMA }, Seq { ".", T_DOT }, Seq { ":", T_COLON }, Seq { "|", T_PIPE },
-    Seq { "<=", T_COMPARISON }, Seq { ">=", T_COMPARISON }, Seq { "==", T_COMPARISON },
-    Seq { "!=", T_COMPARISON }, Seq { "<", T_COMPARISON }, Seq { ">", T_COMPARISON },
-    Seq { "+", T_ADDITIVE }, Seq { "-", T_ADDITIVE }, Seq { "~", T_ADDITIVE },
-    Seq { "**", T_POWER }, Seq { "*", T_MULTIPLICATIVE }, Seq { "//", T_MULTIPLICATIVE },
-    Seq { "/", T_MULTIPLICATIVE }, Seq { "%", T_MULTIPLICATIVE },
-    Seq { "=", T_EQUALS },
+    Seq { "{%-", TokType.OpenStmt }, Seq { "-%}", TokType.CloseStmt },
+    Seq { "{{-", TokType.OpenExpr }, Seq { "-}}", TokType.CloseExpr },
+    Seq { "{%", TokType.OpenStmt }, Seq { "%}", TokType.CloseStmt },
+    Seq { "{{", TokType.OpenExpr }, Seq { "}}", TokType.CloseExpr },
+    Seq { "(", TokType.OpenParen }, Seq { ")", TokType.CloseParen },
+    Seq { "{", TokType.OpenCurly }, Seq { "}", TokType.CloseCurly },
+    Seq { "[", TokType.OpenSquare }, Seq { "]", TokType.CloseSquare },
+    Seq { ",", TokType.Comma }, Seq { ".", TokType.Dot }, Seq { ":", TokType.Colon }, Seq { "|", TokType.Pipe },
+    Seq { "<=", TokType.Comparison }, Seq { ">=", TokType.Comparison }, Seq { "==", TokType.Comparison },
+    Seq { "!=", TokType.Comparison }, Seq { "<", TokType.Comparison }, Seq { ">", TokType.Comparison },
+    Seq { "+", TokType.Additive }, Seq { "-", TokType.Additive }, Seq { "~", TokType.Additive },
+    Seq { "**", TokType.Power }, Seq { "*", TokType.Multiplicative }, Seq { "//", TokType.Multiplicative },
+    Seq { "/", TokType.Multiplicative }, Seq { "%", TokType.Multiplicative },
+    Seq { "=", TokType.Equals },
 ];
 
 // C's isspace and isalnum, in the C locale.
@@ -79,27 +81,24 @@ fn lex_fail(msg: const u8[:], source: const u8[:], pos: i64) {
     fail_plain(out);
 }
 
-let W_DIGITS = 0;
-let W_WORD = 1;
-let W_SPACE = 2;
-let W_NOT_QUOTE = 3;
+enum Want { Digits, Word, Space, NotQuote }
 
 struct Lexer { source: const u8[:], src: const u8[:], pos: i64 = 0 }
 
 // src[p], or 0 past the end as std::string gives.
 fn at(lx: Lexer&, p: i64) -> u8 { if p < lx.src.len { lx.src[p] } else { 0 } }
 
-fn wanted(lx: Lexer&, what: i64, quote: u8) -> bool {
+fn wanted(lx: Lexer&, what: Want, quote: u8) -> bool {
     let c = at(lx, lx.pos);
-    if what == W_DIGITS { return c_digit(c); }
-    if what == W_WORD { return c_word(c); }
-    if what == W_SPACE { return c_space(c); }
+    if what == Want.Digits { return c_digit(c); }
+    if what == Want.Word { return c_word(c); }
+    if what == Want.Space { return c_space(c); }
     return c != quote;
 }
 
 // Consumes the characters `what` takes, unescaping backslash escapes, onto
 // atext: where they start there and how many.
-fn consume_while(lx: Lexer&, what: i64, quote: u8) -> i64, i64 {
+fn consume_while(lx: Lexer&, what: Want, quote: u8) -> i64, i64 {
     let start = atext.len;
     while wanted(lx, what, quote) {
         if at(lx, lx.pos) == '\\' {
@@ -145,11 +144,11 @@ fn hex_value(c: u8) -> i64 {
 
 // Digits, and a fraction if a digit follows the point.
 fn consume_numeric(lx: Lexer&) -> i64, i64 {
-    let start, digits = consume_while(lx, W_DIGITS, 0);
+    let start, digits = consume_while(lx, Want.Digits, 0);
     if lx.pos < lx.src.len && lx.src[lx.pos] == '.' && lx.pos + 1 < lx.src.len && c_digit(lx.src[lx.pos + 1]) {
         lx.pos++;
         atext.push('.');
-        consume_while(lx, W_DIGITS, 0);
+        consume_while(lx, Want.Digits, 0);
     }
     return start, atext.len - start;
 }
@@ -162,9 +161,9 @@ fn next_is(lx: Lexer&, chars: const u8[:], n: i64) -> bool {
     return false;
 }
 
-fn push_tok(t: u8, s: i64, n: i64, pos: i64) { toks.push(Tok { t: t, s: s, n: n, pos: pos }); }
+fn push_tok(t: TokType, s: i64, n: i64, pos: i64) { toks.push(Tok { t: t, s: s, n: n, pos: pos }); }
 
-fn last_type() -> u8 { if toks.len == 0 { T_EOF } else { toks[toks.len - 1].t } }
+fn last_type() -> TokType { if toks.len == 0 { TokType.Eof } else { toks[toks.len - 1].t } }
 
 // Tokenizes source into toks. The source is kept, normalized (\r\n and \r
 // to \n, one trailing newline dropped), in asrc: where it is.
@@ -191,8 +190,8 @@ fn lex(source: const u8[:], src: const u8[:]) {
     while lx.pos < src.len {
         var start_pos = lx.pos;
         // the text outside statements and expressions
-        let last = if toks.len == 0 { T_CLOSE_STMT } else { last_type() };
-        if last == T_CLOSE_STMT || last == T_CLOSE_EXPR || last == T_COMMENT {
+        let last = if toks.len == 0 { TokType.CloseStmt } else { last_type() };
+        if last == TokType.CloseStmt || last == TokType.CloseExpr || last == TokType.Comment {
             var can_rm_newline = false;
             var rstrip = false;
             if lx.pos > 3 {
@@ -231,7 +230,7 @@ fn lex(source: const u8[:], src: const u8[:]) {
             if t1 > t0 {
                 let s = atext.len;
                 atext.append(src[t0..t1]);
-                push_tok(T_TEXT, s, t1 - t0, start_pos);
+                push_tok(TokType.Text, s, t1 - t0, start_pos);
                 continue;
             }
         }
@@ -246,13 +245,13 @@ fn lex(source: const u8[:], src: const u8[:]) {
                 atext.push(src[lx.pos]);
                 lx.pos++;
             }
-            push_tok(T_COMMENT, s, atext.len - s, start_pos);
+            push_tok(TokType.Comment, s, atext.len - s, start_pos);
             lx.pos += 2;
             continue;
         }
 
         // the - of {%- or {{-
-        if at(lx, lx.pos) == '-' && (last == T_OPEN_EXPR || last == T_OPEN_STMT) {
+        if at(lx, lx.pos) == '-' && (last == TokType.OpenExpr || last == TokType.OpenStmt) {
             lx.pos++;
             if lx.pos >= src.len { break; }
         }
@@ -273,9 +272,9 @@ fn lex(source: const u8[:], src: const u8[:]) {
                 let s = atext.len;
                 atext.append(seq.s);
                 push_tok(seq.t, s, seq.s.len, start_pos);
-                if seq.t == T_OPEN_EXPR { curly_depth = 0; }
-                else if seq.t == T_OPEN_CURLY { curly_depth++; }
-                else if seq.t == T_CLOSE_CURLY { curly_depth--; }
+                if seq.t == TokType.OpenExpr { curly_depth = 0; }
+                else if seq.t == TokType.OpenCurly { curly_depth++; }
+                else if seq.t == TokType.CloseCurly { curly_depth--; }
                 lx.pos += seq.s.len;
                 matched = true;
                 break;
@@ -286,21 +285,21 @@ fn lex(source: const u8[:], src: const u8[:]) {
         if ch == '\'' || ch == '"' {
             start_pos = lx.pos;
             lx.pos++;
-            let s, n = consume_while(lx, W_NOT_QUOTE, ch);
-            push_tok(T_STRING, s, n, start_pos);
+            let s, n = consume_while(lx, Want.NotQuote, ch);
+            push_tok(TokType.String, s, n, start_pos);
             lx.pos++;
             continue;
         }
         if c_digit(ch) {
             start_pos = lx.pos;
             let s, n = consume_numeric(lx);
-            push_tok(T_NUMBER, s, n, start_pos);
+            push_tok(TokType.Number, s, n, start_pos);
             continue;
         }
         if c_word(ch) {
             start_pos = lx.pos;
-            let s, n = consume_while(lx, W_WORD, 0);
-            push_tok(T_IDENT, s, n, start_pos);
+            let s, n = consume_while(lx, Want.Word, 0);
+            push_tok(TokType.Ident, s, n, start_pos);
             continue;
         }
         var msg: u8[>..] = [];

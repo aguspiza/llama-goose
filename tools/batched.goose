@@ -88,16 +88,16 @@ fn main() {
 
     for s in n_parallel {
         var ch = sampler::Chain { .. };
-        var tk = sampler::new_sampler(sampler::KIND_TOP_K);
+        var tk = sampler::new_sampler(sampler::Kind.TopK);
         tk.k = top_k;
         ch.samplers.push(tk);
-        var tp = sampler::new_sampler(sampler::KIND_TOP_P);
+        var tp = sampler::new_sampler(sampler::Kind.TopP);
         tp.a = top_p;
         ch.samplers.push(tp);
-        var te = sampler::new_sampler(sampler::KIND_TEMP_EXT);
+        var te = sampler::new_sampler(sampler::Kind.TempExt);
         te.a = temp;
         ch.samplers.push(te);
-        ch.samplers.push(sampler::seeded(sampler::KIND_DIST, seed));
+        ch.samplers.push(sampler::seeded(sampler::Kind.Dist, seed));
         chains.push(ch);
     }
 
