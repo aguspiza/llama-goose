@@ -22,6 +22,8 @@ import math;
 import ggml from "../ggml";
 import ggml.gguf;
 import .vocab;
+import .unicode;
+import .ecma_regex;
 namespace model;
 
 let MAX_LAYERS = 512;
@@ -306,7 +308,9 @@ struct Model {
     hp: HParams,
     meta: gguf::Ctx,
     ctx: ggml::Ctx,          // the weights' tensors
-    bufs: ggml::Buffer[8],   // and their data, ending with p == 0
+    bufs: ggml::Buffer[8],   // and the buffers allocated for their data, ending with p == 0
+    host_weight_bytes: i64 = 0,   // the weights' host memory, as --fit counts it
+    lazy_ple: bool = false,       // per_layer_tok_embd read as it is used (--lazy-mode)
     backend: ggml::Backend,
     tok_embd: ggml::Tensor,
     pos_embd: ggml::Tensor,  // gpt2, starcoder: learned positions
@@ -1301,10 +1305,35 @@ fn n_embd_s(hp: HParams&) -> i64 {
 // tensors
 //
 
+// The tensors the architecture's loader asked for, sorted once the model
+// is loaded: the others of the file are left out (llama.cpp's unused tensors).
+var used_tensors: i64[>..] = [];
+
 fn tensor(m: Model&, name: const u8[:], required: bool = true) -> ggml::Tensor {
     let t = ggml::get_tensor(m.ctx, name);
     if t.p == 0 && required { abort(str("missing tensor '", name, "'")); }
+    if t.p != 0 { used_tensors.push(t.p); }
     return t;
+}
+
+// Whether the model reads t (a tensor of its file).
+fn is_used(t: ggml::Tensor) -> bool {
+    let at = lower_bound(used_tensors) { it < t.p };
+    return at < used_tensors.len && used_tensors[at] == t.p;
+}
+
+// The tensors of the file no loader asked for.
+fn unused_tensors(m: Model&) -> ggml::Tensor[>..] {
+    sort(used_tensors);
+    var out: ggml::Tensor[>..] = [];
+    var name: u8[>..] = [];
+    for id in gguf::get_n_tensors(m.meta) {
+        name.clear();
+        gguf::get_tensor_name(m.meta, id, name);
+        let t = ggml::get_tensor(m.ctx, name);
+        if t.p != 0 && !is_used(t) { out.push(t); }
+    }
+    return out;
 }
 
 fn layer_tensor(m: Model&, il: i64, name: const u8[:], required: bool = true, suffix: const u8[:] = "weight") -> ggml::Tensor {
@@ -2508,6 +2537,52 @@ fn expert_weights(m: Model&) -> ggml::Tensor[>..] {
     return out;
 }
 
+// llama_load_mode: how the weights get to memory. Auto is mmap on the CPU.
+enum LoadMode { Auto, None, Mmap, Mlock, MmapMlock, Dio }
+
+// llama_lazy_mode: whether the tensors an architecture marks (gemma4's
+// per-layer embeddings) are read from the file as they are used, rows
+// read ahead for each batch; Auto only for those above 4 GiB.
+enum LazyMode { Off, Auto, On }
+
+// What llama_model_params says of loading the weights (common/load sets
+// them from the flags): the mode, whether they may go in the CPU's repack
+// buffers (use_extra_bufts), and the patterns, comma-separated, of the
+// tensors overridden to the CPU buffer type (tensor_buft_overrides, which
+// on the CPU alone place nothing elsewhere).
+var load_mode = LoadMode.Auto;
+var lazy_mode = LazyMode.Auto;
+var repack = true;
+var cpu_overrides: u8[>..] = [];
+
+// llama_load_mode's number, as the loader's C takes it; Auto resolved.
+fn mode_number(mode: LoadMode) -> i32 {
+    match mode { Auto, Mmap => 1, None => 0, Mlock => 2, MmapMlock => 3, Dio => 4 }
+}
+
+// Whether a tensor's name matches one of cpu_overrides (std::regex_search).
+fn any_tensor_matches(m: Model&) -> bool {
+    var stack: ecma::Frame[>..<] = [];
+    var name: u8[>..] = [];
+    var found = false;
+    each_split(cpu_overrides, ',') {
+        let pattern = it;
+        var insts: ecma::Inst[>..] = [];
+        var items: ecma::Item[>..] = [];
+        var classes: ecma::Class[>..] = [];
+        ecma::compile(unicode::cpts_from_utf8(pattern), insts, items, classes);
+        let prog = ecma::Prog { insts: insts, items: items, classes: classes };
+        for id in gguf::get_n_tensors(m.meta) {
+            name.clear();
+            gguf::get_tensor_name(m.meta, id, name);
+            let text = unicode::cpts_from_utf8(name);
+            let s, e = ecma::search(prog, text, 0, text.len, 0, false, false, stack);
+            if s >= 0 { found = true; }
+        }
+    };
+    return found;
+}
+
 // Loads a model, and its vocabulary into the vocab module.
 fn load(m: Model&, path: const u8[:]) {
     m.ctx = ggml::Ctx { p: 0 };
@@ -2574,8 +2649,17 @@ fn load(m: Model&, path: const u8[:]) {
 
     m.backend = ggml::backend_cpu_init();
     ggml::set_quiet(if llama::quiet { 1 } else { 0 });
-    guard ggml::alloc_weights(m.ctx, matmul_weights(m), expert_weights(m), m.hp.n_expert_used, m.bufs) else { abort("failed to allocate the model's weights"); }
-    guard gguf::load_tensor_data(m.meta, m.ctx, path) else { abort(str("failed to read the tensors of ", path)); }
+    let overridden = cpu_overrides.len > 0 && any_tensor_matches(m);
+    let tied = if m.output.p != 0 && m.output.p == m.tok_embd.p { m.tok_embd } else { ggml::NONE };
+    var output = m.output;
+    // TENSOR_READ_LAZY: gemma4's per-layer embeddings
+    let ple = m.per_layer_tok_embd;
+    m.lazy_ple = m.hp.arch == Arch.Gemma4 && ple.p != 0 &&
+                 (lazy_mode == LazyMode.On || (lazy_mode == LazyMode.Auto && ggml::nbytes(ple) > 4 * 1024 * 1024 * 1024));
+    let lazy = if m.lazy_ple { ple } else { ggml::NONE };
+    guard ggml::load_weights(m.meta, m.ctx, path, matmul_weights(m), expert_weights(m), m.hp.n_expert_used, mode_number(load_mode),
+                             repack, overridden, tied, lazy, unused_tensors(m), m.bufs, m.host_weight_bytes, output) else { abort(str("failed to load the tensors of ", path)); }
+    if tied.p != 0 { m.output = output; }
     print_info(m);
 }
 

@@ -5,6 +5,7 @@
 //   parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-kvu] [-ns n_sequences] [-n n_predict]
 //            [-b n_batch] [-pps] [-nocb] [--junk n] [--temp t] [-s seed]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // port-of: examples/parallel/parallel.cpp
 import std;
@@ -20,6 +21,7 @@ import llama.sampler;
 import common from "../common";
 import common.console;
 import common.download;
+import common.load;
 import common.fit;
 
 let K_SYSTEM = """
@@ -167,6 +169,7 @@ fn main() {
         if a == "-kvu" || a == "--kv-unified" { kv_unified = true; i++; continue; }
         if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; i++; continue; }
         if a == "--offline" { download::offline = true; i++; continue; }
+        if load::flag(a) { i++; continue; }
         if a == "-pps" { is_sp_shared = true; i++; continue; }
         if a == "-nocb" || a == "--no-cont-batching" { cont_batching = false; i++; continue; }
         if a == "-cb" || a == "--cont-batching" { cont_batching = true; i++; continue; }
@@ -174,6 +177,7 @@ fn main() {
         let v = args[i + 1];
         if a == "-m" { model_path.clear(); model_path.append(v); }
         else if download::takes_value(a) { download::set(a, v); }
+        else if load::takes_value(a) { load::set(a, v); }
         else if fit::takes_value(a) { fit::set(a, v); }
         else if a == "--temp" || a == "--top-p" || a == "--min-p" {
             let x, ok = parse_flt(v);
@@ -207,6 +211,7 @@ fn main() {
     sampler::mt_seed(rng, 1234);
 
     var m = model::Model { .. };
+    load::from_env();
     model::load(m, model_path);
     let n_ubatch = min(512, n_batch);
     var c = context::Context { .. };

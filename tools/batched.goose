@@ -5,6 +5,7 @@
 //   batched -m model.gguf [-p prompt] [-n n_predict] [-np n_parallel] [-kvu]
 //           [--temp t] [--top-k k] [--top-p p] [-s seed]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // port-of: examples/batched/batched.cpp
 import std;
 import os;
@@ -19,6 +20,7 @@ import llama.sampler;
 import common from "../common";
 import common.console;
 import common.download;
+import common.load;
 
 fn usage() {
     print("example usage:\n\n    batched -m model.gguf [-p prompt] [-n n_predict] [-np n_parallel] [--temp t] [--top-k k] [--top-p p] [-s seed]\n");
@@ -48,10 +50,12 @@ fn main() {
         if a == "-kvu" || a == "--kv-unified" { kv_unified = true; i++; continue; }
         if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; i++; continue; }
         if a == "--offline" { download::offline = true; i++; continue; }
+        if load::flag(a) { i++; continue; }
         guard i + 1 < args.len else { usage(); }
         let v = args[i + 1];
         if a == "-m" { model_path.clear(); model_path.append(v); }
         else if download::takes_value(a) { download::set(a, v); }
+        else if load::takes_value(a) { load::set(a, v); }
         else if a == "-p" { prompt.clear(); prompt.append(v); }
         else if a == "-n" || a == "-np" || a == "--top-k" || a == "-s" || a == "--seed" {
             let x, ok = parse_int(v);
@@ -69,6 +73,7 @@ fn main() {
     guard n_parallel >= 1 && n_parallel <= 64 else { abort("n_parallel: 1 to 64"); }
 
     var m = model::Model { .. };
+    load::from_env();
     model::load(m, model_path);
 
     var tokens: i32[>..] = [];

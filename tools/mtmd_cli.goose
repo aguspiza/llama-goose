@@ -4,6 +4,7 @@
 //            [-n n_predict] [-c n_ctx] [-t threads] [--temp t] [-s seed] [-sys prompt]
 // -m and --mmproj can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]
 // [--no-mmproj]: common/download, with the mmproj beside the model.
+// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // The prompt holds a <__media__> marker for each image, or they go before it.
 // port-of: tools/mtmd/mtmd-cli.cpp
@@ -21,6 +22,7 @@ import common from "../common";
 import common.jinja;
 import common.chat;
 import common.download;
+import common.load;
 import common.fit;
 import mtmd from "../mtmd";
 
@@ -58,6 +60,7 @@ fn main() {
     while i < a.len {
         let k = a[i];
         if k == "--offline" { download::offline = true; i += 1; continue; }
+        if load::flag(k) { i += 1; continue; }
         if k == "--no-mmproj" { no_mmproj = true; i += 1; continue; }
         guard i + 1 < a.len else { usage(); }
         let v = a[i + 1];
@@ -65,6 +68,7 @@ fn main() {
         if k == "-m" || k == "--model" { model_path.append(v); }
         else if k == "--mmproj" { mmproj_path.append(v); }
         else if download::takes_value(k) { download::set(k, v); }
+        else if load::takes_value(k) { load::set(k, v); }
         else if k == "--image" { images.append(v); images.push(0); }
         else if k == "-p" || k == "--prompt" { prompt.append(v); }
         else if k == "-sys" || k == "--system-prompt" { system_prompt.append(v); }
@@ -86,6 +90,7 @@ fn main() {
     if model_path.len == 0 || mmproj_path.len == 0 || images.len == 0 { usage(); }
 
     var m = model::Model { .. };
+    load::from_env();
     model::load(m, model_path);
     var c = context::Context { n_threads: n_threads, .. };
     context::init(c, m, fit::n_ctx(c, m, n_ctx));

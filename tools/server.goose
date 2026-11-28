@@ -15,6 +15,7 @@
 //          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
 //          [-s seed] [--temp t] [--top-k k] [--top-p p] [--min-p p] [...the sampling flags of completion]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // Routes: /health, /props, /models, /completion(s), /v1/completions,
 // /v1/chat/completions, /apply-template, /tokenize, /detokenize.
@@ -41,6 +42,7 @@ import common.console;
 import common.jdoc;
 import common.json_schema;
 import common.download;
+import common.load;
 import common.fit;
 import common.chat_render;
 import common.chat_peg;
@@ -2901,6 +2903,8 @@ fn setup() {
         if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
         else if download::takes_value(a) { download::set(a, value()); }
         else if a == "--offline" { download::offline = true; }
+        else if load::takes_value(a) { load::set(a, value()); }
+        else if load::flag(a) {}
         else if a == "--host" { host.clear(); host.append(value()); }
         else if a == "--port" { port = int_value(); }
         else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); fit::ctx_flag(n_ctx); }
@@ -2981,6 +2985,7 @@ fn setup() {
     model_name.append(if alias.len > 0 { alias[..] } else { model_path[..] });
     rng_state ^= time_ns() as! u64;
 
+    load::from_env();
     model::load(m, model_path);
     c.n_threads = n_threads;
     // the slots: llama-server's 4 by default, in one cache unified for them; those
@@ -3015,9 +3020,11 @@ fn setup() {
         for id in gguf::get_n_tensors(m.meta) {
             var name: u8[>..] = [];
             gguf::get_tensor_name(m.meta, id, name);
-            model_size += gguf::get_tensor_size(m.meta, id);
+            // llama_model_size and llama_model_n_params: the tensors loaded
             let t = ggml::get_tensor(m.ctx, name);
-            if t.p != 0 { n_params += ggml::nelements(t); }
+            guard t.p != 0 && model::is_used(t) else { continue; }
+            model_size += gguf::get_tensor_size(m.meta, id);
+            n_params += ggml::nelements(t);
         }
     }
 

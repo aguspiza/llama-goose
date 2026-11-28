@@ -175,7 +175,7 @@ fn projected_bytes(like: Context&, m: model::Model&, n_ctx: i64) -> i64 {
     ggml::gallocr_free(t.galloc);
     ggml::backend_buffer_free(dummy);
     ggml::free(t.kv_ctx);
-    return ggml::host_weight_bytes(m.bufs) + kv_bytes + compute;
+    return m.host_weight_bytes + kv_bytes + compute;
 }
 
 // The cache's cells (llama_kv_cells), for the one context of a program: the
@@ -4232,7 +4232,11 @@ fn decode_ubatch(c: Context&, m: model::Model&, tokens: const i32[:], pos: const
         for t in n_tokens { pos32.push(if j < 3 { pos[t] as i32 } else { 0 }); }
     }
     if sh.embd { ggml::backend_set_f32(b.inp.embd, embd); }
-    else { ggml::backend_set_i32(b.inp.tokens, tokens); }
+    else {
+        // the rows of a lazy per-layer embedding these tokens read, read ahead
+        if m.lazy_ple { ggml::prefetch_rows(m.per_layer_tok_embd, tokens); }
+        ggml::backend_set_i32(b.inp.tokens, tokens);
+    }
     if b.inp.scale_rows.p != 0 {
         // the token rows scaled, the embeddings given not
         var scales: f32[>..] = [];

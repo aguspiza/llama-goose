@@ -22,6 +22,7 @@ c_sources = [
     "../src/ggml-backend-reg.cpp",
     "../src/ggml-backend-dl.cpp",
     "cpu_shim.c",
+    "load.c",
 ];
 c_include = ["../include", "../src", "../src/ggml-cpu", "../units"];
 c_defines = [

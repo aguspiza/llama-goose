@@ -11,6 +11,7 @@
 //              [--frequency-penalty f] [--xtc-probability p] [--xtc-threshold t]
 //              [--top-nsigma n] [--dynatemp-range r] [--dynatemp-exp e]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // port-of: tools/completion/completion.cpp
 import std;
@@ -31,6 +32,7 @@ import common.chat;
 import common.console;
 import common.json_schema;
 import common.download;
+import common.load;
 import common.fit;
 
 fn fail(msg: const u8[:]) {
@@ -179,6 +181,8 @@ fn main() {
         if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
         else if download::takes_value(a) { download::set(a, value()); }
         else if a == "--offline" { download::offline = true; }
+        else if load::takes_value(a) { load::set(a, value()); }
+        else if load::flag(a) {}
         else if a == "-p" || a == "--prompt" { prompt.clear(); prompt.append(value()); }
         else if a == "-sys" || a == "--system-prompt" { system_prompt.clear(); system_prompt.append(value()); }
         else if a == "-n" || a == "--n-predict" { n_predict = int_value(); }
@@ -284,6 +288,7 @@ fn main() {
     console::init(use_color);
 
     var m = model::Model { .. };
+    load::from_env();
     model::load(m, model_path);
     var c = context::Context { n_threads: n_threads, .. };
     context::init(c, m, fit::n_ctx(c, m, n_ctx));

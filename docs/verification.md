@@ -31,6 +31,7 @@ has the summary.
 | `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images and audio; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
 | downloads (`common/download`: `-hf`, `-hff`, `-hft`, `--offline`, into the Hugging Face cache) | ported, through libcurl loaded at run time; not `-mu`, Docker, the cache's lock files | [below](#downloads--hf) |
 | `--fit` (`common/fit`): the context left to the model (no `-c`, as llama.cpp's default) cut to leave `-fitt` MiB of the host memory, projected from the weights, the cache and the compute buffer of llama.cpp's worst-case graphs | ported for the host memory | [below](#--fit) |
+| loading the weights: `-lm auto\|none\|mmap\|mlock\|mmap+mlock\|dio`, `-lzm on\|auto\|off`, `--repack`/`-nr`, `-ot`, `-cmoe`, `-ncmoe` and their `LLAMA_ARG_*` variables; the tied output's copy (`TENSOR_DUPLICATED`); the unused tensors left out | ported for the CPU (the overrides have only the `CPU` buffer type to go to) | [below](#loading-the-weights) |
 | the rest of `common/` (the argument parser) | not yet | |
 
 ## tools/simple
@@ -196,6 +197,50 @@ projects the same and picks 24064. Through the servers' `/props`
 | gemma-3 270M (SWA) | `-fitt 31000` / `-np 2 -fitt 31500` | 32768 / 32768 |
 | LFM2.5 230M (hybrid) | `-fitt 31500` | 44544 |
 | Jamba 3B (hybrid) | `-fitt 29000` | 262144 |
+
+## Loading the weights
+
+`common/load` reads the flags in batched, completion, mtmd_cli, parallel,
+perplexity and the server, and `ggml/cpu/load.c` holds the OS's part
+(mapping, prefetch, mlock, unbuffered reads). As llama.cpp does:
+
+- `-lm auto` (the default) and `mmap` map the file: the tensors of the
+  plain CPU buffer type point into the mapping (`CPU_Mapped`), and only the
+  ones repacked into `CPU_REPACK` are copied. `none` reads them into host
+  buffers; `mlock` locks those buffers, `mmap+mlock` the mapping; `dio`
+  reads with unbuffered I/O (`FILE_FLAG_NO_BUFFERING`, `O_DIRECT`), at the
+  file system's alignment. `--repack`/`-nr` turns `CPU_REPACK` on or off.
+- `-ot <pattern>=CPU`, `-cmoe` and `-ncmoe N` are checked (an unknown buffer
+  type lists the ones there are and fails), and, with mmap, a match gives
+  llama.cpp's warning to use `--load-mode none`. With the CPU alone they
+  move nothing.
+- `-lzm`: gemma4's per-layer token embeddings stay in the mapping whatever
+  the mode (with `auto`, above 4 GiB), out of the prefetch and of mlock, and
+  the rows of each batch's tokens are read ahead before it is decoded.
+- When the output is the token embeddings, and mul_mat takes another buffer
+  type than get_rows, the output is a copy of them in that buffer type
+  (llama.cpp's `TENSOR_DUPLICATED`): gemma-3n's `CPU_REPACK` grows from
+  861.75 to 1149.75 MiB, as llama.cpp's.
+- The tensors no loader asks for (GLM-OCR's MTP layer, 220 MiB) are neither
+  placed nor read, with llama.cpp's warning; the server's `/models` counts
+  only the ones loaded.
+
+`cmpload.sh` runs llama-completion and tools/completion with the same flags
+and compares the text and the loader's lines (the buffers and their sizes,
+the warnings of mlock, unbuffered I/O, the overrides and the unused
+tensors). Over the 68 models, with the default and with `-lm none`: 134 of
+136 the same; the two others are flan-t5, whose text completion did not give
+before either (its encoder). Qwen3 0.6B with each mode, `-nr`, `-ot`
+(`CPU`, and an unknown type), `-cmoe`, `-ncmoe 2`, and through the
+`LLAMA_ARG_*` variables; granite MoE, gemma-3n, mamba, Jamba; gemma-4 with
+`-lzm on`, `auto`, `off`, and `on` with `none` and `mmap+mlock`: all the
+same. mlock fails on Windows for the 167.90 MiB buffer of Qwen3 with the same
+warning as llama.cpp's. tools/simple: 67 of the 68 models as before (PLM is
+one llama.cpp cannot load); mtmd_cli with SmolVLM and gemma-3 4B, and
+parallel with `-kvu` and with a stream per sequence: the same. The server
+(`compare-server.py`, Qwen3), with the default and with `-lm none`: 29 of 29
+the same. `--fit` (`cmpfit.sh`): Qwen3 `-fitt 29000` 26624 (with `-lm none`
+too) and gemma-3n `-fitt 28000` 32768, as llama-server's.
 
 ## Downloads (-hf)
 
