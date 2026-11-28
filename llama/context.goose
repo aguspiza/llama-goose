@@ -3823,7 +3823,8 @@ fn kv_rows(k: i64, pos: const i64[:], seqs: const u64[:], n_slices: i64, rows: i
     return n_rows;
 }
 
-// Runs tokens, at positions n_past.., through the model as sequence 0;
+// Runs tokens, at positions n_past.., through the model as sequence 0, in
+// ubatches of at most c.n_ubatch tokens (llama_decode's split_simple);
 // writes the logits of the last one to logits. With `outputs` (indices into
 // tokens, in order), the logits of those tokens instead, one row of n_vocab
 // after another.
@@ -3831,7 +3832,7 @@ fn decode(c: Context&, m: model::Model&, tokens: const i32[:], logits: f32[>..]&
     var pos: i64[>..] = [];
     var seqs: u64[>..] = [];
     for t in tokens.len { pos.push(c.n_past + t); seqs.push(1); }
-    decode_seqs(c, m, tokens, pos, seqs, logits, outputs, tokens.len);
+    decode_seqs(c, m, tokens, pos, seqs, logits, outputs, c.n_ubatch);
 }
 
 // Runs a batch of tokens of several sequences through the model

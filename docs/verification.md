@@ -79,6 +79,13 @@ the same bytes as `llama-completion` fed the same lines.
 `scripts/compare-completion.sh` runs both and compares (llama.cpp writes
 stdout in Windows text mode, `\r\n`, which it reads as `\n`).
 
+A prompt longer than a ubatch (512 tokens) is decoded in ubatches of 512,
+as `llama_decode` splits a batch: one graph over the whole batch gave other
+logits (the matrix products sum in another order), and with Qwen3 a
+570-token prompt then went on with other text. Greedy, with a short prompt
+and a 3000-byte one, the first 10 models of the regression list write the
+same text as `llama-completion`.
+
 Past the context, with `--context-shift` (`-c 256`, 600 tokens, greedy, 8
 threads), `tools/completion` writes the same text as `llama-completion` on
 66 of the 68 models of the regression list: a shift drops half the tokens
