@@ -344,8 +344,10 @@ fn build_siglip(g: G&, c: Clip&) -> ggml::Tensor, ggml::Tensor {
 
 // The embeddings of one image (mtmd_subcontext::encode): its pixels
 // normalized, [n_mmproj_embd, n_output_tokens] into out.
+// Its graph has memory of its own: init_graph's is the text model's, whose
+// graph a context keeps between decodes.
 fn encode_image(c: Clip&, img: ImageF32&, out: f32[>..]&) {
-    let gctx = ggml::init_graph(CLIP_MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(CLIP_MAX_NODES, false));
+    let gctx = ggml::init(CLIP_MAX_NODES * ggml::tensor_overhead() + ggml::graph_overhead_custom(CLIP_MAX_NODES, false), true);
     var g = G { ctx: gctx, gf: ggml::new_graph_custom(gctx, CLIP_MAX_NODES, false), nx: img.nx, ny: img.ny };
     let inp_raw, emb = build_siglip(g, c);
     guard ggml::gallocr_alloc_graph(c.galloc, g.gf) else { abort("mtmd: failed to allocate the graph"); }

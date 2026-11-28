@@ -7,6 +7,7 @@ namespace mtmd;
 
 extern fn c_image_info(buf: const u8[:], nx: i64&, ny: i64&) -> i64 = "mtmd_image_info";
 extern fn c_image_decode(buf: const u8[:], out: u8[:]) -> i64 = "mtmd_image_decode";
+extern fn c_sha256(buf: const u8[:], out: u8[:]) = "mtmd_sha256";
 
 // RGB pixels, row after row (mtmd_image_u8).
 struct ImageU8 { nx: i64, ny: i64, buf: u8[>..] }

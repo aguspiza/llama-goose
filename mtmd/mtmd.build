@@ -1,4 +1,4 @@
-// The C behind the multimodal package: stb_image, unchanged from llama.cpp's vendor/.
-c_sources = ["image.c"];
-c_include = ["../vendor"];
+// The C behind the multimodal package: stb_image and sha256, unchanged from llama.cpp's vendor/.
+c_sources = ["image.c", "../vendor/hash/sha256/sha256.c"];
+c_include = ["../vendor", "../vendor/hash"];
 c_flags_cc = ["-O2"];

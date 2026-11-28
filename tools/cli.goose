@@ -3,13 +3,15 @@
 // port of 127.0.0.1, with the arguments it does not take itself, and talks
 // to it over HTTP, as llama-cli does with its llama-server; with
 // --server-base it talks to a server already running instead.
-//   cli -m model.gguf [-sys prompt] [-p prompt] [-st] [-mli] [-co on|off|auto]
-//       [--show-timings | --no-show-timings] [-o file] [the server's arguments]
+//   cli -m model.gguf [-sys prompt] [-p prompt] [--image file ...] [-st] [-mli] [-co on|off|auto]
+//       [--show-timings | --no-show-timings] [-o file] [the server's arguments, such as --mmproj]
 //   cli --server-base http://host:port [...]
-// Commands: /exit, /regen, /clear, /read <file>, /glob <pattern>.
+// Commands: /exit, /regen, /clear, /read <file>, /glob <pattern>, and /image <file>
+// when the server reads images.
 // port-of: tools/cli/cli.cpp tools/cli/cli-context.cpp tools/cli/cli-ui.h tools/cli/cli-client.cpp tools/cli/cli-server.h
 import std;
 import os;
+import base64;
 import common from "../common";
 import common.console;
 import common.jdoc;
@@ -112,7 +114,11 @@ fn fetch_server_props() {
     model_ftype.append(jdoc::get_str(props, "model_ftype", ""));
     build_info.clear();
     build_info.append(jdoc::get_str(props, "build_info", ""));
+    let modalities = jdoc::get(props, "modalities");
+    has_vision = jdoc::is_obj(modalities) && jdoc::get_bool(modalities, "vision", false);
 }
+
+var has_vision = false;
 
 // list_and_ask_models: the model of a server that has several, asked.
 fn list_and_ask_models() -> bool {
@@ -227,6 +233,58 @@ fn drop_last_message() {
 
 fn add_system_prompt() {
     if system_prompt.len > 0 { push_message("system", system_prompt); }
+}
+
+// The media files staged for the next user message, as its content's parts (JSON, comma-separated).
+var pending_media: u8[>..] = [];
+
+// push_user_message: the text, after the media staged, if any.
+fn push_user_message(text: const u8[:]) {
+    guard pending_media.len > 0 else { push_message("user", text); return; }
+    var o: u8[>..] = [];
+    o.append("{\"role\":\"user\",\"content\":[");
+    o.append(pending_media);
+    o.append(",{\"type\":\"text\",\"text\":");
+    jdoc::put_str(o, text);
+    o.append("}]}");
+    messages.append(o);
+    messages.push(0);
+    pending_media.clear();
+}
+
+// The file's extension, lowercase.
+fn ext_of(fname: const u8[:]) -> u8[>..] {
+    var dot = -1;
+    for c, i in fname { if c == '.' { dot = i; } else if c == '/' || c == '\\' { dot = -1; } }
+    var ext: u8[>..] = [];
+    if dot >= 0 { for c in fname[dot..] { ext.push(if c >= 'A' && c <= 'Z' { c + 32 } else { c }); } }
+    return ext;
+}
+
+fn media_type_from_ext(fname: const u8[:]) -> const u8[:] {
+    let ext = ext_of(fname);
+    if ext == ".wav" || ext == ".mp3" { return "audio"; }
+    if ext == ".mp4" || ext == ".avi" || ext == ".mkv" || ext == ".mov" || ext == ".webm" { return "video"; }
+    return "image";
+}
+
+// stage_media_file: the file, base64, as a part of the next user message.
+fn stage_media_file(fname: const u8[:], ty: const u8[:]) -> bool {
+    var data: u8[>..] = [];
+    guard read_file(fname, data) else { return false; }
+    var encoded: u8[>..] = [];
+    base64::encode(encoded, data);
+    if pending_media.len > 0 { pending_media.push(','); }
+    if ty == "audio" {
+        let ext = if ext_of(fname) == ".mp3" { "mp3" } else { "wav" };
+        format(pending_media, "{\"type\":\"input_audio\",\"input_audio\":{\"data\":\"", encoded, "\",\"format\":\"", ext, "\"}}");
+    } else if ty == "video" {
+        format(pending_media, "{\"type\":\"input_video\",\"input_video\":{\"data\":\"", encoded, "\"}}");
+    } else {
+        // the server detects the actual image type from the data
+        format(pending_media, "{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/unknown;base64,", encoded, "\"}}");
+    }
+    return true;
 }
 
 var output_file: u8[>..] = [];
@@ -441,6 +499,7 @@ fn main() {
     var show_timings = true;
     var use_color = console::tty_can_use_colors();
     var has_model = false;
+    var media: u8[>..] = [];        // --image, --audio, --video: each ended by a NUL
     var i = 1;
     fn value() -> const u8[:] {
         if i + 1 >= args.len { show_error(str("missing value for ", args[i])); exit(1); }
@@ -466,6 +525,7 @@ fn main() {
         else if a == "--no-show-timings" { show_timings = false; }
         else if a == "-o" || a == "--output-file" { output_file.clear(); output_file.append(value()); }
         else if a == "--server-base" { server_base.clear(); server_base.append(value()); }
+        else if a == "--image" || a == "--audio" || a == "--video" { media.append(value()); media.push(0); }
         else if a == "-co" || a == "--color" {
             let v = value();
             use_color = if v == "on" || v == "true" || v == "1" { true } else if v == "off" || v == "false" || v == "0" { false } else { console::tty_can_use_colors() };
@@ -522,13 +582,13 @@ fn main() {
         exit(1);
     }
     fetch_server_props();
-    let code = run(prompt, single_turn, multiline, show_timings);
+    let code = run(prompt, media, single_turn, multiline, show_timings);
     if server != 0 { proc::kill(server); }
     console::cleanup();
     exit(code);
 }
 
-fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: bool) -> i64 {
+fn run(prompt0: const u8[:], media: const u8[:], single_turn: bool, multiline: bool, show_timings: bool) -> i64 {
     add_system_prompt();
     var banner: u8[>..] = [];
     banner.append("\n");
@@ -537,7 +597,7 @@ fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: b
     format(banner, "build      : ", build_info, "\n");
     format(banner, "model      : ", model_name, "\n");
     if model_ftype.len > 0 { format(banner, "ftype      : ", model_ftype, "\n"); }
-    banner.append("modalities : text\n");
+    format(banner, "modalities : text", if has_vision { ", vision" } else { "" }, "\n");
     if system_prompt.len > 0 { banner.append("using custom system prompt\n"); }
     banner.append("\n");
     banner.append("available commands:\n");
@@ -546,6 +606,7 @@ fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: b
     banner.append("  /clear              clear the chat history\n");
     banner.append("  /read <file>        add a text file\n");
     banner.append("  /glob <pattern>     add text files using globbing pattern\n");
+    if has_vision { banner.append("  /image <file>       add an image file\n"); }
     banner.append("\n");
     show_message(banner);
 
@@ -576,6 +637,18 @@ fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: b
                 if !more { break; }
             }
         } else {
+            // the input prompt from the arguments, after their media
+            var start = 0;
+            for b, k in media {
+                guard b == 0 else { continue; }
+                let fname = media[start..k];
+                start = k + 1;
+                if !stage_media_file(fname, media_type_from_ext(fname)) {
+                    show_error(str("file does not exist or cannot be opened: '", fname, "'"));
+                    break;
+                }
+                show_message(str("Loaded media from '", fname, "'"));
+            }
             buffer.append(prompt);
             if buffer.len > 500 { say(str("\n> ", buffer[..500], " ... (truncated)\n")); } else { say(str("\n> ", buffer, "\n")); }
             prompt.clear();
@@ -601,7 +674,17 @@ fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: b
         } else if starts_with(buffer, "/clear") {
             messages.clear();
             add_system_prompt();
+            pending_media.clear();
             show_message("Chat history cleared.");
+            continue;
+        } else if starts_with(buffer, "/image ") && has_vision {
+            let fname = trim(buffer[7..]);
+            if !stage_media_file(fname, "image") {
+                show_error(str("file does not exist or cannot be opened: '", fname, "'"));
+                continue;
+            }
+            show_message(str("Loaded media from '", fname, "'"));
+            write_output_file(str("User: Added media: ", fname, "\n"));
             continue;
         } else if starts_with(buffer, "/read ") {
             let fname = trim(buffer[6..]);
@@ -650,7 +733,7 @@ fn run(prompt0: const u8[:], single_turn: bool, multiline: bool, show_timings: b
         }
 
         if add_user_msg {
-            push_message("user", cur_msg);
+            push_user_message(cur_msg);
             write_output_file(str("User:\n", cur_msg, "\n\n"));
             cur_msg.clear();
         }

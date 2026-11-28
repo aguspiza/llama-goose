@@ -6,9 +6,11 @@ llama-server without its prompt cache in RAM, which the Goose server lacks,
 and, for a model with one slot in the Goose server (a recurrent one), -np 1:
     llama-server -m model.gguf --port 18431 --cache-ram 0
     tools/server.exe -m model.gguf --port 18432
-    scripts/compare-server.py [ref_port] [goose_port]
+    scripts/compare-server.py [ref_port] [goose_port] [image]
 Each request goes to both in turn, so the caches of the two see the same
-prompts in the same order."""
+prompts in the same order. With an image (both servers given --mmproj, and
+LLAMA_MEDIA_MARKER=<__media__> in their environment), requests with it too."""
+import base64
 import json
 import sys
 import urllib.request
@@ -95,9 +97,33 @@ CASES = [
 ]
 
 
+def media_cases(path):
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}}
+
+    def ask(text, *parts):
+        return [{"role": "user", "content": [*parts, {"type": "text", "text": text}]}]
+    return [
+        ("GET", "/v1/models", None),
+        ("POST", "/v1/chat/completions", {"messages": ask("Describe the image briefly.", image), "temperature": 0, "max_tokens": 40}),
+        # the same image again: from the cache
+        ("POST", "/v1/chat/completions", {"messages": ask("What colors are in it?", image), "temperature": 0, "max_tokens": 30}),
+        ("POST", "/v1/chat/completions", {"messages": ask("Describe the image briefly.", image), "temperature": 0, "max_tokens": 20, "stream": True}),
+        ("POST", "/v1/chat/completions", {"messages": ask("Are these two images the same?", image, image), "temperature": 0, "max_tokens": 20}),
+        ("POST", "/v1/chat/completions", {"messages": ask("Say hi."), "seed": 3, "max_tokens": 10}),
+        ("POST", "/completion", {"prompt": {"prompt_string": "<__media__>\nThe picture shows", "multimodal_data": [b64]}, "temperature": 0, "n_predict": 20}),
+        ("POST", "/apply-template", {"messages": ask("What is this?", image)}),
+        ("POST", "/v1/chat/completions", {"messages": ask("What is this?", {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}), "max_tokens": 4}),
+        ("POST", "/v1/chat/completions", {"messages": ask("What is this?", {"type": "image_url", "image_url": {"url": "file://x.jpg"}}), "max_tokens": 4}),
+        ("POST", "/completion", {"prompt": {"prompt_string": "<__media__><__media__>", "multimodal_data": [b64]}, "n_predict": 4}),
+    ]
+
+
 def main():
     failed = 0
-    for method, path, body in CASES:
+    cases = CASES + (media_cases(sys.argv[3]) if len(sys.argv) > 3 else [])
+    for method, path, body in cases:
         stream = bool(body and body.get("stream"))
         rs, rt = call(REF, method, path, body)
         gs, gt = call(GOOSE, method, path, body)
@@ -109,7 +135,7 @@ def main():
             failed += 1
             print(f"  ref   ({rs}): {json.dumps(r)[:1500]}")
             print(f"  goose ({gs}): {json.dumps(g)[:1500]}")
-    print(f"{len(CASES) - failed}/{len(CASES)} the same")
+    print(f"{len(cases) - failed}/{len(cases)} the same")
     sys.exit(1 if failed else 0)
 
 

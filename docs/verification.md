@@ -29,6 +29,7 @@ has the summary.
 | `llama-completion`: text, conversation (`-cnv`, the default with a chat template), interactive, reverse prompts, the console's colors | ported, except prompt cache files | `tools/completion` |
 | `llama-server`: `/completion`, `/v1/completions`, `/v1/chat/completions` (tools, reasoning, `response_format`, streaming), `/apply-template`, `/tokenize`, `/detokenize`, `/props`, `/models`, `/health`; the prompt cache | ported, with llama-server's 4 slots in one KV cache (`-np` for another number; one for a recurrent model): the requests of the slots at work are decoded together, a batch at a time, a client that leaves stops its generation, and `/health` and CORS preflights are answered meanwhile; except the prompt cache in RAM (`--cache-ram`), a cache split per slot, embeddings, rerank, infill, token probabilities, multimodal, the web UI and the other APIs (Anthropic, Responses) | `scripts/compare-server.py`: 29 requests, the same responses, slots included, with Qwen3 and Qwen2.5 |
 | `llama-cli`: the chat over a server it starts (or `--server-base`), with reasoning shown apart, `/regen`, `/clear`, `/read`, `/glob`, Ctrl+C to stop a reply | ported, except images and audio; the server runs as a child process, not a thread (Goose threads cannot hold the vocab's and Jinja's slices) | `tools/cli`, by hand with LFM2.5 and LFM3 |
+| images in `llama-server` (`--mmproj`: `image_url`, `multimodal_data`, `--media-path`) and in `llama-cli` (`--image`, `/image`) | ported for SigLIP with the gemma3 and idefics3 projectors; not http URLs, audio, video | [below](#images---mmproj) |
 | downloads (`common/download`: `-hf`, `-hff`, `-hft`, `--offline`, into the Hugging Face cache) | ported, through libcurl loaded at run time; not `-mu`, Docker, the cache's lock files | [below](#downloads--hf) |
 | `--fit` (`common/fit`): the context left to the model (no `-c`, as llama.cpp's default) cut to leave `-fitt` MiB of the host memory, projected from the weights, the cache and the compute buffer of llama.cpp's worst-case graphs | ported for the host memory | [below](#--fit) |
 | loading the weights: `-lm auto\|none\|mmap\|mlock\|mmap+mlock\|dio`, `-lzm on\|auto\|off`, `--repack`/`-nr`, `-ot`, `-cmoe`, `-ncmoe` and their `LLAMA_ARG_*` variables; the tied output's copy (`TENSOR_DUPLICATED`); the unused tensors left out | ported for the CPU (the overrides have only the `CPU` buffer type to go to) | [below](#loading-the-weights) |
@@ -390,6 +391,33 @@ token falls in depends on when each request arrives, and that changes the
 last bits of its logits; in a test build that decoded one slot per batch,
 four requests at once gave the responses of the same four served one after
 another.
+
+### Images (--mmproj)
+
+With an mmproj the server reads images as llama-server does: a chat
+message's `image_url` parts (a `data:` URL or bare base64; `file://` under
+`--media-path`; not http URLs yet) and `/completion`'s `multimodal_data`
+become markers in the prompt, and `mtmd` turns them into the image's
+tokens, `TOKEN_NULL` in the slot's tokens with the image beside them, its
+id the SHA-256 of its file (llama.cpp's `vendor/hash/sha256`, unchanged).
+A slot's cache is reused up to the first image that is not the same; an
+image the cache lacks is encoded when its request takes the slot and
+decoded on its own when the slot reaches it, before the batch of the step,
+as `process_mtmd_chunk`. Context shift is turned off, as llama-server turns
+it off. `scripts/compare-server.py` with an image (the third argument, and
+`LLAMA_MEDIA_MARKER=<__media__>` for both servers) adds 11 requests: chat
+with one image, the same image again from the cache, streamed, two images
+in one message, text after them, `multimodal_data`, `/apply-template`, and
+the errors of a bad image, a `file://` URL without `--media-path` and more
+markers than images. With SmolVLM 256M and gemma-3 4B, on the jpeg of llama.cpp's tests: 38 of the 40 requests the same; the other two are `/models`, where llama-server, built with a video decoder, lists `video` among the input modalities, and this port reads no video.
+
+Two bugs this found. The vision encoder built its graph in the memory of the
+text model's, which a context keeps from one decode to the next: the first
+graph the text model reused after an image ran on overwritten tensors (the
+encoder now has memory of its own). And a step that decodes an image keeps
+no checkpoint, but cuts its batch where a checkpoint would go as any other
+step does; the port cut it only in the steps with no image, and the
+different ubatches changed the last bits of the logits.
 
 ## The console and tracing
 

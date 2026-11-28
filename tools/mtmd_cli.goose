@@ -153,7 +153,7 @@ fn main() {
                 start = j + 1;
             }
         }
-        mtmd::tokenize(clip, formatted, add_bos);
+        if !mtmd::tokenize(clip, formatted, add_bos) { fail("failed to tokenize the prompt"); }
         let n_batch = 2048;
         for k, ci in mtmd::chunks {
             let last = ci == mtmd::chunks.len - 1;

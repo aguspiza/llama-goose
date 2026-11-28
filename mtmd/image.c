@@ -5,6 +5,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
+#include "sha256/sha256.h"
 
 typedef struct { const unsigned char * data; int64_t len; } lg_text;
 typedef struct { unsigned char * data; int64_t len; } lg_buf;
@@ -29,4 +30,9 @@ int64_t mtmd_image_decode(lg_text buf, lg_buf out) {
     memcpy(out.data, data, (size_t) size);
     stbi_image_free(data);
     return 1;
+}
+
+// The SHA-256 of buf, 32 bytes into out (hash_sha256: a media file's id).
+void mtmd_sha256(lg_text buf, lg_buf out) {
+    if (out.len == 32) { sha256_hash(out.data, buf.data, (size_t) buf.len); }
 }

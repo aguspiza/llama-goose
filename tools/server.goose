@@ -15,16 +15,20 @@
 //          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
 //          [-s seed] [--temp t] [--top-k k] [--top-p p] [--min-p p] [...the sampling flags of completion]
 // -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+// Images: --mmproj file (-hf finds one beside the model, unless --no-mmproj), [--media-path dir] for file:// URLs.
 // The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // Routes: /health, /props, /models, /completion(s), /v1/completions,
 // /v1/chat/completions, /apply-template, /tokenize, /detokenize.
+// With an mmproj, the chat's image_url parts and /completion's multimodal_data
+// are images in the prompt (data: and base64; not http URLs yet).
 // port-of: tools/server/server.cpp tools/server/server-context.cpp tools/server/server-task.cpp
 // port-of: tools/server/server-common.cpp tools/server/server-schema.cpp tools/server/server-chat.cpp
 import std;
 import os;
 import exception;
 import slice_pool;
+import base64;
 import ggml from "../ggml";
 import ggml_cpu from "../ggml/cpu";
 import ggml_shim from "../ggml/shim";
@@ -47,6 +51,7 @@ import common.fit;
 import common.chat_render;
 import common.chat_peg;
 import common.chat_apply;
+import mtmd from "../mtmd";
 import net from "./net";
 import stash from "./stash";
 import http from "github.com/kaitk/goose-http@v0.5.16";
@@ -104,6 +109,132 @@ var eos_text: u8[>..] = [];
 var ftype_name: u8[>..] = [];
 var n_params = 0;
 var model_size = 0;
+
+// --mmproj: images in the prompts, through mtmd (llama-server's mctx)
+var mmproj_path: u8[>..] = [];
+var mm = false;
+var clip = mtmd::Clip { .. };
+var media_marker: u8[>..] = [];         // what stands for an image in a prompt's text (get_media_marker)
+var media_path: u8[>..] = [];           // --media-path, ending with a separator: where file:// URLs are
+
+// An image in a prompt (server_tokens' media chunk): n tokens from position
+// at, TOKEN_NULL in the prompt's tokens; id, the SHA-256 of its file. Those
+// of the request (t_media) are its chunk of mtmd's chunks; those in the
+// slots' tokens (medias) have the embeddings not decoded yet in media_embd
+// (embd_len 0 once they are).
+struct Media { slot: i64, at: i64, n: i64, id: u8[..32], chunk: i64, embd_at: i64, embd_len: i64 }
+var t_media: Media[>..] = [];
+var medias: Media[>..] = [];
+var media_embd = slice_pool<f32> {};
+
+fn embd_of(md: Media) -> f32[:] { media_embd.items[md.embd_at..md.embd_at + md.embd_len] }
+
+// The one of list (of slot s's) that starts at pos, or -1.
+fn media_at(list: const Media[:], s: i64, pos: i64) -> i64 {
+    for md, i in list { if md.slot == s && md.at == pos { return i; } }
+    return -1;
+}
+
+// The prompt's tokens from mtmd's chunks: an image's n tokens TOKEN_NULL, and the image in t_media.
+fn tokens_of_chunks(out: i32[>..]&) {
+    for k, ci in mtmd::chunks {
+        if k.kind == mtmd::ChunkKind.Text { out.append(mtmd::chunk_text(k)); continue; }
+        var md = Media { slot: -1, at: out.len, n: k.n, id: "", chunk: ci, embd_at: 0, embd_len: 0 };
+        md.id.append(mtmd::bitmap_id(k.media));
+        t_media.push(md);
+        for _ in k.n { out.push(vocab::TOKEN_NULL); }
+    }
+}
+
+// keep_first's rule: the prompt is not cut inside an image, but before it.
+fn media_floor(n: i64) -> i64 {
+    for md in t_media { if md.at < n && n < md.at + md.n { return md.at; } }
+    return n;
+}
+
+// The images of slot s from position n on forgotten, with their embeddings.
+fn drop_media(s: i64, n: i64) {
+    var j = 0;
+    for i in medias.len {
+        let md = medias[i];
+        if md.slot == s && md.at >= n {
+            if md.embd_len > 0 { media_embd.free_slice(embd_of(md)); }
+            continue;
+        }
+        medias[j] = md;
+        j++;
+    }
+    while medias.len > j { medias.pop(); }
+}
+
+// get_common_prefix: how many of the prompt's first tokens slot s has; an
+// image is the same when its id and its number of tokens are.
+fn common_prefix(s: i64, prompt: const i32[:]) -> i64 {
+    let have = tokens_of(s);
+    var i = 0;
+    while i < have.len && i < prompt.len {
+        if have[i] == vocab::TOKEN_NULL && prompt[i] == vocab::TOKEN_NULL {
+            let a = media_at(medias, s, i);
+            let b = media_at(t_media, -1, i);
+            guard a >= 0 && b >= 0 && medias[a].n == t_media[b].n && medias[a].id == t_media[b].id else { return i; }
+            i += medias[a].n;
+            continue;
+        }
+        guard have[i] == prompt[i] else { return i; }
+        i++;
+    }
+    return i;
+}
+
+// fs_validate_filename, allow_subdirs: a relative path that does not climb out.
+fn media_file_ok(p: const u8[:]) -> bool {
+    guard p.len > 0 && p[0] != '/' && p[0] != '\\' && find(p, ":") < 0 else { return false; }
+    var start = 0;
+    for i in p.len + 1 {
+        guard i == p.len || p[i] == '/' || p[i] == '\\' else { continue; }
+        let part = p[start..i];
+        if part.len == 0 || part == "." || part == ".." { return false; }
+        start = i + 1;
+    }
+    return true;
+}
+
+// handle_media: an image's file, from a URL of data: (base64), file:// (under
+// --media-path) or bare base64, decoded into mtmd's next bitmap.
+fn load_media(url: const u8[:]) {
+    var data: u8[>..] = [];
+    if starts_with(url, "http") {
+        fail(ErrorKind.InvalidRequest, "downloading media from a URL is not supported yet");
+    } else if starts_with(url, "file://") {
+        if media_path.len == 0 { fail(ErrorKind.InvalidRequest, "file:// URLs are not allowed unless --media-path is specified"); }
+        let file = url[7..];
+        if !media_file_ok(file) { fail(ErrorKind.InvalidRequest, str("file path is not allowed: ", file)); }
+        if !read_file(str(media_path, file), data) { fail(ErrorKind.InvalidRequest, str("file does not exist or cannot be opened: ", file)); }
+    } else if starts_with(url, "data:") {
+        let comma = find(url, ",");
+        if comma < 0 || find(url[comma + 1..], ",") >= 0 { fail(ErrorKind.InvalidRequest, "Invalid uri-encoded base64 value"); }
+        let head = url[..comma];
+        if !starts_with(head, "data:image/") && !starts_with(head, "data:video/") && !starts_with(head, "data:audio/") {
+            fail(ErrorKind.InvalidRequest, str("Invalid uri format: ", head));
+        }
+        if !ends_with(head, "base64") { fail(ErrorKind.InvalidRequest, "uri must be base64 encoded"); }
+        base64::decode(data, url[comma + 1..]);
+    } else {
+        if !base64::decode(data, url) || data.len == 0 { fail(ErrorKind.InvalidRequest, "Invalid base64 value"); }
+    }
+    add_file(data);
+}
+
+// mtmd_helper_bitmap_init_from_buf: the file decoded, or the request fails.
+fn add_file(data: const u8[:]) {
+    if !mtmd::add_bitmap(data) { fail(ErrorKind.InvalidRequest, "Failed to load image or audio file"); }
+}
+
+// process_mtmd_prompt: the prompt's text, with its markers, into tokens and images.
+fn mtmd_prompt(text: const u8[:], out: i32[>..]&) {
+    if !mtmd::tokenize(clip, text, true, media_marker) { fail(ErrorKind.InvalidRequest, "Failed to tokenize prompt"); }
+    tokens_of_chunks(out);
+}
 
 // A slot: one of the requests served together, and the tokens it leaves in
 // the KV cache, as the sequence of the slot's number, for the next request
@@ -316,6 +447,8 @@ fn reset_task(res_type: ResponseKind) {
     t_reasoning_format = reasoning_format;
     t_gen_prompt.clear();
     t_cmpl_id.clear();
+    t_media.clear();
+    mtmd::clear_bitmaps();
 }
 
 // The value of the first of the names the request has (not null), or -1.
@@ -880,8 +1013,16 @@ fn chat_prompt(body: i64, prompt: u8[>..]&) {
                         parts.push(PartRaw { kind: keep(ty), text: keep(jdoc::get_str(part, "text", "")), name: Span { at: 0, len: 0 } });
                     } else if ty == "tool_reference" {
                         parts.push(PartRaw { kind: keep(ty), text: Span { at: 0, len: 0 }, name: keep(jdoc::get_str(part, "name", "")) });
-                    } else if ty == "image_url" || ty == "input_audio" || ty == "input_video" || ty == "video_url" {
-                        fail(ErrorKind.InvalidRequest, "image input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
+                    } else if ty == "image_url" {
+                        // oaicompat_content_load_media: the image loaded, a marker in its place
+                        if !mm { fail(ErrorKind.InvalidRequest, "image input is not supported - hint: if this is unexpected, you may need to provide the mmproj"); }
+                        let iu = jdoc::get(part, "image_url");
+                        load_media(if jdoc::is_obj(iu) { jdoc::get_str(iu, "url", "") } else { "" });
+                        parts.push(PartRaw { kind: keep("media_marker"), text: keep(media_marker), name: Span { at: 0, len: 0 } });
+                    } else if ty == "input_audio" {
+                        fail(ErrorKind.InvalidRequest, "audio input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
+                    } else if ty == "input_video" || ty == "video_url" {
+                        fail(ErrorKind.InvalidRequest, "video input is not supported - hint: if this is unexpected, you may need to provide the mmproj");
                     } else {
                         fail(ErrorKind.InvalidRequest, "unsupported content[].type");
                     }
@@ -1713,6 +1854,7 @@ fn finish(s: i64) {
 fn forget(s: i64) {
     context::keep_first(c, m, s, 0);
     drop_checkpoints(s);
+    drop_media(s, 0);
     slots[s].n = 0;
     slots[s].n_kv = 0;
 }
@@ -1861,9 +2003,7 @@ fn pick_slot(prompt: const i32[:]) -> i64 {
     let sim_min: f32 = 0.1;
     for sl, s in slots {
         guard !sl.busy && sl.n > 0 else { continue; }
-        let have = tokens_of(s);
-        var lcp = 0;
-        while lcp < have.len && lcp < prompt.len && have[lcp] == prompt[lcp] { lcp++; }
+        let lcp = common_prefix(s, prompt);
         let sim = lcp as f32 / prompt.len;
         if sim > sim_best && sim > sim_min { sim_best = sim; ret = s; }
     }
@@ -1936,10 +2076,7 @@ fn start(prompt: const i32[:]) {
     }
     // the cache: the common prefix kept, at least one token to evaluate
     var n_past = 0;
-    if t_cache_prompt {
-        let have = tokens_of(s);
-        while n_past < have.len && n_past < prompt.len && have[n_past] == prompt[n_past] { n_past++; }
-    }
+    if t_cache_prompt { n_past = common_prefix(s, prompt); }
     // server_prompt::get_reuse: the cache is of use when it starts before the window of the
     // first token to evaluate (a SWA model), or before that token (others); else the newest
     // checkpoint that does, from which the prompt is evaluated
@@ -1975,7 +2112,14 @@ fn start(prompt: const i32[:]) {
         i--;
     }
     if n_past == prompt.len && n_past > 0 { n_past--; }
-    n_past = context::keep_first(c, m, s, n_past);
+    // not inside an image: from its start
+    var n_keep = media_floor(n_past);
+    while true {
+        n_past = context::keep_first(c, m, s, n_keep);
+        n_keep = media_floor(n_past);
+        if n_keep == n_past { break; }
+    }
+    drop_media(s, n_past);
     for t, i in prompt { slot_tokens[s * c.n_ctx_seq + i] = t; }
     slots[s].n = prompt.len;
     slots[s].n_kv = n_past;
@@ -1988,8 +2132,22 @@ fn start(prompt: const i32[:]) {
     loaded = s;
     stats = Stats { cache_n: n_past, prompt_n: prompt.len - n_past, prompt_ms: 0.0, predicted_n: 0, predicted_ms: 0.0 };
     prompt_text.clear();
-    prompt_text.append(detokenize(prompt, true));
+    var text_tokens: i32[>..] = [];
+    for t in prompt { if t != vocab::TOKEN_NULL { text_tokens.push(t); } }
+    prompt_text.append(detokenize(text_tokens, true));
     t_prompt_start = now_ms();
+    // the images the cache lacks, encoded (process_mtmd_chunk encodes them
+    // as the slot reaches them), to be decoded in the steps to come
+    for md in t_media {
+        guard md.at >= n_past else { continue; }
+        let k = mtmd::chunks[md.chunk];
+        var img = mtmd::ImageF32 { nx: k.nx, ny: k.ny, buf: [] };
+        img.buf.append(mtmd::chunk_image(k));
+        var embd: f32[>..] = [];
+        mtmd::encode_image(clip, img, embd);
+        let run = media_embd.alloc_copy(embd);
+        medias.push(Media { slot: s, at: md.at, n: md.n, id: md.id, chunk: -1, embd_at: media_embd.items.range_index(run), embd_len: run.len });
+    }
 }
 
 // update_slots: one batch for the slots at work, decoded: the token each
@@ -2000,6 +2158,7 @@ fn step() {
     for s in slots.len {
         if slots[s].busy && !http::mail_live(slots[s].reply) {
             slots[s].n = slots[s].n_kv;
+            drop_media(s, slots[s].n);
             release(s);
         }
     }
@@ -2041,9 +2200,32 @@ fn step() {
         if slots[s].busy && !slots[s].generating {
             let bit: u64 = 1 << s;
             var do_checkpoint = checkpointing();
+            // the images where the slot is, each decoded on its own first (process_mtmd_chunk)
+            var has_mtmd = false;
+            while slots[s].n_kv < slots[s].n && slot_tokens[s * c.n_ctx_seq + slots[s].n_kv] == vocab::TOKEN_NULL {
+                let j = media_at(medias, s, slots[s].n_kv);
+                let md = medias[j];
+                var mpos: i64[>..] = [];
+                var mseqs: u64[>..] = [];
+                for k in md.n { mpos.push(md.at + k); mseqs.push(bit); }
+                if !context::fits(mseqs) {
+                    load(s);
+                    send_error(ErrorKind.Server, "failed to process mtmd chunk");
+                    finish(s);
+                    break;
+                }
+                context::decode_embd(c, m, embd_of(md), mpos, s, c.n_ubatch, !mtmd::use_non_causal(clip));
+                media_embd.free_slice(embd_of(md));
+                medias[j].embd_len = 0;
+                slots[s].n_kv += md.n;
+                has_mtmd = true;
+            }
+            guard slots[s].busy else { continue; }
             let n_start = slots[s].n_kv;
             let n_prompt_s = slots[s].n;
             while slots[s].n_kv < n_prompt_s && tokens.len < n_batch {
+                // the end of a text chunk: the image after it, in the next step
+                guard slot_tokens[s * c.n_ctx_seq + slots[s].n_kv] != vocab::TOKEN_NULL else { break; }
                 tokens.push(slot_tokens[s * c.n_ctx_seq + slots[s].n_kv]);
                 pos.push(slots[s].n_kv);
                 seqs.push(bit);
@@ -2060,12 +2242,14 @@ fn step() {
             }
             let n_cur = slots[s].n_kv - n_start;
             let near_end = n_prompt_s < slots[s].n_kv + c.n_ubatch;
-            if slots[s].n_kv == n_prompt_s {
+            if slots[s].n_kv == n_prompt_s && slots[s].n_kv > n_start {
                 slots[s].out = tokens.len - 1;
                 want.push(s);
             } else if !is_user_start(s, n_start) && !near_end {
                 do_checkpoint = false;
             }
+            // a step that decoded an image cuts its batch as the others, but keeps no checkpoint
+            do_checkpoint = do_checkpoint && !has_mtmd;
             if do_checkpoint {
                 let pos_min = context::seq_pos_min(s);
                 let li = last_checkpoint(s);
@@ -2344,7 +2528,8 @@ fn route_props() {
     ks(o, "model_alias", model_name);
     ks(o, "model_ftype", ftype_name);
     ks(o, "model_path", model_path);
-    kraw(o, "modalities", "{\"vision\":false,\"video\":false,\"audio\":false}");
+    kraw(o, "modalities", if mm { "{\"vision\":true,\"video\":false,\"audio\":false}" } else { "{\"vision\":false,\"video\":false,\"audio\":false}" });
+    ks(o, "media_marker", media_marker);
     kb(o, "endpoint_slots", false);
     kb(o, "endpoint_props", false);
     kb(o, "endpoint_metrics", false);
@@ -2400,7 +2585,7 @@ fn route_models() {
     ks(o, "type", "model");
     ks(o, "description", "");
     kraw(o, "tags", "[\"\"]");
-    kraw(o, "capabilities", "[\"completion\"]");
+    kraw(o, "capabilities", if mm { "[\"completion\",\"multimodal\"]" } else { "[\"completion\"]" });
     ks(o, "parameters", "");
     kraw(o, "details", "{\"parent_model\":\"\",\"format\":\"gguf\",\"family\":\"\",\"families\":[\"\"],\"parameter_size\":\"\",\"quantization_level\":\"\"}");
     o.append("}]");
@@ -2414,7 +2599,8 @@ fn route_models() {
     o.push(']');
     kraw(o, "tags", "[]");
     ks(o, "object", "model");
-    kraw(o, "architecture", "{\"input_modalities\":[\"text\"],\"output_modalities\":[\"text\"]}");
+    kraw(o, "architecture", if mm { "{\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"]}" }
+                            else { "{\"input_modalities\":[\"text\"],\"output_modalities\":[\"text\"]}" });
     ki(o, "created", unix_time());
     ks(o, "owned_by", "llamacpp");
     k(o, "meta");
@@ -2523,15 +2709,32 @@ fn route_completion(res_type: ResponseKind) {
     if jdoc::is_arr(pv) && jdoc::len(pv) > 0 && !has_number(pv) {
         guard jdoc::len(pv) == 1 else { fail(ErrorKind.NotSupported, "several prompts in one request are not supported yet"); }
         let p = jdoc::at(pv, 0);
-        if jdoc::is_obj(p) { tokenize_mixed(jdoc::get(p, "prompt_string"), true, true, tokens); } else { tokenize_mixed(p, true, true, tokens); }
+        if jdoc::is_obj(p) { subprompt_object(p, tokens); } else { tokenize_mixed(p, true, true, tokens); }
     } else if jdoc::is_obj(pv) {
-        tokenize_mixed(jdoc::get(pv, "prompt_string"), true, true, tokens);
+        subprompt_object(pv, tokens);
     } else {
         tokenize_mixed(pv, true, true, tokens);
     }
-    for t in tokens { if t < 0 || t >= vocab::n_tokens() { fail(ErrorKind.InvalidRequest, "Prompt contains invalid tokens"); } }
+    for t in tokens {
+        guard t_media.len == 0 || t != vocab::TOKEN_NULL else { continue; }
+        if t < 0 || t >= vocab::n_tokens() { fail(ErrorKind.InvalidRequest, "Prompt contains invalid tokens"); }
+    }
     eval_params(body);
     start(tokens);
+}
+
+// A prompt object: its prompt_string, and the images of its multimodal_data (base64).
+fn subprompt_object(p: i64, out: i32[>..]&) {
+    let ps = jdoc::get(p, "prompt_string");
+    guard jdoc::contains(p, "multimodal_data") else { tokenize_mixed(ps, true, true, out); return; }
+    if !mm { fail(ErrorKind.InvalidRequest, "Multimodal data provided, but model does not support multimodal requests."); }
+    let md = jdoc::get(p, "multimodal_data");
+    for i in jdoc::len(md) {
+        var data: u8[>..] = [];
+        base64::decode(data, jdoc::str_of(jdoc::at(md, i)));
+        add_file(data);
+    }
+    mtmd_prompt(need_str(ps, "\"prompt_string\" must be a string: "), out);
 }
 
 fn has_number(v: i64) -> bool {
@@ -2566,7 +2769,7 @@ fn route_chat() {
     if jdoc::contains(body, "reasoning_format") { t_reasoning_format = reasoning_format_from_name(jdoc::get_str(body, "reasoning_format", "")); }
     apply_chat_session();
     var tokens: i32[>..] = [];
-    vocab::tokenize(prompt, true, true, tokens);
+    if mm { mtmd_prompt(prompt, tokens); } else { vocab::tokenize(prompt, true, true, tokens); }
     start(tokens);
 }
 
@@ -2881,6 +3084,7 @@ fn setup() {
     var dry_breakers: u8[>..] = [];
     var n_slots = 0;
     var kv_unified = false;
+    var mmproj_auto = true;
     var i = 1;
     fn value() -> const u8[:] {
         if i + 1 >= args.len { die(str("missing value for ", args[i])); }
@@ -2903,6 +3107,16 @@ fn setup() {
         if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
         else if download::takes_value(a) { download::set(a, value()); }
         else if a == "--offline" { download::offline = true; }
+        else if a == "-mm" || a == "--mmproj" { mmproj_path.clear(); mmproj_path.append(value()); }
+        else if a == "--mmproj-auto" { mmproj_auto = true; }
+        else if a == "--no-mmproj" || a == "--no-mmproj-auto" { mmproj_auto = false; }
+        else if a == "--mmproj-offload" || a == "--no-mmproj-offload" {}
+        else if a == "--media-path" {
+            media_path.clear();
+            media_path.append(value());
+            if !is_dir(media_path) { die("media path does not exist or is not a directory"); }
+            if !ends_with(media_path, "/") && !ends_with(media_path, "\\") { media_path.push('/'); }
+        }
         else if load::takes_value(a) { load::set(a, value()); }
         else if load::flag(a) {}
         else if a == "--host" { host.clear(); host.append(value()); }
@@ -2976,7 +3190,7 @@ fn setup() {
         else { die(str("unknown argument: ", a)); }
         i += 1;
     }
-    download::resolve(model_path);
+    download::resolve(model_path, mmproj_path, mmproj_auto);
     if model_path.len == 0 { die("--model is required"); }
     if breakers_given {
         if dry_breakers.len > sp.dry_breakers.cap { die("the DRY sequence breakers are too long"); }
@@ -2984,6 +3198,11 @@ fn setup() {
     }
     model_name.append(if alias.len > 0 { alias[..] } else { model_path[..] });
     rng_state ^= time_ns() as! u64;
+    // get_media_marker: random, so that no text is taken for one, unless LLAMA_MEDIA_MARKER pins it
+    if !env("LLAMA_MEDIA_MARKER", media_marker) || media_marker.len == 0 {
+        media_marker.clear();
+        media_marker.append(str("<__media_", random_string(), "__>"));
+    }
 
     load::from_env();
     model::load(m, model_path);
@@ -3004,6 +3223,20 @@ fn setup() {
     c.n_outputs_max = min(n_slots, n_batch);    // a token of each slot (server_output_limits)
     // no -c: the context the model was trained with, for each stream, fitted to the memory (common_fit_params)
     context::init(c, m, fit::n_ctx(c, m, n_ctx));
+    if mmproj_path.len > 0 {
+        mtmd::load_clip(clip, mmproj_path, c.n_threads);
+        if mtmd::n_mmproj_embd(clip) != m.hp.n_embd {
+            write_stderr(str("mismatch between text model (n_embd = ", m.hp.n_embd, ") and mmproj (n_embd = ", mtmd::n_mmproj_embd(clip), ")\n"));
+            write_stderr("hint: you may be using wrong mmproj\n");
+            die(str("failed to load multimodal model, '", mmproj_path, "'"));
+        }
+        log(str("loaded multimodal model, '", mmproj_path, "'"));
+        mm = true;
+        if ctx_shift {
+            ctx_shift = false;
+            write_stderr("warning: ctx_shift is not supported by multimodal, it will be disabled\n");
+        }
+    }
     if ctx_shift && !context::can_shift(c, m) {
         write_stderr("warning: ctx_shift is not supported by this context, it will be disabled\n");
         ctx_shift = false;
