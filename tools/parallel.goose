@@ -2,10 +2,8 @@
 // clients whose requests (a system prompt, then a question) are decoded
 // together in one cache unified for all of them (-kvu), or split into a
 // stream for each, new requests joining the batch as others end.
-//   parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-kvu] [-ns n_sequences] [-n n_predict]
-//            [-b n_batch] [-pps] [-nocb] [--junk n] [--temp t] [-s seed]
-// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
-// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
+//   parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-kvu] [-ns n_sequences] [-n n_predict] ...
+// The arguments are llama-parallel's (common/arg; -h lists them).
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // port-of: examples/parallel/parallel.cpp
 import std;
@@ -21,8 +19,8 @@ import llama.sampler;
 import common from "../common";
 import common.console;
 import common.download;
-import common.load;
 import common.fit;
+import common.arg;
 
 let K_SYSTEM = """
 Transcript of a never ending dialog, where the User interacts with an Assistant.
@@ -113,11 +111,6 @@ struct Client {
 var clients: Client[>..] = [];
 var chains: sampler::Chain[>..] = [];
 
-fn usage() {
-    print("example usage:\n\n    parallel -m model.gguf [-c n_ctx] [-np n_parallel] [-ns n_sequences] [-n n_predict] [-b n_batch] [-pps] [-nocb] [--junk n] [--temp t] [-s seed]\n");
-    exit(1);
-}
-
 fn log(text: const u8[:]) { write_stderr(text); }
 
 // n right-aligned in w columns, as %<w>d.
@@ -152,56 +145,21 @@ fn trimmed(s: const u8[:]) -> const u8[:] {
 
 fn main() {
     let args = console::utf8_args();
-    var model_path: u8[>..] = [];
-    var n_ctx = 0;     // the model's, fitted to the memory (common_fit_params)
-    var n_clients = 1;
-    var n_seq = 1;
-    var n_predict = 128;
-    var n_batch = 2048;
-    var cont_batching = true;
-    var is_sp_shared = false;
-    var n_junk = 1;
-    var sp = sampler::Params { .. };
-    var kv_unified = false;
-    var i = 1;
-    while i < args.len {
-        let a = args[i];
-        if a == "-kvu" || a == "--kv-unified" { kv_unified = true; i++; continue; }
-        if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; i++; continue; }
-        if a == "--offline" { download::offline = true; i++; continue; }
-        if load::flag(a) { i++; continue; }
-        if a == "-pps" { is_sp_shared = true; i++; continue; }
-        if a == "-nocb" || a == "--no-cont-batching" { cont_batching = false; i++; continue; }
-        if a == "-cb" || a == "--cont-batching" { cont_batching = true; i++; continue; }
-        guard i + 1 < args.len else { usage(); }
-        let v = args[i + 1];
-        if a == "-m" { model_path.clear(); model_path.append(v); }
-        else if download::takes_value(a) { download::set(a, v); }
-        else if load::takes_value(a) { load::set(a, v); }
-        else if fit::takes_value(a) { fit::set(a, v); }
-        else if a == "--temp" || a == "--top-p" || a == "--min-p" {
-            let x, ok = parse_flt(v);
-            if !ok { usage(); }
-            if a == "--temp" { sp.temp = max(x as f32, 0.0); sp.user_set |= sampler::USER_TEMP; }
-            else if a == "--top-p" { sp.top_p = x as f32; sp.user_set |= sampler::USER_TOP_P; }
-            else { sp.min_p = x as f32; sp.user_set |= sampler::USER_MIN_P; }
-        } else {
-            let x, ok = parse_int(v);
-            if !ok { usage(); }
-            if a == "-c" { n_ctx = x; fit::ctx_flag(x); }
-            else if a == "-np" { n_clients = x; }
-            else if a == "-ns" { n_seq = x; }
-            else if a == "-n" { n_predict = x; }
-            else if a == "-b" { n_batch = x; }
-            else if a == "--junk" { n_junk = x; }
-            else if a == "--top-k" { sp.top_k = x; sp.user_set |= sampler::USER_TOP_K; }
-            else if a == "-s" || a == "--seed" { sp.seed = x as! u32; }
-            else { usage(); }
-        }
-        i += 2;
-    }
-    download::resolve(model_path);
-    if model_path.len == 0 { usage(); }
+    arg::params.n_predict = 128;
+    arg::params.n_junk = 1;
+    if !arg::parse(args, arg::Example.Parallel) { exit(1); }
+    let p = arg::params;
+    let model_path = p.model_path;
+    let n_ctx = p.n_ctx;     // 0: the model's, fitted to the memory (common_fit_params)
+    let n_clients = p.n_parallel;
+    let n_seq = p.n_sequences;
+    let n_predict = p.n_predict;
+    let n_batch = p.n_batch;
+    let cont_batching = p.cont_batching;
+    let is_sp_shared = p.is_pp_shared;
+    var n_junk = p.n_junk;
+    var sp = p.sampling;
+    let kv_unified = p.kv_unified;
     guard n_clients >= 1 && n_clients < 64 else { abort("n_parallel: 1 to 63"); }
     n_junk = max(1, n_junk);
     // the same seed for every client, or, negative, a smaller one for each next client
@@ -211,9 +169,8 @@ fn main() {
     sampler::mt_seed(rng, 1234);
 
     var m = model::Model { .. };
-    load::from_env();
     model::load(m, model_path);
-    let n_ubatch = min(512, n_batch);
+    let n_ubatch = min(p.n_ubatch, n_batch);
     var c = context::Context { .. };
     c.unified = kv_unified;
     c.n_seq_max = n_clients + 1;     // and the system prompt's

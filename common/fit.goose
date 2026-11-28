@@ -22,32 +22,9 @@ var min_ctx = 4096;             // -fitc: the smallest context per stream; -c 0 
 
 let FULL = 0x7FFFFFFF;          // min_ctx after -c 0: no cut
 
-// Whether a is one of the flags above (all take a value).
-fn takes_value(a: const u8[:]) -> bool {
-    a == "-fit" || a == "--fit" || a == "-fitt" || a == "--fit-target" || a == "-fitc" || a == "--fit-ctx"
-}
-
-fn set(a: const u8[:], v: const u8[:]) {
-    if a == "-fit" || a == "--fit" {
-        guard v == "on" || v == "off" else { fail(str("error: unknown value for --fit: '", v, "'")); return; }
-        enabled = v == "on";
-        return;
-    }
-    // -fitt takes a value per device: the first is the host's
-    let first, rest, more = split_once(v, ',');
-    let n, ok = parse_int(first);
-    guard ok && n >= 0 else { fail(str("error: invalid value for ", a, ": '", v, "'")); return; }
-    if a == "-fitt" || a == "--fit-target" { target_mib = n; } else { min_ctx = n; }
-}
-
 // -c n: n == 0 asks for the trained context, which --fit then does not cut.
 fn ctx_flag(n: i64) {
     if n == 0 { min_ctx = FULL; }
-}
-
-fn fail(msg: const u8[:]) {
-    write_stderr(str(msg, "\n"));
-    exit(1);
 }
 
 // The context to make for c (its sequences and whether the cache is unified

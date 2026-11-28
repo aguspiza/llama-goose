@@ -6,6 +6,7 @@
 //   cli -m model.gguf [-sys prompt] [-p prompt] [--image file ...] [-st] [-mli] [-co on|off|auto]
 //       [--show-timings | --no-show-timings] [-o file] [the server's arguments, such as --mmproj]
 //   cli --server-base http://host:port [...]
+// The arguments are llama-cli's (common/arg; -h lists them).
 // Commands: /exit, /regen, /clear, /read <file>, /glob <pattern>, and /image <file>
 // when the server reads images.
 // port-of: tools/cli/cli.cpp tools/cli/cli-context.cpp tools/cli/cli-ui.h tools/cli/cli-client.cpp tools/cli/cli-server.h
@@ -13,8 +14,13 @@
 import std;
 import os;
 import base64;
+import ggml from "../ggml";
+import ggml_cpu from "../ggml/cpu";
+import ggml_shim from "../ggml/shim";
+import llama from "../llama";
 import common from "../common";
 import common.console;
+import common.arg;
 import common.jdoc;
 import net from "./net";
 import proc from "./proc";
@@ -492,21 +498,19 @@ fn walk(base: const u8[:], out: u8[>..]&) {
 
 fn main() {
     let args = console::utf8_args();
+    if !arg::parse(args, arg::Example.Cli) { exit(1); }
+    let p = arg::params;
     var forward: u8[>..] = [];      // the server's arguments, quoted for its command line
-    var prompt: u8[>..] = [];
-    var server_base: u8[>..] = [];
-    var single_turn = false;
-    var multiline = false;
-    var show_timings = true;
-    var use_color = console::tty_can_use_colors();
-    var has_model = false;
-    var media: u8[>..] = [];        // --image, --audio, --video: each ended by a NUL
-    var i = 1;
-    fn value() -> const u8[:] {
-        if i + 1 >= args.len { show_error(str("missing value for ", args[i])); exit(1); }
-        i += 1;
-        return args[i];
-    }
+    var prompt = str(p.prompt);
+    let server_base = p.server_base;
+    let single_turn = p.single_turn;
+    let multiline = p.multiline_input;
+    let show_timings = p.show_timings;
+    let use_color = p.use_color;
+    let has_model = p.model_path.len > 0;
+    var media = str(p.image);       // --image, --audio, --video: each ended by a NUL
+    system_prompt.append(p.system_prompt);
+    output_file.append(p.out_file);
     fn quote(a: const u8[:]) {
         forward.push(' ');
         if a.len > 0 && find(a, " ") < 0 && find(a, "\"") < 0 && find(a, "\t") < 0 { forward.append(a); return; }
@@ -516,25 +520,16 @@ fn main() {
         }
         forward.push('"');
     }
+    // the server's arguments: all but the cli's own
+    var i = 1;
     while i < args.len {
         let a = args[i];
-        if a == "-sys" || a == "--system-prompt" { system_prompt.clear(); system_prompt.append(value()); }
-        else if a == "-p" || a == "--prompt" { prompt.clear(); prompt.append(value()); }
-        else if a == "-st" || a == "--single-turn" { single_turn = true; }
-        else if a == "-mli" || a == "--multiline-input" { multiline = true; }
-        else if a == "--show-timings" { show_timings = true; }
-        else if a == "--no-show-timings" { show_timings = false; }
-        else if a == "-o" || a == "--output-file" { output_file.clear(); output_file.append(value()); }
-        else if a == "--server-base" { server_base.clear(); server_base.append(value()); }
-        else if a == "--image" || a == "--audio" || a == "--video" { media.append(value()); media.push(0); }
-        else if a == "-co" || a == "--color" {
-            let v = value();
-            use_color = if v == "on" || v == "true" || v == "1" { true } else if v == "off" || v == "false" || v == "0" { false } else { console::tty_can_use_colors() };
-        }
-        else {
-            if a == "-m" || a == "--model" || a == "-hf" || a == "-hfr" || a == "--hf-repo" { has_model = true; }
-            quote(a);
-        }
+        if a == "-sys" || a == "--system-prompt" || a == "-p" || a == "--prompt" || a == "-o" || a == "--output"
+            || a == "--output-file" || a == "--server-base" || a == "--image" || a == "--audio" || a == "--video"
+            || a == "-co" || a == "--color" { i += 2; continue; }
+        if a == "-st" || a == "--single-turn" || a == "-mli" || a == "--multiline-input"
+            || a == "--show-timings" || a == "--no-show-timings" { i += 1; continue; }
+        quote(a);
         i += 1;
     }
     console::init(use_color);

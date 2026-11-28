@@ -3,9 +3,7 @@
 // all of them (-kvu), or split into a stream for each. As llama.cpp's, the
 // prompt, of all the sequences at once, needs -kvu.
 //   batched -m model.gguf [-p prompt] [-n n_predict] [-np n_parallel] [-kvu]
-//           [--temp t] [--top-k k] [--top-p p] [-s seed]
-// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
-// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
+// The arguments are llama-batched's (common/arg; -h lists them).
 // port-of: examples/batched/batched.cpp
 import std;
 import os;
@@ -20,12 +18,7 @@ import llama.sampler;
 import common from "../common";
 import common.console;
 import common.download;
-import common.load;
-
-fn usage() {
-    print("example usage:\n\n    batched -m model.gguf [-p prompt] [-n n_predict] [-np n_parallel] [--temp t] [--top-k k] [--top-p p] [-s seed]\n");
-    exit(1);
-}
+import common.arg;
 
 fn piece(out: u8[>..]&, t: i32) { vocab::token_to_piece(t, out, 0, true); }
 
@@ -34,46 +27,23 @@ var chains: sampler::Chain[>..] = [];
 
 fn main() {
     let args = console::utf8_args();     // the prompt in UTF-8, on Windows too
-    var model_path: u8[>..] = [];
-    var prompt: u8[>..] = [];
-    prompt.append("Hello my name is");
-    var n_predict = 32;
-    var n_parallel = 1;
-    var top_k = 40;
-    var top_p: f32 = 0.95;
-    var temp: f32 = 0.80;
-    var seed: u32 = sampler::DEFAULT_SEED;
-    var kv_unified = false;
-    var i = 1;
-    while i < args.len {
-        let a = args[i];
-        if a == "-kvu" || a == "--kv-unified" { kv_unified = true; i++; continue; }
-        if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; i++; continue; }
-        if a == "--offline" { download::offline = true; i++; continue; }
-        if load::flag(a) { i++; continue; }
-        guard i + 1 < args.len else { usage(); }
-        let v = args[i + 1];
-        if a == "-m" { model_path.clear(); model_path.append(v); }
-        else if download::takes_value(a) { download::set(a, v); }
-        else if load::takes_value(a) { load::set(a, v); }
-        else if a == "-p" { prompt.clear(); prompt.append(v); }
-        else if a == "-n" || a == "-np" || a == "--top-k" || a == "-s" || a == "--seed" {
-            let x, ok = parse_int(v);
-            if !ok { usage(); }
-            if a == "-n" { n_predict = x; } else if a == "-np" { n_parallel = x; } else if a == "--top-k" { top_k = x; } else { seed = x as! u32; }
-        } else if a == "--temp" || a == "--top-p" {
-            let x, ok = parse_flt(v);
-            if !ok { usage(); }
-            if a == "--temp" { temp = x as f32; } else { top_p = x as f32; }
-        } else { usage(); }
-        i += 2;
-    }
-    download::resolve(model_path);
-    if model_path.len == 0 { usage(); }
+    arg::params.prompt.append("Hello my name is");
+    arg::params.n_predict = 32;
+    arg::usage_text.append(str("\nexample usage:\n\n    ", args[0], " -m model.gguf -p \"Hello my name is\" -n 32 -np 4\n\n"));
+    if !arg::parse(args, arg::Example.Batched) { exit(1); }
+    let p = arg::params;
+    let model_path = p.model_path;
+    let prompt = p.prompt;
+    let n_predict = p.n_predict;
+    let n_parallel = p.n_parallel;
+    let top_k = p.sampling.top_k;
+    let top_p = p.sampling.top_p;
+    let temp = p.sampling.temp;
+    let seed = p.sampling.seed;
+    let kv_unified = p.kv_unified;
     guard n_parallel >= 1 && n_parallel <= 64 else { abort("n_parallel: 1 to 64"); }
 
     var m = model::Model { .. };
-    load::from_env();
     model::load(m, model_path);
 
     var tokens: i32[>..] = [];

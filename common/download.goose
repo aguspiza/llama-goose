@@ -26,40 +26,15 @@ extern fn c_symlink(target: const u8[:], link: const u8[:]) -> i64 = "common_sym
 
 let PARTIAL_SUFFIX = ".downloadInProgress";
 
-// The flags, as the programs pass them on.
+// The flags, as common/arg sets them.
 var hf_repo: u8[>..] = [];      // -hf <user>/<model>[:quant]
 var hf_file: u8[>..] = [];      // -hff: this file of the repository
 var hf_token: u8[>..] = [];     // -hft, or HF_TOKEN
 var offline = false;            // --offline
 
-// Whether a is one of the flags above that takes a value.
-fn takes_value(a: const u8[:]) -> bool {
-    a == "-hf" || a == "-hfr" || a == "--hf-repo" || a == "-hff" || a == "--hf-file" || a == "-hft" || a == "--hf-token"
-}
-
-// Keeps the value of flag a (one that takes_value).
-fn set(a: const u8[:], v: const u8[:]) {
-    if a == "-hff" || a == "--hf-file" { hf_file.clear(); hf_file.append(v); }
-    else if a == "-hft" || a == "--hf-token" { hf_token.clear(); hf_token.append(v); }
-    else { hf_repo.clear(); hf_repo.append(v); }
-}
-
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
     exit(1);
-}
-
-// The flags not given, from their environment variables, as llama.cpp's
-// argument parser takes them.
-fn from_env() {
-    var v: u8[>..] = [];
-    if hf_repo.len == 0 && env("LLAMA_ARG_HF_REPO", v) { hf_repo.append(v); }
-    v.clear();
-    if hf_file.len == 0 && env("LLAMA_ARG_HF_FILE", v) { hf_file.append(v); }
-    v.clear();
-    if hf_token.len == 0 && env("HF_TOKEN", v) { hf_token.append(v); }
-    v.clear();
-    if env("LLAMA_OFFLINE", v) && (v == "1" || v == "true") { offline = true; }
 }
 
 // The Hub's address: MODEL_ENDPOINT, HF_ENDPOINT, or huggingface.co; with
@@ -528,7 +503,6 @@ fn resolve(model_path: u8[>..]&) {
 // path in model_path, and the mmproj's in mmproj_path when want_mmproj and
 // it is empty. Exits on failure, as llama.cpp's programs do.
 fn resolve(model_path: u8[>..]&, mmproj_path: u8[>..]&, want_mmproj: bool) {
-    from_env();
     guard hf_repo.len > 0 else { return; }
     var repo = str(hf_repo);
     var tag: u8[>..] = [];

@@ -33,7 +33,50 @@ has the summary.
 | downloads (`common/download`: `-hf`, `-hff`, `-hft`, `--offline`, into the Hugging Face cache) | ported, through libcurl loaded at run time; not `-mu`, Docker, the cache's lock files | [below](#downloads--hf) |
 | `--fit` (`common/fit`): the context left to the model (no `-c`, as llama.cpp's default) cut to leave `-fitt` MiB of the host memory, projected from the weights, the cache and the compute buffer of llama.cpp's worst-case graphs | ported for the host memory | [below](#--fit) |
 | loading the weights: `-lm auto\|none\|mmap\|mlock\|mmap+mlock\|dio`, `-lzm on\|auto\|off`, `--repack`/`-nr`, `-ot`, `-cmoe`, `-ncmoe` and their `LLAMA_ARG_*` variables; the tied output's copy (`TENSOR_DUPLICATED`); the unused tensors left out | ported for the CPU (the overrides have only the `CPU` buffer type to go to) | [below](#loading-the-weights) |
-| the rest of `common/` (the argument parser) | not yet | |
+| the argument parser (`common/arg`): llama.cpp's options for each program, their `LLAMA_ARG_*` variables, `-h`, `--completion-bash`, the errors | ported; the options of what is not ported fail; no config files or remote presets | [below](#the-argument-parser) |
+
+## The argument parser
+
+`common/arg` is llama.cpp's `common/arg.cpp`: `arg_opts.goose` holds the
+options of `common_params_parser_init` (generated once from it, then kept by
+hand), each with its names, value hints, environment variable, the programs
+that show it and its help, whose defaults are those of the program's
+`common_params`. As in llama.cpp, the environment variables are read first,
+then the command line overrides them; a `--` name may be written with `_`.
+`-h` prints the options by section, and `--completion-bash` the bash
+completion script. The programs set their defaults before parsing, as
+llama.cpp's do (`perplexity`'s `-c 512`, `batched`'s prompt, ...).
+
+`-h` gives the same bytes as llama.cpp's program for `completion`,
+`perplexity`, `batched`, `parallel`, `mtmd_cli` and the server (all their
+options, the cli's 583 lines too, for which there is no llama-cli build to
+compare with). With `completion`, these give the same message and exit
+code as `llama-completion`: an unknown argument, a missing value, `-n abc`
+and `-c 99999999999` (`stoi`), `--temp x` (`stof`), `--color maybe`,
+`--repeat-penalty 0`, `--dry-penalty-last-n -2`, `-ot foo`, `-ot a=GPU`,
+no model, and the variables: `LLAMA_ARG_N_PREDICT=abc`,
+`LLAMA_ARG_FLASH_ATTN=bad`, `LLAMA_ARG_CONTEXT_SHIFT=maybe`, a variable the
+command line overrides (its warning) and `LLAMA_ARG_NO_CONTEXT_SHIFT`. The
+programs give the same output as before through it: completion's text
+(short and long prompts, samplers, `--samplers`, `--sampling-seq`, `-r`,
+`-f`, `-st`, `--jinja`, variables for `-n` and `-c`) on the first 10
+models of the regression list, perplexity's, batched's and parallel's on
+Qwen3, mtmd_cli's on SmolVLM and gemma-3 4B, and the server's 29 requests
+on Qwen3 and the image cases on SmolVLM.
+
+The differences, all known:
+
+- The options of what is not ported (LoRA, control vectors, speculative
+  decoding, devices and RPC, the CPU masks and priorities, the router
+  server, ...) are listed in `-h`, but fail when given, as an invalid value
+  named "not ported", where llama.cpp takes them.
+- The system config files (`config.ini`, read through `common/preset`) and
+  the remote presets of `-hf` repositories are not read.
+- `--version` prints the port's build, not llama.cpp's.
+- llama.cpp writes its warning about an argument given twice through its
+  log, with a time stamp and a level before it and on its own thread, so
+  after the other warnings; the port writes it plainly, in order.
+- llama.cpp writes its text in Windows text mode (`\r\n`).
 
 ## tools/simple
 
@@ -208,8 +251,8 @@ projects the same and picks 24064. Through the servers' `/props`
 
 ## Loading the weights
 
-`common/load` reads the flags in batched, completion, mtmd_cli, parallel,
-perplexity and the server, and `ggml/cpu/load.c` holds the OS's part
+`common/arg` reads the flags in every program but `simple` and
+`simple_chat`, and `ggml/cpu/load.c` holds the OS's part
 (mapping, prefetch, mlock, unbuffered reads). As llama.cpp does:
 
 - `-lm auto` (the default) and `mmap` map the file: the tensors of the

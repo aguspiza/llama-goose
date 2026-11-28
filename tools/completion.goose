@@ -1,17 +1,8 @@
 // llama.cpp's llama-completion: text from a prompt, or, in conversation
 // mode (the default when the model has a chat template), a chat whose user
 // turns are read line by line from stdin; an empty input (EOF) ends it.
-//   completion -m model.gguf [-p prompt] [-sys system] [-cnv | -no-cnv] [-st] [-i | -if]
-//              [-r reverse-prompt]... [-n n_predict] [-c n_ctx] [-b n_batch] [-t threads] [-s seed]
-//              [--chat-template tmpl] [--jinja | --no-jinja] [-co on|off|auto] [-sp] [--keep n]
-//              [--context-shift] [-gan n] [-gaw w]
-//              [--no-display-prompt] [--no-escape] [-mli] [--in-prefix s] [--in-suffix s] [--in-prefix-bos]
-//              [--temp t] [--top-k k] [--top-p p] [--min-p p] [--typical p]
-//              [--repeat-penalty r] [--repeat-last-n n] [--presence-penalty p]
-//              [--frequency-penalty f] [--xtc-probability p] [--xtc-threshold t]
-//              [--top-nsigma n] [--dynatemp-range r] [--dynatemp-exp e]
-// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
-// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
+//   completion -m model.gguf [-p prompt] [-sys system] [-cnv | -no-cnv] ...
+// The arguments are llama-completion's (common/arg; -h lists them).
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // port-of: tools/completion/completion.cpp
 // port-of: tools/completion/main.cpp
@@ -33,63 +24,13 @@ import common.chat;
 import common.console;
 import common.json_schema;
 import common.download;
-import common.load;
 import common.fit;
+import common.arg;
 
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
     console::cleanup();
     exit(1);
-}
-
-// string_process_escapes: \n \r \t \' \" \\ and \xHH, in place.
-fn process_escapes(s: u8[>..]&) {
-    var out: u8[>..] = [];
-    var i = 0;
-    while i < s.len {
-        let c = s[i];
-        if c != '\\' || i + 1 >= s.len { out.push(c); i++; continue; }
-        i++;
-        let e = s[i];
-        if e == 'n' { out.push('\n'); }
-        else if e == 'r' { out.push('\r'); }
-        else if e == 't' { out.push('\t'); }
-        else if e == '\'' || e == '"' || e == '\\' { out.push(e); }
-        else if e == 'x' && i + 2 < s.len && hex(s[i + 1]) >= 0 && hex(s[i + 2]) >= 0 {
-            out.push((hex(s[i + 1]) * 16 + hex(s[i + 2])) as! u8);
-            i += 2;
-        } else {
-            out.push('\\');
-            out.push(e);
-        }
-        i++;
-    }
-    s.clear();
-    s.append(out);
-}
-
-// process_escapes on each string of a list, each ended by a NUL.
-fn process_list_escapes(list: u8[>..]&) {
-    var out: u8[>..] = [];
-    var start = 0;
-    for c, k in list {
-        if c != 0 { continue; }
-        var one: u8[>..] = [];
-        one.append(list[start..k]);
-        process_escapes(one);
-        out.append(one);
-        out.push(0);
-        start = k + 1;
-    }
-    list.clear();
-    list.append(out);
-}
-
-fn hex(c: u8) -> i64 {
-    if c >= '0' && c <= '9' { return c - '0'; }
-    if c >= 'a' && c <= 'f' { return c - 'a' + 10; }
-    if c >= 'A' && c <= 'F' { return c - 'A' + 10; }
-    return -1;
 }
 
 // common_token_to_piece.
@@ -128,170 +69,44 @@ var chat_msgs: common_chat::Msg[>..] = [];
 
 fn main() {
     let args = console::utf8_args();
-    var model_path: u8[>..] = [];
-    var prompt: u8[>..] = [];
-    var system_prompt: u8[>..] = [];
-    var chat_template: u8[>..] = [];
-    var input_prefix: u8[>..] = [];
-    var input_suffix: u8[>..] = [];
-    var antiprompt_text: u8[>..] = [];     // the reverse prompts, each ended by a NUL
-    var n_predict = -1;
-    var n_ctx = 0;     // the model's, fitted to the memory (common_fit_params)
-    var n_batch = 2048;
-    var n_keep = 0;
-    var ctx_shift = false;
-    var ga_n = 1;               // self-extend: the group-attention factor
-    var ga_w = 512;             // and width
-    var n_threads: i32 = 0;
-    var conversation = Conversation.Auto;
-    var single_turn = false;
-    var interactive = false;
-    var interactive_first = false;
-    var use_jinja = false;      // llama-completion's default: the built-in templates
-    var enable_chat_template = true;
-    var input_prefix_bos = false;
-    var special = false;
-    var display_prompt = true;
-    var escape = true;
-    var multiline_input = false;
-    var verbose_prompt = false;
-    var use_color = console::tty_can_use_colors();
-    var sp = sampler::Params { .. };
-    var breakers_given = false;
-    var dry_breakers: u8[>..] = [];     // the --dry-sequence-breaker ones, each ended by a NUL
-    var grammar_text: u8[>..] = [];
-
-    var i = 1;
-    fn value() -> const u8[:] {
-        if i + 1 >= args.len { fail(str("missing value for ", args[i])); }
-        i += 1;
-        return args[i];
-    }
-    fn int_value() -> i64 {
-        let v, ok = parse_int(value());
-        if !ok { fail(str("bad number for ", args[i - 1])); }
-        return v;
-    }
-    fn flt_value() -> f32 {
-        let v, ok = parse_flt(value());
-        if !ok { fail(str("bad number for ", args[i - 1])); }
-        return v as f32;
-    }
-    while i < args.len {
-        let a = args[i];
-        if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
-        else if download::takes_value(a) { download::set(a, value()); }
-        else if a == "--offline" { download::offline = true; }
-        else if load::takes_value(a) { load::set(a, value()); }
-        else if load::flag(a) {}
-        else if a == "-p" || a == "--prompt" { prompt.clear(); prompt.append(value()); }
-        else if a == "-sys" || a == "--system-prompt" { system_prompt.clear(); system_prompt.append(value()); }
-        else if a == "-n" || a == "--n-predict" { n_predict = int_value(); }
-        else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); fit::ctx_flag(n_ctx); }
-        else if fit::takes_value(a) { fit::set(a, value()); }
-        else if a == "-b" || a == "--batch-size" { n_batch = int_value(); }
-        else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
-        else if a == "-s" || a == "--seed" { sp.seed = (int_value() & 0xFFFFFFFF) as! u32; }
-        else if a == "--keep" { n_keep = int_value(); }
-        else if a == "--context-shift" { ctx_shift = true; }
-        else if a == "--no-context-shift" { ctx_shift = false; }
-        else if a == "-gan" || a == "--grp-attn-n" { ga_n = int_value(); }
-        else if a == "-gaw" || a == "--grp-attn-w" { ga_w = int_value(); }
-        else if a == "-cnv" || a == "--conversation" { conversation = Conversation.On; }
-        else if a == "-no-cnv" || a == "--no-conversation" { conversation = Conversation.Off; }
-        else if a == "-st" || a == "--single-turn" { single_turn = true; }
-        else if a == "-i" || a == "--interactive" { interactive = true; }
-        else if a == "-if" || a == "--interactive-first" { interactive_first = true; }
-        else if a == "-r" || a == "--reverse-prompt" { antiprompt_text.append(value()); antiprompt_text.push(0); interactive = true; }
-        else if a == "--chat-template" { chat_template.clear(); chat_template.append(value()); }
-        else if a == "--jinja" { use_jinja = true; }
-        else if a == "--no-jinja" { use_jinja = false; }
-        else if a == "-co" || a == "--color" {
-            let v = value();
-            if v == "on" || v == "true" || v == "1" { use_color = true; }
-            else if v == "off" || v == "false" || v == "0" { use_color = false; }
-            else if v == "auto" { use_color = console::tty_can_use_colors(); }
-            else { fail(str("unknown value for --color: '", v, "'")); }
-        }
-        else if a == "-sp" || a == "--special" { special = true; }
-        else if a == "--no-display-prompt" { display_prompt = false; }
-        else if a == "-e" || a == "--escape" { escape = true; }
-        else if a == "--no-escape" { escape = false; }
-        else if a == "-mli" || a == "--multiline-input" { multiline_input = true; }
-        else if a == "--verbose-prompt" { verbose_prompt = true; }
-        else if a == "--in-prefix" { input_prefix.clear(); input_prefix.append(value()); enable_chat_template = false; }
-        else if a == "--in-suffix" { input_suffix.clear(); input_suffix.append(value()); enable_chat_template = false; }
-        else if a == "--in-prefix-bos" { input_prefix_bos = true; enable_chat_template = false; }
-        else if a == "--temp" { sp.temp = max(flt_value(), 0.0); sp.user_set |= sampler::USER_TEMP; }
-        else if a == "--top-k" { sp.top_k = int_value(); sp.user_set |= sampler::USER_TOP_K; }
-        else if a == "--top-p" { sp.top_p = flt_value(); sp.user_set |= sampler::USER_TOP_P; }
-        else if a == "--min-p" { sp.min_p = flt_value(); sp.user_set |= sampler::USER_MIN_P; }
-        else if a == "--typical" { sp.typ_p = flt_value(); }
-        else if a == "--repeat-penalty" { sp.penalty_repeat = flt_value(); sp.user_set |= sampler::USER_PENALTY_REPEAT; }
-        else if a == "--repeat-last-n" { sp.penalty_last_n = int_value(); sp.user_set |= sampler::USER_PENALTY_LAST_N; }
-        else if a == "--presence-penalty" { sp.penalty_present = flt_value(); }
-        else if a == "--frequency-penalty" { sp.penalty_freq = flt_value(); }
-        else if a == "--xtc-probability" { sp.xtc_probability = flt_value(); sp.user_set |= sampler::USER_XTC_PROBABILITY; }
-        else if a == "--xtc-threshold" { sp.xtc_threshold = flt_value(); sp.user_set |= sampler::USER_XTC_THRESHOLD; }
-        else if a == "--top-nsigma" { sp.top_n_sigma = flt_value(); }
-        else if a == "--dynatemp-range" { sp.dynatemp_range = flt_value(); }
-        else if a == "--dynatemp-exp" { sp.dynatemp_exponent = flt_value(); }
-        else if a == "--grammar" { grammar_text.clear(); grammar_text.append(value()); }
-        else if a == "--grammar-file" {
-            let path = value();
-            grammar_text.clear();
-            if !read_file(path, grammar_text) { fail(str("failed to open file '", path, "'")); }
-        }
-        else if a == "-j" || a == "--json-schema" {
-            grammar_text.clear();
-            if !json_schema::to_grammar(value(), grammar_text) { fail(str("error while handling argument \"", a, "\": ", json_schema::err)); }
-        }
-        else if a == "-jf" || a == "--json-schema-file" {
-            let path = value();
-            var schema: u8[>..] = [];
-            if !read_file(path, schema) { fail(str("error while handling argument \"", a, "\": error: failed to open file '", path, "'")); }
-            grammar_text.clear();
-            if !json_schema::to_grammar(schema, grammar_text) { fail(str("error while handling argument \"", a, "\": ", json_schema::err)); }
-        }
-        else if a == "--mirostat" { sp.mirostat = int_value(); sp.user_set |= sampler::USER_MIROSTAT; }
-        else if a == "--mirostat-lr" { sp.mirostat_eta = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_ETA; }
-        else if a == "--mirostat-ent" { sp.mirostat_tau = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_TAU; }
-        else if a == "--dry-multiplier" { sp.dry_multiplier = flt_value(); }
-        else if a == "--dry-base" { let v = flt_value(); if v >= 1.0 { sp.dry_base = v; } }
-        else if a == "--dry-allowed-length" { sp.dry_allowed_length = int_value(); }
-        else if a == "--dry-penalty-last-n" {
-            let v = int_value();
-            if v < 0 { fail(str("invalid dry-penalty-last-n = ", v)); }
-            sp.dry_penalty_last_n = v;
-        }
-        else if a == "--dry-sequence-breaker" {
-            // the first one replaces the defaults; "none" leaves none
-            if !breakers_given { sp.dry_breakers.clear(); breakers_given = true; }
-            let v = value();
-            if v == "none" { dry_breakers.clear(); } else { dry_breakers.append(v); dry_breakers.push(0); }
-        }
-        else { fail(str("unknown argument: ", a)); }
-        i += 1;
-    }
-    download::resolve(model_path);
-    if model_path.len == 0 { fail("--model is required"); }
-    if escape {
-        process_escapes(prompt);
-        process_escapes(input_prefix);
-        process_escapes(input_suffix);
-        process_list_escapes(antiprompt_text);
-        process_list_escapes(dry_breakers);
-    }
-    if breakers_given {
-        if dry_breakers.len > sp.dry_breakers.cap { fail("the DRY sequence breakers are too long"); }
-        sp.dry_breakers.append(dry_breakers);
-    }
+    arg::usage_text.append(str("\nexample usage:\n\n  text generation:     ", args[0], " -m your_model.gguf -p \"I believe the meaning of life is\" -n 128 -no-cnv\n\n  chat (conversation): ", args[0], " -m your_model.gguf -sys \"You are a helpful assistant\"\n\n"));
+    if !arg::parse(args, arg::Example.Completion) { exit(1); }
+    let p = arg::params;
+    var model_path = str(p.model_path);
+    var prompt = str(p.prompt);
+    let system_prompt = p.system_prompt;
+    let chat_template = p.chat_template;
+    let input_prefix = p.input_prefix;
+    let input_suffix = p.input_suffix;
+    let antiprompt_text = p.antiprompt;   // the reverse prompts, each ended by a NUL
+    let n_predict = p.n_predict;
+    var n_ctx = p.n_ctx;     // 0: the model's, fitted to the memory (common_fit_params)
+    let n_batch = p.n_batch;
+    var n_keep = p.n_keep;
+    var ctx_shift = p.ctx_shift;
+    let ga_n = p.grp_attn_n;     // self-extend: the group-attention factor
+    let ga_w = p.grp_attn_w;     // and width
+    let n_threads = if p.n_threads > 0 { p.n_threads as! i32 } else { ggml::default_threads() };   // postprocess_cpu_params
+    var conversation = match p.conversation_mode { Auto => Conversation.Auto, Disabled => Conversation.Off, Enabled => Conversation.On };
+    let single_turn = p.single_turn;
+    var interactive = p.interactive;
+    var interactive_first = p.interactive_first;
+    let use_jinja = p.use_jinja;
+    let enable_chat_template = p.enable_chat_template;
+    let input_prefix_bos = p.input_prefix_bos;
+    let special = p.special;
+    let display_prompt = p.display_prompt;
+    let escape = p.escape;
+    let multiline_input = p.multiline_input;
+    let verbose_prompt = p.verbose_prompt;
+    let use_color = p.use_color;
+    var sp = p.sampling;
+    let grammar_text = p.grammar;
     console::init(use_color);
 
     var m = model::Model { .. };
-    load::from_env();
     model::load(m, model_path);
-    var c = context::Context { n_threads: n_threads, .. };
+    var c = context::Context { n_threads: n_threads, n_ubatch: min(n_batch, p.n_ubatch), .. };
     context::init(c, m, fit::n_ctx(c, m, n_ctx));
     n_ctx = c.n_ctx;
     if ctx_shift && !context::can_shift(c, m) {
@@ -607,7 +422,7 @@ fn main() {
 
                 if buffer.len > 0 {
                     if input_suffix.len > 0 && conversation != Conversation.On { write_stdout(input_suffix); }
-                    if escape { process_escapes(buffer); }
+                    if escape { arg::process_escapes(buffer); }
                     let format_chat = conversation == Conversation.On && enable_chat_template;
                     if format_chat { chat_add_and_format("user", buffer); }
                     var pfx: i32[>..] = [];

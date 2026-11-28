@@ -10,13 +10,9 @@
 // last prompt, so that a request that starts as one of them reuses it. A
 // client that goes away stops its generation. A model whose cache holds one
 // sequence (a recurrent one, T5) has one slot.
-//   server -m model.gguf [--host 127.0.0.1] [--port 8080] [-c n_ctx] [-b n_batch] [-t threads] [-np slots]
-//          [-kvu] [-n n_predict] [-a alias] [--api-key key] [--jinja | --no-jinja]
-//          [--chat-template tmpl] [--chat-template-file file] [--reasoning-format fmt]
-//          [-s seed] [--temp t] [--top-k k] [--top-p p] [--min-p p] [...the sampling flags of completion]
-// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
+//   server -m model.gguf [--host 127.0.0.1] [--port 9931] [-c n_ctx] [-np slots] [-kvu] ...
+// The arguments are llama-server's (common/arg; -h lists them).
 // Images: --mmproj file (-hf finds one beside the model, unless --no-mmproj), [--media-path dir] for file:// URLs.
-// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // Routes: /health, /props, /models, /completion(s), /v1/completions,
 // /v1/chat/completions, /apply-template, /tokenize, /detokenize.
@@ -47,8 +43,8 @@ import common.console;
 import common.jdoc;
 import common.json_schema;
 import common.download;
-import common.load;
 import common.fit;
+import common.arg;
 import common.chat_render;
 import common.chat_peg;
 import common.chat_apply;
@@ -705,7 +701,7 @@ fn eval_params(data: i64) {
             } else if jdoc::is_str(v) {
                 t_sp.order.clear();
                 for ch0 in jdoc::str_of(v) {
-                    let kind, ok = kind_from_char(ch0);
+                    let kind, ok = sampler::kind_from_char(ch0);
                     if ok && t_sp.order.len < t_sp.order.cap { t_sp.order.push(kind); }
                 }
             }
@@ -722,26 +718,6 @@ fn list_has(list: const u8[:], s: const u8[:]) -> bool {
         }
     }
     return false;
-}
-
-// common_sampler_types_from_chars
-fn kind_from_char(c0: u8) -> sampler::Kind, bool {
-    let kind = match c0 {
-        'd' => sampler::Kind.Dry, 'k' => sampler::Kind.TopK, 'y' => sampler::Kind.Typical, 'p' => sampler::Kind.TopP,
-        's' => sampler::Kind.TopNSigma, 'm' => sampler::Kind.MinP, 't' => sampler::Kind.TempExt, 'x' => sampler::Kind.Xtc,
-        'e' => sampler::Kind.Penalties, _ => { return sampler::Kind.Dist, false; },
-    };
-    return kind, true;
-}
-
-// common_sampler_type_to_str
-fn kind_name_of(kind: sampler::Kind) -> const u8[:] {
-    return match kind {
-        Dry => "dry", TopK => "top_k", Typical => "typ_p",
-        TopP => "top_p", TopNSigma => "top_n_sigma", MinP => "min_p",
-        Xtc => "xtc", TempExt => "temperature", Penalties => "penalties",
-        Infill => "infill", AdaptiveP => "adaptive_p", _ => "",
-    };
 }
 
 fn reasoning_format_from_name(name: const u8[:]) -> chat_render::ReasoningFormat {
@@ -880,7 +856,7 @@ fn params_json(o: u8[>..]&, only_metrics: bool) {
     ks(o, "generation_prompt", t_gen_prompt);
     k(o, "samplers");
     o.push('[');
-    for kind in t_sp.order { es(o, kind_name_of(kind)); }
+    for kind in t_sp.order { es(o, sampler::type_to_str(kind)); }
     o.push(']');
     ks(o, "speculative.types", "none");
     kb(o, "timings_per_token", t_timings_per_token);
@@ -3073,130 +3049,36 @@ fn ftype_of(ft: i64) -> const u8[:] {
 
 // The engine's startup: the arguments, the model, its context and templates.
 fn setup() {
-    let args = console::utf8_args();
-    var host: u8[>..] = [];
-    host.append("127.0.0.1");
-    var port = 8080;
-    var n_ctx = 0;
-    var n_threads: i32 = 0;
-    var alias: u8[>..] = [];
-    var chat_template: u8[>..] = [];
-    var breakers_given = false;
-    var dry_breakers: u8[>..] = [];
-    var n_slots = 0;
-    var kv_unified = false;
-    var mmproj_auto = true;
-    var i = 1;
-    fn value() -> const u8[:] {
-        if i + 1 >= args.len { die(str("missing value for ", args[i])); }
-        i += 1;
-        return args[i];
-    }
-    fn int_value() -> i64 {
-        let v, ok = parse_int(value());
-        if !ok { die(str("bad number for ", args[i - 1])); }
-        return v;
-    }
-    fn flt_value() -> f32 {
-        let v, ok = parse_flt(value());
-        if !ok { die(str("bad number for ", args[i - 1])); }
-        return v as f32;
-    }
-    var sp = sampler::Params { .. };
-    while i < args.len {
-        let a = args[i];
-        if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
-        else if download::takes_value(a) { download::set(a, value()); }
-        else if a == "--offline" { download::offline = true; }
-        else if a == "-mm" || a == "--mmproj" { mmproj_path.clear(); mmproj_path.append(value()); }
-        else if a == "--mmproj-auto" { mmproj_auto = true; }
-        else if a == "--no-mmproj" || a == "--no-mmproj-auto" { mmproj_auto = false; }
-        else if a == "--mmproj-offload" || a == "--no-mmproj-offload" {}
-        else if a == "--media-path" {
-            media_path.clear();
-            media_path.append(value());
-            if !is_dir(media_path) { die("media path does not exist or is not a directory"); }
-            if !ends_with(media_path, "/") && !ends_with(media_path, "\\") { media_path.push('/'); }
-        }
-        else if load::takes_value(a) { load::set(a, value()); }
-        else if load::flag(a) {}
-        else if a == "--host" { host.clear(); host.append(value()); }
-        else if a == "--port" { port = int_value(); }
-        else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); fit::ctx_flag(n_ctx); }
-        else if fit::takes_value(a) { fit::set(a, value()); }
-        else if a == "-b" || a == "--batch-size" { n_batch = int_value(); }
-        else if a == "-ub" || a == "--ubatch-size" { int_value(); }
-        else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
-        else if a == "-n" || a == "--n-predict" || a == "--predict" { base_n_predict = int_value(); }
-        else if a == "--keep" { base_n_keep = int_value(); }
-        else if a == "--context-shift" { ctx_shift = true; }
-        else if a == "--no-context-shift" { ctx_shift = false; }
-        else if a == "-a" || a == "--alias" { alias.clear(); alias.append(value()); }
-        else if a == "--api-key" { api_key.clear(); api_key.append(value()); }
-        else if a == "--path" { static_dir.clear(); static_dir.append(value()); }
-        else if a == "-np" || a == "--parallel" { n_slots = int_value(); }
-        else if a == "-kvu" || a == "--kv-unified" { kv_unified = true; }
-        else if a == "-no-kvu" || a == "--no-kv-unified" { kv_unified = false; }
-        else if a == "-ctxcp" || a == "--ctx-checkpoints" || a == "--swa-checkpoints" { n_ctx_checkpoints = int_value(); }
-        else if a == "--jinja" { use_jinja = true; }
-        else if a == "--no-jinja" { use_jinja = false; }
-        else if a == "--chat-template" { chat_template.clear(); chat_template.append(value()); }
-        else if a == "--chat-template-file" {
-            let path = value();
-            chat_template.clear();
-            if !read_file(path, chat_template) { die(str("failed to open file '", path, "'")); }
-        }
-        else if a == "--reasoning-format" {
-            let v = value();
-            reasoning_format = if v == "none" { chat_render::ReasoningFormat.None } else if v == "auto" { chat_render::ReasoningFormat.Deepseek }
-                else if v == "deepseek" { chat_render::ReasoningFormat.Deepseek } else if v == "deepseek-legacy" { chat_render::ReasoningFormat.DeepseekLegacy }
-                else { die(str("unknown reasoning format: ", v)); 0 };
-        }
-        else if a == "--reasoning" {
-            let v = value();
-            enable_thinking = !(v == "off" || v == "0" || v == "false");
-        }
-        else if a == "--no-prefill-assistant" { prefill_assistant = false; }
-        else if a == "-r" || a == "--reverse-prompt" { base_stops.append(value()); base_stops.push(0); }
-        else if a == "-s" || a == "--seed" { sp.seed = (int_value() & 0xFFFFFFFF) as! u32; }
-        else if a == "--temp" { sp.temp = max(flt_value(), 0.0); sp.user_set |= sampler::USER_TEMP; }
-        else if a == "--top-k" { sp.top_k = int_value(); sp.user_set |= sampler::USER_TOP_K; }
-        else if a == "--top-p" { sp.top_p = flt_value(); sp.user_set |= sampler::USER_TOP_P; }
-        else if a == "--min-p" { sp.min_p = flt_value(); sp.user_set |= sampler::USER_MIN_P; }
-        else if a == "--typical" { sp.typ_p = flt_value(); }
-        else if a == "--repeat-penalty" { sp.penalty_repeat = flt_value(); sp.user_set |= sampler::USER_PENALTY_REPEAT; }
-        else if a == "--repeat-last-n" { sp.penalty_last_n = int_value(); sp.user_set |= sampler::USER_PENALTY_LAST_N; }
-        else if a == "--presence-penalty" { sp.penalty_present = flt_value(); }
-        else if a == "--frequency-penalty" { sp.penalty_freq = flt_value(); }
-        else if a == "--xtc-probability" { sp.xtc_probability = flt_value(); sp.user_set |= sampler::USER_XTC_PROBABILITY; }
-        else if a == "--xtc-threshold" { sp.xtc_threshold = flt_value(); sp.user_set |= sampler::USER_XTC_THRESHOLD; }
-        else if a == "--top-nsigma" { sp.top_n_sigma = flt_value(); }
-        else if a == "--dynatemp-range" { sp.dynatemp_range = flt_value(); }
-        else if a == "--dynatemp-exp" { sp.dynatemp_exponent = flt_value(); }
-        else if a == "--mirostat" { sp.mirostat = int_value(); sp.user_set |= sampler::USER_MIROSTAT; }
-        else if a == "--mirostat-lr" { sp.mirostat_eta = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_ETA; }
-        else if a == "--mirostat-ent" { sp.mirostat_tau = flt_value(); sp.user_set |= sampler::USER_MIROSTAT_TAU; }
-        else if a == "--dry-multiplier" { sp.dry_multiplier = flt_value(); }
-        else if a == "--dry-base" { let v = flt_value(); if v >= 1.0 { sp.dry_base = v; } }
-        else if a == "--dry-allowed-length" { sp.dry_allowed_length = int_value(); }
-        else if a == "--dry-penalty-last-n" { sp.dry_penalty_last_n = int_value(); }
-        else if a == "--dry-sequence-breaker" {
-            if !breakers_given { sp.dry_breakers.clear(); breakers_given = true; }
-            let v = value();
-            if v != "none" { dry_breakers.append(v); dry_breakers.push(0); }
-        }
-        else if a == "--no-webui" || a == "--webui" || a == "-fa" || a == "--flash-attn" || a == "--metrics" || a == "--slots" || a == "--cont-batching" {
-            if (a == "-fa" || a == "--flash-attn") && i + 1 < args.len && !starts_with(args[i + 1], "-") { i++; }
-        }
-        else { die(str("unknown argument: ", a)); }
-        i += 1;
-    }
-    download::resolve(model_path, mmproj_path, mmproj_auto);
+    let p = arg::params;
+    var n_ctx = p.n_ctx;
+    let n_threads = if p.n_threads > 0 { p.n_threads as! i32 } else { ggml::default_threads() };   // postprocess_cpu_params
+    var alias: u8[>..] = [];            // the first of the aliases
+    for ch0 in p.model_alias { if ch0 == 0 { break; } alias.push(ch0); }
+    let chat_template = p.chat_template;
+    var n_slots = p.n_parallel;         // -1: llama-server's default
+    var kv_unified = p.kv_unified;
+    model_path.append(p.model_path);
+    mmproj_path.append(p.mmproj_path);
+    media_path.append(p.media_path);
+    n_batch = p.n_batch;
+    base_n_predict = p.n_predict;
+    base_n_keep = p.n_keep;
+    ctx_shift = p.ctx_shift;
+    for ch0 in p.api_keys { if ch0 == 0 { break; } api_key.push(ch0); }    // the first key
+    static_dir.append(p.public_path);
+    n_ctx_checkpoints = p.n_ctx_checkpoints;
+    use_jinja = p.use_jinja;
+    reasoning_format = match p.reasoning_format {
+        None => chat_render::ReasoningFormat.None, DeepseekLegacy => chat_render::ReasoningFormat.DeepseekLegacy,
+        _ => chat_render::ReasoningFormat.Deepseek,
+    };
+    enable_thinking = p.enable_reasoning != 0;
+    prefill_assistant = p.prefill_assistant;
+    base_stops.append(p.antiprompt);
+    var sp = p.sampling;
+    // the server downloads the model (common_params_handle_models) itself
+    download::resolve(model_path, mmproj_path, !p.no_mmproj);
     if model_path.len == 0 { die("--model is required"); }
-    if breakers_given {
-        if dry_breakers.len > sp.dry_breakers.cap { die("the DRY sequence breakers are too long"); }
-        sp.dry_breakers.append(dry_breakers);
-    }
     model_name.append(if alias.len > 0 { alias[..] } else { model_path[..] });
     rng_state ^= time_ns() as! u64;
     // get_media_marker: random, so that no text is taken for one, unless LLAMA_MEDIA_MARKER pins it
@@ -3205,9 +3087,9 @@ fn setup() {
         media_marker.append(str("<__media_", random_string(), "__>"));
     }
 
-    load::from_env();
     model::load(m, model_path);
     c.n_threads = n_threads;
+    c.n_ubatch = min(n_batch, p.n_ubatch);
     // the slots: llama-server's 4 by default, in one cache unified for them; those
     // of -np, a stream of the cache each unless -kvu
     if context::any_recurrent(m) || m.hp.arch == model::Arch.T5 {
@@ -3294,25 +3176,15 @@ fn setup() {
 // loads; then the engine, on this thread, since only the program's first
 // thread may hold the model's, vocab's and templates' references (spec
 // §11.2): it loads them and serves the requests the workers send its box.
-// Only --host and --port matter to the workers: setup reads every argument.
+// The arguments (common/arg); only --host and --port matter to the workers.
 fn main() {
     let args = console::utf8_args();
     var cfg = http::Config { workers: 2, mail_slots: 64, mail_size: 16384, max_waiting: 1024,
                              max_body: MAX_BODY, max_drain: MAX_BODY, .. };
-    cfg.address.append("127.0.0.1");
-    var i = 1;
-    while i + 1 < args.len {
-        if args[i] == "--host" {
-            cfg.address.clear();
-            cfg.address.append(args[i + 1]);
-            i++;
-        } else if args[i] == "--port" {
-            let p, ok = parse_int(args[i + 1]);
-            if ok { cfg.port = p as! i32; }
-            i++;
-        }
-        i++;
-    }
+    if !arg::parse(args, arg::Example.Server) { exit(1); }
+    // the first address of --host
+    for ch0 in arg::params.hostname { if ch0 == ',' { break; } cfg.address.push(ch0); }
+    cfg.port = arg::params.port as! i32;
     http::exit_on_error(http::stop_on_signals());
     http::gather_budget(MAX_BODY);
     let box, e = http::mail_open(64, 256);

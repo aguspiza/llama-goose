@@ -1,8 +1,7 @@
 // llama.cpp's llama-perplexity, its default mode: the perplexity of a text
 // file in chunks of n_ctx tokens, scoring the second half of each chunk.
 //   perplexity -m model.gguf -f text.txt [-c n_ctx] [-b n_batch] [--chunks n]
-// -m model.gguf can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]: common/download.
-// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
+// The arguments are llama-perplexity's (common/arg; -h lists them).
 // One sequence per batch: n_batch must not exceed n_ctx (llama.cpp packs
 // several chunks into one batch when it does).
 // port-of: tools/perplexity/perplexity.cpp
@@ -19,7 +18,8 @@ import llama.model;
 import llama.context;
 import common from "../common";
 import common.download;
-import common.load;
+import common.console;
+import common.arg;
 
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
@@ -49,48 +49,20 @@ thread_fn scorer() {
 }
 
 fn main() {
-    let args = args();
-    var model_path: u8[>..] = [];
-    var file_path: u8[>..] = [];
-    var n_ctx = 512;
-    var n_batch = 2048;
-    var n_threads: i32 = 0;
-    var n_chunks = -1;
-    var i = 1;
-    fn value() -> const u8[:] {
-        if i + 1 >= args.len { fail(str("missing value for ", args[i])); }
-        i += 1;
-        return args[i];
-    }
-    fn int_value() -> i64 {
-        let v, ok = parse_int(value());
-        if !ok { fail(str("bad number for ", args[i - 1])); }
-        return v;
-    }
-    while i < args.len {
-        let a = args[i];
-        if a == "-m" || a == "--model" { model_path.clear(); model_path.append(value()); }
-        else if download::takes_value(a) { download::set(a, value()); }
-        else if a == "--offline" { download::offline = true; }
-        else if load::takes_value(a) { load::set(a, value()); }
-        else if load::flag(a) {}
-        else if a == "-f" || a == "--file" { file_path.clear(); file_path.append(value()); }
-        else if a == "-c" || a == "--ctx-size" { n_ctx = int_value(); }
-        else if a == "-b" || a == "--batch-size" { n_batch = int_value(); }
-        else if a == "-t" || a == "--threads" { n_threads = int_value() as! i32; }
-        else if a == "--chunks" { n_chunks = int_value(); }
-        else { fail(str("unknown argument: ", a)); }
-        i += 1;
-    }
-    download::resolve(model_path);
-    if model_path.len == 0 || file_path.len == 0 { fail("usage: perplexity -m model.gguf -f text.txt [-c n_ctx] [-b n_batch] [--chunks n]"); }
-    n_batch = min(n_batch, n_ctx);
-
-    var text: u8[>..] = [];
-    if !read_file(file_path, text) { fail(str("cannot read ", file_path)); }
+    let args = console::utf8_args();
+    arg::params.n_ctx = 512;
+    arg::params.escape = false;
+    if !arg::parse(args, arg::Example.Perplexity) { exit(1); }
+    let p = arg::params;
+    let model_path = p.model_path;
+    let text = p.prompt;
+    let n_ctx = p.n_ctx;
+    if n_ctx <= 0 { fail("perplexity tool requires '--ctx-size' > 0"); }
+    let n_batch = min(p.n_batch, n_ctx);
+    let n_threads = if p.n_threads > 0 { p.n_threads as! i32 } else { ggml::default_threads() };   // postprocess_cpu_params
+    let n_chunks = p.n_chunks;
 
     var m = model::Model { .. };
-    load::from_env();
     model::load(m, model_path);
     let add_bos = vocab::add_bos;
     assert(!vocab::add_eos);
@@ -104,7 +76,7 @@ fn main() {
                  "; the file tokenizes to only ", tokens.len));
     }
 
-    var c = context::Context { n_threads: n_threads, .. };
+    var c = context::Context { n_threads: n_threads, n_ubatch: min(n_batch, p.n_ubatch), .. };
     context::init(c, m, n_ctx);
 
     let n_vocab = vocab::n_tokens();

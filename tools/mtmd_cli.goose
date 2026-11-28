@@ -1,10 +1,8 @@
 // llama.cpp's tools/mtmd/mtmd-cli, its single turn: a prompt and its images,
 // through the model's chat template, then the response.
 //   mtmd_cli -m model.gguf --mmproj mmproj.gguf --image file [--image file ...] -p prompt
-//            [-n n_predict] [-c n_ctx] [-t threads] [--temp t] [-s seed] [-sys prompt]
-// -m and --mmproj can be -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline]
-// [--no-mmproj]: common/download, with the mmproj beside the model.
-// The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
+// The arguments are llama-mtmd-cli's (common/arg; -h lists them); -hf finds
+// the mmproj beside the model.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // The prompt holds a <__media__> marker for each image, or they go before it.
 // port-of: tools/mtmd/mtmd-cli.cpp
@@ -22,16 +20,10 @@ import common from "../common";
 import common.jinja;
 import common.chat;
 import common.download;
-import common.load;
 import common.fit;
+import common.console;
+import common.arg;
 import mtmd from "../mtmd";
-
-fn usage() {
-    write_stderr("usage: mtmd_cli -m model.gguf --mmproj mmproj.gguf --image file [--image file ...] -p prompt\n");
-    write_stderr("                (or -hf <user>/<model>[:quant] [-hff file] [-hft token] [--offline] [--no-mmproj])\n");
-    write_stderr("                [-n n_predict] [-c n_ctx] [-t threads] [--temp t] [-s seed] [-sys prompt]\n");
-    exit(1);
-}
 
 fn fail(msg: const u8[:]) {
     write_stderr(str("error: ", msg, "\n"));
@@ -45,54 +37,36 @@ fn piece(t: i32, special: bool) -> u8[>..] {
 }
 
 fn main() {
-    let a = args();
-    var model_path: u8[>..] = [];
-    var mmproj_path: u8[>..] = [];
-    var images: u8[>..] = [];           // the image paths, each ended by a NUL
-    var prompt: u8[>..] = [];
-    var system_prompt: u8[>..] = [];
-    var n_predict = -1;
-    var n_ctx = 0;     // the model's, fitted to the memory (common_fit_params)
-    var n_threads: i32 = 8;
-    var sp = sampler::Params { .. };
-    var no_mmproj = false;
-    var i = 1;
-    while i < a.len {
-        let k = a[i];
-        if k == "--offline" { download::offline = true; i += 1; continue; }
-        if load::flag(k) { i += 1; continue; }
-        if k == "--no-mmproj" { no_mmproj = true; i += 1; continue; }
-        guard i + 1 < a.len else { usage(); }
-        let v = a[i + 1];
-        let n, ok = parse_int(v);
-        if k == "-m" || k == "--model" { model_path.append(v); }
-        else if k == "--mmproj" { mmproj_path.append(v); }
-        else if download::takes_value(k) { download::set(k, v); }
-        else if load::takes_value(k) { load::set(k, v); }
-        else if k == "--image" { images.append(v); images.push(0); }
-        else if k == "-p" || k == "--prompt" { prompt.append(v); }
-        else if k == "-sys" || k == "--system-prompt" { system_prompt.append(v); }
-        else if (k == "-n" || k == "--n-predict") && ok { n_predict = n; }
-        else if (k == "-c" || k == "--ctx-size") && ok { n_ctx = n; fit::ctx_flag(n); }
-        else if fit::takes_value(k) { fit::set(k, v); }
-        else if (k == "-t" || k == "--threads") && ok { n_threads = n as! i32; }
-        else if (k == "-s" || k == "--seed") && ok { sp.seed = (n & 0xFFFFFFFF) as! u32; }
-        else if k == "--temp" {
-            let f, fok = parse_flt(v);
-            guard fok else { usage(); }
-            sp.temp = max(f as f32, 0.0);
-            sp.user_set |= sampler::USER_TEMP;
-        }
-        else { usage(); }
-        i += 2;
+    let a = console::utf8_args();
+    // show_additional_info
+    let info = str("Experimental CLI for multimodal\n\nUsage: ", a[0], " [options] -m <model> --mmproj <mmproj> --image <image> --audio <audio> -p <prompt>\n\n",
+                   "  -m and --mmproj are required\n",
+                   "  -hf user/repo can replace both -m and --mmproj in most cases\n",
+                   "  --image, --audio and -p are optional, if NOT provided, the CLI will run in chat mode\n",
+                   "  to disable using GPU for mmproj model, add --no-mmproj-offload\n");
+    arg::usage_text.append(info);
+    if !arg::parse(a, arg::Example.Mtmd) { exit(1); }
+    let p = arg::params;
+    if p.mmproj_path.len == 0 {
+        write_stdout(info);
+        write_stderr("ERR: Missing --mmproj argument\n");
+        exit(1);
     }
-    download::resolve(model_path, mmproj_path, !no_mmproj);
-    if model_path.len == 0 || mmproj_path.len == 0 || images.len == 0 { usage(); }
+    // the chat mode (no --image or no -p) is not ported
+    if p.image.len == 0 || p.prompt.len == 0 { fail("the chat mode is not ported: give --image and -p"); }
+    let model_path = p.model_path;
+    let mmproj_path = p.mmproj_path;
+    let images = p.image;               // the image paths, each ended by a NUL
+    let prompt = p.prompt;
+    let system_prompt = p.system_prompt;
+    let n_predict = p.n_predict;
+    let n_ctx = p.n_ctx;     // 0: the model's, fitted to the memory (common_fit_params)
+    let n_threads = if p.n_threads > 0 { p.n_threads as! i32 } else { ggml::default_threads() };   // postprocess_cpu_params
+    var sp = p.sampling;
 
     var m = model::Model { .. };
-    load::from_env();
     model::load(m, model_path);
-    var c = context::Context { n_threads: n_threads, .. };
+    var c = context::Context { n_threads: n_threads, n_ubatch: min(p.n_batch, p.n_ubatch), .. };
     context::init(c, m, fit::n_ctx(c, m, n_ctx));
     sampler::apply_model_defaults(sp, m.meta);
     var ch = sampler::Chain { .. };

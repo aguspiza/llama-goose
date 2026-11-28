@@ -106,3 +106,41 @@ int64_t jinja_strftime(lg_buf out, lg_text fmt, int64_t t) {
     time_t tt = (time_t) t;
     return (int64_t) strftime(out.data, (size_t) out.len, lg_cstr(fmt, f, sizeof f), localtime(&tt));
 }
+
+// strtof(s) as std::stof reads it: the value, and in used how much was read,
+// -1 when it is out of range (errno ERANGE).
+float arg_stof(lg_text s, int64_t * used) {
+    char buf[512];
+    const char * c = lg_cstr(s, buf, sizeof buf);
+    char * end = NULL;
+    errno = 0;
+    float v = strtof(c, &end);
+    *used = errno == ERANGE ? -1 : end - c;
+    return v;
+}
+
+// strtoul(s, 10) as std::stoul reads it (unsigned long: 32 bits on Windows).
+uint64_t arg_stoul(lg_text s, int64_t * used) {
+    char buf[512];
+    const char * c = lg_cstr(s, buf, sizeof buf);
+    char * end = NULL;
+    errno = 0;
+    unsigned long v = strtoul(c, &end, 10);
+    *used = errno == ERANGE ? -1 : end - c;
+    return (uint64_t) v;
+}
+
+// std::thread::hardware_concurrency()
+#ifdef _WIN32
+#include <windows.h>
+int64_t arg_hardware_concurrency(void) {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return (int64_t) si.dwNumberOfProcessors;
+}
+int64_t arg_dir_sep(void) { return '\\'; }
+#else
+#include <unistd.h>
+int64_t arg_hardware_concurrency(void) { return (int64_t) sysconf(_SC_NPROCESSORS_ONLN); }
+int64_t arg_dir_sep(void) { return '/'; }
+#endif

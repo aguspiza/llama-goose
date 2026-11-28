@@ -69,7 +69,7 @@ in part.
 | 🟡 Sampling | Not adaptive-p or infill; no regex triggers for lazy grammars. |
 | 🟡 `llama-server` | Not embeddings, rerank, infill, token probabilities (`n_probs`, `logprobs`), the prompt cache in RAM (`--cache-ram`), the web UI, the Anthropic and Responses APIs, nor the endpoints [Programs](#programs) does not name. |
 | 🟡 `llama-completion`, `llama-cli` | Not prompt cache files; the cli has no audio or video. |
-| 🟡 `common/` | The argument parser (each program reads the flags it supports itself). Downloads with `-hf` are ported (see [Quick start](#quick-start)), but not from a plain URL (`-mu`) or Docker, nor the cache's lock files. `--fit` is ported for the host memory (there are no devices). So are the flags of where and how the weights are loaded: `-lm` (mmap, mlock, direct I/O), `-lzm`, `--repack`/`-nr`, and `-ot`, `-cmoe`, `-ncmoe`, which with the CPU alone move nothing. |
+| 🟡 `common/` | The argument parser takes all of llama.cpp's options, but those of what is not ported (LoRA, speculative decoding, devices, ...) fail as an invalid value; it reads no config files (`config.ini`) and no remote presets. Downloads with `-hf` are ported (see [Quick start](#quick-start)), but not from a plain URL (`-mu`) or Docker, nor the cache's lock files. `--fit` is ported for the host memory (there are no devices). So are the flags of where and how the weights are loaded: `-lm` (mmap, mlock, direct I/O), `-lzm`, `--repack`/`-nr`, and `-ot`, `-cmoe`, `-ncmoe`, which with the CPU alone move nothing. |
 | ❌ Other programs | `llama-quantize`, `llama-bench`, `llama-embedding`, `llama-tts`, `llama-imatrix` and the rest of llama.cpp's tools and examples. |
 
 ## What is ported
@@ -83,6 +83,7 @@ in part.
 | ✅ Grammars: GBNF, lazy grammars, JSON schema to grammar | the 526 cases of llama.cpp's grammar tests and the 87 of its JSON schema test: the same parse, the same grammar text |
 | ✅ Chat templates: the 54 built-in ones and the Jinja engine | the 406 cases of `test-jinja.cpp`; 215 checks of prompts against libllama and libcommon |
 | ✅ Tool calls and reasoning: the PEG parsers, the differential autoparser, the 22 dedicated handlers | llama.cpp's analysis of its 83 templates; the 603 cases of `test-chat.cpp` |
+| ✅ The argument parser: llama.cpp's options and their `LLAMA_ARG_*` variables, `-h`, `--completion-bash` | the same `-h` as each of llama.cpp's programs, byte for byte; the same errors |
 
 ### Programs
 

@@ -264,20 +264,51 @@ fn apply_model_defaults(p: Params&, meta: gguf::Ctx) {
     get_float("general.sampling.mirostat_eta", p.mirostat_eta, USER_MIROSTAT_ETA);
 }
 
-// common_sampler_types_from_names, with its alternative names; ok false if unknown.
-fn kind_from_name(name: const u8[:]) -> Kind, bool {
+// common_sampler_types_from_names, with its alternative names (the canonical
+// ones in kebab case and without dashes, nucleus, temp, typ), in any case;
+// ok false if unknown.
+fn kind_from_name(name0: const u8[:]) -> Kind, bool {
+    var name: u8[>..] = [];
+    for c in name0 { name.push(if c >= 'A' && c <= 'Z' { c + 32 } else { c }); }
     if name == "dry" { return Kind.Dry, true; }
-    if name == "top_k" || name == "top-k" { return Kind.TopK, true; }
-    if name == "top_p" || name == "top-p" || name == "nucleus" { return Kind.TopP, true; }
-    if name == "top_n_sigma" || name == "top-n-sigma" || name == "top-nsigma" { return Kind.TopNSigma, true; }
-    if name == "min_p" || name == "min-p" { return Kind.MinP, true; }
+    if name == "top_k" || name == "top-k" || name == "topk" { return Kind.TopK, true; }
+    if name == "top_p" || name == "top-p" || name == "topp" || name == "nucleus" { return Kind.TopP, true; }
+    if name == "top_n_sigma" || name == "top-n-sigma" || name == "topnsigma" { return Kind.TopNSigma, true; }
+    if name == "min_p" || name == "min-p" || name == "minp" { return Kind.MinP, true; }
     if name == "xtc" { return Kind.Xtc, true; }
-    if name == "typ_p" || name == "typical_p" || name == "typical" || name == "typ-p" || name == "typical-p" { return Kind.Typical, true; }
+    if name == "typ_p" || name == "typ-p" || name == "typp" || name == "typ" { return Kind.Typical, true; }
     if name == "temperature" || name == "temp" { return Kind.TempExt, true; }
     if name == "penalties" { return Kind.Penalties, true; }
     if name == "infill" { return Kind.Infill, true; }
-    if name == "adaptive_p" || name == "adaptive-p" { return Kind.AdaptiveP, true; }
+    if name == "adaptive_p" || name == "adaptive-p" || name == "adaptivep" { return Kind.AdaptiveP, true; }
     return Kind.Dist, false;
+}
+
+// common_sampler_types_from_chars, for one char; ok false if unknown.
+fn kind_from_char(c: u8) -> Kind, bool {
+    let kind = match c {
+        'd' => Kind.Dry, 'k' => Kind.TopK, 'y' => Kind.Typical, 'p' => Kind.TopP, 's' => Kind.TopNSigma,
+        'm' => Kind.MinP, 't' => Kind.TempExt, 'x' => Kind.Xtc, 'i' => Kind.Infill, 'e' => Kind.Penalties,
+        'a' => Kind.AdaptiveP, _ => { return Kind.Dist, false; },
+    };
+    return kind, true;
+}
+
+// common_sampler_type_to_str
+fn type_to_str(kind: Kind) -> const u8[:] {
+    return match kind {
+        Dry => "dry", TopK => "top_k", Typical => "typ_p", TopP => "top_p", TopNSigma => "top_n_sigma",
+        MinP => "min_p", Xtc => "xtc", TempExt => "temperature", Penalties => "penalties",
+        Infill => "infill", AdaptiveP => "adaptive_p", _ => "",
+    };
+}
+
+// common_sampler_type_to_chr
+fn type_to_chr(kind: Kind) -> u8 {
+    return match kind {
+        Dry => 'd', TopK => 'k', Typical => 'y', TopP => 'p', TopNSigma => 's', MinP => 'm',
+        Xtc => 'x', TempExt => 't', Infill => 'i', Penalties => 'e', AdaptiveP => 'a', _ => '?',
+    };
 }
 
 struct Count { id: i32, n: i32 }
