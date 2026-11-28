@@ -2,6 +2,11 @@
 // read get a prompt and output parser of their own. detect picks the
 // handler from the template's source, in llama.cpp's order.
 // port-of: common/parsers/parsers.cpp, common/chat.cpp (common_chat_template_detect_params_init)
+// port-of: common/parsers/cohere2moe.cpp common/parsers/deepseek.cpp common/parsers/functionary-v3-2.cpp common/parsers/gemma4.cpp
+// port-of: common/parsers/gigachat-v3.cpp common/parsers/gpt-oss.cpp common/parsers/harmony-xml.cpp common/parsers/inkling.cpp
+// port-of: common/parsers/k2-horizon.cpp common/parsers/kimi-k2.cpp common/parsers/kimi-k3.cpp common/parsers/lfm2.cpp common/parsers/ling3.cpp
+// port-of: common/parsers/llm-jp-harmony.cpp common/parsers/minicpm5.cpp common/parsers/minimax-m3.cpp common/parsers/ministral3.cpp
+// port-of: common/parsers/muse-glimmer.cpp common/parsers/muse-spark.cpp common/parsers/qwen3-coder.cpp common/parsers/translate-gemma.cpp
 import std;
 import exception;
 import os;

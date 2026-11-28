@@ -24,6 +24,7 @@
 // are images in the prompt (data: and base64; not http URLs yet).
 // port-of: tools/server/server.cpp tools/server/server-context.cpp tools/server/server-task.cpp
 // port-of: tools/server/server-common.cpp tools/server/server-schema.cpp tools/server/server-chat.cpp
+// port-of: tools/server/main.cpp tools/server/server-slot-sched.cpp (get_reuse, the slot's choice)
 import std;
 import os;
 import exception;

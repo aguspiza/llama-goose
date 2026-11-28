@@ -26,26 +26,24 @@ if [[ $old == "$new" ]]; then
     exit 0
 fi
 
-# Every ported Goose file names its llama.cpp sources on a `// port-of:` line,
-# separated by spaces or commas, each maybe followed by a note in parentheses.
-declare -A ported_by=()
-while IFS= read -r line; do
-    file=${line%%:*}
-    srcs=$(sed -e 's/([^)]*)//g' -e 's/,/ /g' <<< "${line#*port-of:}")
-    for src in $srcs; do
-        ported_by[$src]+="${file#$root/} "
-    done
-done < <(grep -r --include='*.goose' -H '^// port-of:' "$root" | sed 's#:// port-of:#:port-of:#')
+# What this port does with each source: the `port-of:` lines and not-ported.txt.
+. "$root/scripts/port-of.sh"
+load_port_of "$root"
+load_not_ported "$root"
 
-port=() todo=() vendored=() ignored=()
+port=() todo=() unknown=() vendored=() ignored=()
 while IFS=$'\t' read -r status path rest; do
     path=${rest:-$path}            # renames: take the new name
-    if [[ -n ${ported_by[$path]:-} ]]; then
-        port+=("$status $path -> ${ported_by[$path]}")
+    ported_of "$path"
+    not_ported_of "$path"
+    if [[ -n $by ]]; then
+        port+=("$status $path -> $by")
     elif [[ $path == ggml/include/* || $path == ggml/src/ggml-cpu/* || $path =~ ^ggml/src/[^/]+$ ]]; then
         vendored+=("$status $path")
-    elif [[ $path =~ ^(src|common|tools|include)/ && $path =~ \.(c|cpp|h|hpp)$ ]]; then
-        todo+=("$status $path")
+    elif followed "$path" && [[ -n $why ]]; then
+        todo+=("$status $path ($why)")
+    elif followed "$path"; then
+        unknown+=("$status $path")
     else
         ignored+=("$status $path")
     fi
@@ -66,12 +64,13 @@ report=$root/sync-report.md
     echo "See one file's changes with: git -C $llama diff $old $new -- <path>"
     echo
     section "Ported files to convert again" "${port[@]}"
-    section "Not ported yet" "${todo[@]}"
+    section "Not ported (not-ported.txt)" "${todo[@]}"
+    section "New: to name on a port-of line or in not-ported.txt" "${unknown[@]}"
     section "ggml (copied as is with --apply)" "${vendored[@]}"
     echo "## Ignored: docs, CI, other backends, scripts (${#ignored[@]})"
 } > "$report"
 
-echo "Changes from ${old:0:9} to ${new:0:9}: ${#port[@]} to convert again, ${#todo[@]} not ported yet, ${#vendored[@]} in ggml, ${#ignored[@]} ignored."
+echo "Changes from ${old:0:9} to ${new:0:9}: ${#port[@]} to convert again, ${#todo[@]} not ported, ${#unknown[@]} new to classify, ${#vendored[@]} in ggml, ${#ignored[@]} ignored."
 echo "Report: $report"
 
 $apply || exit 0

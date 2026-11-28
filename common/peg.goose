@@ -8,6 +8,7 @@
 // (ids are pool indices; GBNF names use the id within the arena). The
 // builder adds to the arena begun last.
 // port-of: common/peg-parser.cpp, common/peg-parser.h, common/trie.cpp
+// port-of: common/unicode.cpp (common_parse_utf8_codepoint)
 import std;
 import exception;
 import .json_schema;

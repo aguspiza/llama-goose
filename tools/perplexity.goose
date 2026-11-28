@@ -6,6 +6,7 @@
 // One sequence per batch: n_batch must not exceed n_ctx (llama.cpp packs
 // several chunks into one batch when it does).
 // port-of: tools/perplexity/perplexity.cpp
+// port-of: tools/perplexity/main.cpp
 import std;
 import os;
 import math;

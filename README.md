@@ -416,14 +416,20 @@ The script fetches the fork's `master` into `../llama.cpp` (only a `git
 fetch`: no branch or file there changes) and sorts every file changed since
 `UPSTREAM` into:
 
-- **ported files to convert again**, each with the Goose files that port it,
-- **not ported yet** (`src/`, `common/`, `tools/`, `include/`),
+- **ported files to convert again**, each with the files here that port it
+  (their `// port-of:` lines),
+- **not ported**, each with why ([not-ported.txt](not-ported.txt)),
+- **new**, a source of `src/`, `common/`, `tools/` or `include/` in neither,
+  to name on a `port-of:` line or in `not-ported.txt`,
 - **ggml**, copied unchanged by `--apply`, which also warns when ggml starts
   building a source that `ggml/ggml.build` does not list,
 - **ignored**: docs, CI, other backends, scripts.
 
 `git -C ../llama.cpp diff <old> <new> -- <path>` shows what changed in one
 file, and the report prints that command with both commits filled in.
+`scripts/check-port-of.sh`, which `scripts/test.sh` runs, fails when a
+source at the commit in `UPSTREAM` is in neither or in both, so that the
+report's sorting stays true; [AGENTS.md](AGENTS.md) says how.
 
 ## Background
 

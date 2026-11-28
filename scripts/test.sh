@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build and run every program in tests/; each exits non-zero on failure.
+# Check the port-of lines (scripts/check-port-of.sh), then build and run every
+# program in tests/; each exits non-zero on failure.
 # tokenizer_0 runs once per test vocab of llama.cpp (LLAMA_CPP_DIR/models,
 # default ../llama.cpp/models), since a process holds one vocab.
 set -euo pipefail
@@ -12,6 +13,9 @@ cd "$root"          # tests read tests/data
 run() {
     if "$@" > /dev/null 2>&1; then :; else failed=$((failed + 1)); echo "FAILED: ${*#$root/}"; fi
 }
+
+# every llama.cpp source named on a port-of line or in not-ported.txt
+"$root/scripts/check-port-of.sh" || failed=$((failed + 1))
 
 for program in "$root"/tests/*.goose; do
     "$root/scripts/build.sh" "$program" > /dev/null

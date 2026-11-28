@@ -18,6 +18,8 @@
 // port-of: src/models/gpt2.cpp src/models/starcoder.cpp src/models/gptneox.cpp src/models/starcoder2.cpp src/models/bloom.cpp src/models/openelm.cpp
 // port-of: src/models/arcee.cpp src/models/olmo2.cpp src/models/exaone4.cpp src/models/hunyuan-vl.cpp
 // port-of: src/models/gemma2.cpp src/models/qwen2.cpp src/models/qwen3.cpp src/models/qwen35.cpp src/models/delta-net-base.cpp
+// port-of: src/llama-kv-cache-iswa.cpp src/llama-kv-cells.h src/llama-memory.cpp src/llama-memory-hybrid.cpp src/llama-memory-hybrid-iswa.cpp
+// port-of: src/llama-cparams.cpp src/llama-batch.cpp (the ubatches' split) src/models/models.h
 import std;
 import math;
 import os;

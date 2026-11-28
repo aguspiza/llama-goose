@@ -9,6 +9,7 @@
 // Commands: /exit, /regen, /clear, /read <file>, /glob <pattern>, and /image <file>
 // when the server reads images.
 // port-of: tools/cli/cli.cpp tools/cli/cli-context.cpp tools/cli/cli-ui.h tools/cli/cli-client.cpp tools/cli/cli-server.h
+// port-of: tools/cli/main.cpp
 import std;
 import os;
 import base64;

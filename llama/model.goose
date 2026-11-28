@@ -17,6 +17,7 @@
 // port-of: src/models/rwkv6.cpp src/models/rwkv6-base.cpp src/models/rwkv7.cpp src/models/rwkv7-base.cpp src/models/minicpm3.cpp
 // port-of: src/models/qwen2vl.cpp src/models/qwen3vl.cpp src/models/nemotron-h.cpp src/models/afmoe.cpp src/models/gemma3n.cpp src/models/gemma4.cpp src/models/t5.cpp
 // port-of: src/models/minicpm.cpp src/models/plamo3.cpp src/models/cohere2.cpp src/models/pangu-embed.cpp src/models/limite.cpp src/models/hrm-text.cpp src/models/spark2-5.cpp src/models/k2-horizon.cpp src/models/glm4.cpp
+// port-of: src/llama-arch.cpp (the architectures' names, their tensors' names)
 import std;
 import math;
 import ggml from "../ggml";

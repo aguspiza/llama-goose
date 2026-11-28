@@ -14,6 +14,7 @@
 // The weights: -lm auto|none|mmap|mlock|mmap+mlock|dio, -lzm on|auto|off, --repack | -nr, -ot <pattern>=CPU, -cmoe, -ncmoe N: common/load.
 // No -c (or -c 0): the model's context, fitted to the memory with -fit on|off, -fitt MiB, -fitc n: common/fit.
 // port-of: tools/completion/completion.cpp
+// port-of: tools/completion/main.cpp
 import std;
 import os;
 import ggml from "../ggml";

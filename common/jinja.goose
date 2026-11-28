@@ -6,6 +6,7 @@
 // from the user's input; an array is a range of `items`, an object a range
 // of key and value pairs in it. Nothing is freed until reset().
 // port-of: common/jinja/value.h, common/jinja/string.cpp, common/jinja/value.cpp (values, JSON)
+// port-of: common/jinja/utils.h (fmt_error_with_source, peak_source)
 import std;
 import exception;
 import .number;

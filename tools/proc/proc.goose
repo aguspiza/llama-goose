@@ -1,5 +1,6 @@
 // A child process, and Ctrl+C, for llama-cli: proc.c's calls.
 // port-of: tools/cli/cli-server.h tools/cli/cli.cpp (the signal handler)
+// port-of: common/subproc.cpp (the server as a child process)
 import std;
 namespace proc;
 
