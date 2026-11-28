@@ -52,13 +52,16 @@ jobs:
 
       - name: Build
         run: |
-          # as the reference built beside the port (static, no OpenMP, Release),
-          # with Vulkan, for AVX2 rather than the runner's CPU
+          # as the reference built beside the port (static, no OpenMP, no OpenSSL,
+          # Release, AVX moves that need no aligned stack), with Vulkan, for AVX2
+          # rather than the runner's CPU; Windows 10's API for cpp-httplib
+          flags="-Wa,-muse-unaligned-vector-move -D_WIN32_WINNT=0x0A00"
           cmake -S llama.cpp -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF \
+            -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags" \
             -DGGML_VULKAN=ON -DGGML_NATIVE=OFF \
             -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON \
-            -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_OPENSSL=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_TESTS=OFF \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           cmake --build build -j 4 --target llama-simple llama-completion llama-cli llama-server \
             llama-perplexity llama-batched llama-parallel llama-mtmd-cli llama-bench
