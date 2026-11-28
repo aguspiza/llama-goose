@@ -1,0 +1,98 @@
+# Builds llama.cpp at the commit in UPSTREAM with its Vulkan backend, on
+# Windows (MSYS2 MINGW64, as the port), and keeps as the run's artifacts:
+#   llama-cpp-vulkan  llama.cpp's programs, to compare the port with;
+#   ggml-vulkan-gen   what building ggml-vulkan needs beyond its sources: the
+#                     shaders compiled to SPIR-V and embedded in C++ by
+#                     vulkan-shaders-gen, the compile flags CMake gave
+#                     ggml-vulkan.cpp, the Vulkan and SPIR-V headers and the
+#                     Vulkan loader's import library.
+# A manual run only: gh run download gets the artifacts.
+
+name: Vulkan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  llama-cpp-vulkan:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          suppress-deprecation-warnings: msystem-mingw64
+          update: true
+          # shaderc: glslc; spirv-headers: ggml-vulkan's SPIR-V constants
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-vulkan-loader
+            mingw-w64-x86_64-shaderc
+            mingw-w64-x86_64-spirv-headers
+            git
+            zip
+
+      - name: Fetch llama.cpp
+        run: |
+          commit=$(cat UPSTREAM)
+          git init -q llama.cpp
+          git -C llama.cpp fetch -q --depth 1 https://github.com/ggml-org/llama.cpp "$commit"
+          git -C llama.cpp checkout -q FETCH_HEAD
+          git -C llama.cpp log --oneline -1
+
+      - name: Build
+        run: |
+          # as the reference built beside the port (static, no OpenMP, Release),
+          # with Vulkan, for AVX2 rather than the runner's CPU
+          cmake -S llama.cpp -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF \
+            -DGGML_VULKAN=ON -DGGML_NATIVE=OFF \
+            -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON \
+            -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build -j 4 --target llama-simple llama-completion llama-cli llama-server \
+            llama-perplexity llama-batched llama-parallel llama-mtmd-cli llama-bench
+
+      - name: Package
+        run: |
+          bin=llama-cpp-vulkan
+          mkdir "$bin"
+          cp build/bin/*.exe "$bin/"
+          # the MinGW runtime; the Vulkan loader (vulkan-1.dll) is the driver's
+          ldd "$bin"/*.exe | grep -io '/mingw64/bin/[^ ]*\.dll' | sort -u | xargs -r -I{} cp {} "$bin/"
+          echo "$(cat UPSTREAM)" > "$bin/COMMIT"
+          ls -la "$bin"
+
+          gen=ggml-vulkan-gen
+          mkdir -p "$gen/shaders" "$gen/include" "$gen/lib"
+          # the generated shader sources, without the objects
+          out=$PWD/$gen/shaders
+          (cd build/ggml/src/ggml-vulkan && find . \( -name '*.hpp' -o -name '*.cpp' \) -not -path '*/CMakeFiles/*' \
+            | tar -cf - -T - | tar -xf - -C "$out")
+          # the commands CMake compiled with: ggml-vulkan.cpp's defines
+          cp build/compile_commands.json "$gen/"
+          cp -r /mingw64/include/vulkan /mingw64/include/vk_video "$gen/include/"
+          cp -r /mingw64/include/spirv "$gen/include/"
+          cp /mingw64/lib/libvulkan-1.dll.a "$gen/lib/"
+          echo "$(cat UPSTREAM)" > "$gen/COMMIT"
+          du -sh "$gen"; find "$gen/shaders" -type f | wc -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llama-cpp-vulkan
+          path: llama-cpp-vulkan
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ggml-vulkan-gen
+          path: ggml-vulkan-gen
